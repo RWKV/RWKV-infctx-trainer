@@ -16,7 +16,7 @@ if __name__ == "__main__":
     # python train.py --load_model "" --wandb "" --proj_dir "out" \
     # --data_file "" --data_type "dummy" --vocab_size 0 \
     # --ctx_len 128 --epoch_steps 1000 --epoch_count 20 --epoch_begin 0 --epoch_save 10 \
-    # --micro_bsz 16 --n_layer 12 --n_embd 768 --pre_ffn 0 --head_qk 0 \
+    # --micro_bsz 16 --n_layer 12 --n_embd 768 \
     # --lr_init 6e-4 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.99 --adam_eps 1e-8 \
     # --accelerator gpu --devices 1 --precision bf16 --strategy ddp_find_unused_parameters_false --grad_cp 0
 
@@ -25,7 +25,7 @@ if __name__ == "__main__":
     # python train.py --load_model "" --wandb "" --proj_dir "out" \
     # --data_file "../data/enwik8" --data_type "utf-8" --vocab_size 0 \
     # --ctx_len 512 --epoch_steps 5000 --epoch_count 500 --epoch_begin 0 --epoch_save 5 \
-    # --micro_bsz 12 --n_layer 6 --n_embd 512 --pre_ffn 0 --head_qk 0 \
+    # --micro_bsz 12 --n_layer 6 --n_embd 512 \
     # --lr_init 8e-4 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.99 --adam_eps 1e-8 \
     # --accelerator gpu --devices 1 --precision bf16 --strategy ddp_find_unused_parameters_false --grad_cp 0
 
@@ -34,7 +34,7 @@ if __name__ == "__main__":
     # python train.py --load_model "/fsx/BlinkDL/CODE/FP16/out_1b2/all-8040.pth" --wandb "" --proj_dir "out" \
     # --data_file "../data/train.npy" --data_type "numpy" --vocab_size 50277 \
     # --ctx_len 1024 --epoch_steps 1000 --epoch_count 1000 --epoch_begin 0 --epoch_save 5 \
-    # --micro_bsz 8 --n_layer 24 --n_embd 2048 --pre_ffn 0 --head_qk 0 \
+    # --micro_bsz 8 --n_layer 24 --n_embd 2048 \
     # --lr_init 1e-5 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
     # --accelerator gpu --devices 8 --precision bf16 --strategy deepspeed_stage_2 --grad_cp 0
 
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     # python train.py --load_model "/fsx/BlinkDL/CODE/FP16/out_1b2/all-8040.pth" --wandb "" --proj_dir "out" \
     # --data_file "../data/train.npy" --data_type "numpy" --vocab_size 50277 \
     # --ctx_len 1024 --epoch_steps 200 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
-    # --micro_bsz 11 --n_layer 24 --n_embd 2048 --pre_ffn 0 --head_qk 0 \
+    # --micro_bsz 11 --n_layer 24 --n_embd 2048 \
     # --lr_init 1e-5 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
     # --accelerator gpu --devices 1 --precision fp16 --strategy deepspeed_stage_2_offload --grad_cp 1
 
@@ -70,10 +70,6 @@ if __name__ == "__main__":
     parser.add_argument("--n_embd", default=512, type=int)
     parser.add_argument("--dim_att", default=0, type=int)
     parser.add_argument("--dim_ffn", default=0, type=int)
-    parser.add_argument("--pre_ffn", default=0, type=int)  # replace first att layer by ffn (sometimes better)
-    parser.add_argument("--head_qk", default=0, type=int)  # my headQK trick
-    parser.add_argument("--tiny_att_dim", default=0, type=int)  # tiny attention dim
-    parser.add_argument("--tiny_att_layer", default=-999, type=int)  # tiny attention @ which layer
 
     parser.add_argument("--lr_init", default=6e-4, type=float)  # 6e-4 for L12-D768, 4e-4 for L24-D1024, 3e-4 for L24-D2048
     parser.add_argument("--lr_final", default=1e-5, type=float)
@@ -102,7 +98,6 @@ if __name__ == "__main__":
     parser.add_argument("--my_sample_len", default=0, type=int)
     parser.add_argument("--my_ffn_shift", default=1, type=int)
     parser.add_argument("--my_att_shift", default=1, type=int)
-    parser.add_argument("--my_pos_emb", default=0, type=int)
     parser.add_argument("--load_partial", default=0, type=int)
     parser.add_argument("--magic_prime", default=0, type=int)
     parser.add_argument("--my_qa_mask", default=0, type=int)
@@ -225,8 +220,6 @@ if __name__ == "__main__":
                         args.warmup_steps = 30
             args.epoch_begin = max_p + 1
 
-    samples_per_epoch = args.epoch_steps * args.real_bsz
-    tokens_per_epoch = samples_per_epoch * args.ctx_len
     rank_zero_info(
         f"""
 ############################################################################
@@ -236,8 +229,6 @@ if __name__ == "__main__":
 # Data = {args.data_file} ({args.data_type}), ProjDir = {args.proj_dir}
 #
 # Epoch = {args.epoch_begin} to {args.epoch_begin + args.epoch_count - 1} (will continue afterwards), save every {args.epoch_save} epoch
-#
-# Each "epoch" = {args.epoch_steps} steps, {samples_per_epoch} samples, {tokens_per_epoch} tokens
 #
 # Model = {args.n_layer} n_layer, {args.n_embd} n_embd, {args.ctx_len} ctx_len
 #
