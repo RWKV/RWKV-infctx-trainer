@@ -3,6 +3,7 @@
 ########################################################################################################
 
 import os, math, gc, importlib
+import numpy as np
 import torch
 # torch._C._jit_set_profiling_executor(True)
 # torch._C._jit_set_profiling_mode(True)
@@ -154,7 +155,7 @@ class RWKV_TimeMix(MyModule):
             ddd = torch.ones(1, 1, args.n_embd)
             for i in range(args.n_embd):
                 ddd[0, 0, i] = i / args.n_embd
-            
+
             # fancy time_decay
             decay_speed = torch.ones(args.dim_att)
             for h in range(args.dim_att):
@@ -258,7 +259,7 @@ class RWKV_ChannelMix(MyModule):
                 ddd[0, 0, i] = i / args.n_embd
             self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
             self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-        
+
         self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
         self.receptance = nn.Linear(args.n_embd, args.n_embd, bias=False)
         self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
@@ -331,7 +332,7 @@ class Block(nn.Module):
             self.ffn = MishGLU(args, layer_id)
         else:
             self.ffn = RWKV_ChannelMix(args, layer_id)
-        
+
         if args.tiny_att_dim > 0 and self.layer_id == args.tiny_att_layer:
             self.tiny_ln = nn.LayerNorm(args.n_embd)
             self.tiny_q = nn.Linear(args.n_embd, args.tiny_att_dim, bias=False)
@@ -546,6 +547,39 @@ class RWKV(pl.LightningModule):
         all = self.all_gather(batch_parts)
         if self.trainer.is_global_zero:
             self.trainer.my_loss_all = all
+
+    @rank_zero_only
+    def validation_step(self, batch, batch_idx):
+        seq = batch['input_ids']
+        assert isinstance(seq, torch.Tensor) and seq.ndim == 1
+        #!FIXME: temporary workaround!!! Arbitrary length should be supported later
+        if len(seq) > T_MAX:
+            seq = seq[:T_MAX]
+
+        idx, target = seq[:-1], seq[1:]
+        logit = self(idx.view(1, -1))[0]
+        loss: np.ndarray = F.cross_entropy(
+            logit,
+            target,
+            reduction='none').float().cpu().numpy()
+
+        print("validation loss shape: ", loss.shape)
+        exp_mean_loss = []
+        for i in range(8, math.ceil(math.log2(loss.shape[0]))):
+            exp_mean_loss.append([i, loss[:min(len(loss), 2**i)].mean()])
+
+        print(exp_mean_loss)
+
+        import wandb
+        table = wandb.Table(data=exp_mean_loss,
+                            columns=["length", "cross_entropy_loss"])
+        wandb.log({
+            f"validation/loss_curve/{self.real_epoch}/{batch_idx}":
+            wandb.plot.line(table,
+                            "length",
+                            "cross_entropy_loss",
+                            title="Loss Curve"),
+        })
 
     def generate_init_weight(self):
         print(

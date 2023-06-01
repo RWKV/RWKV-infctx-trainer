@@ -74,16 +74,6 @@ class train_callback(pl.Callback):
                 except:
                     pass
                 trainer.my_log.flush()
-                if len(args.wandb) > 0:
-                    print("Login to wandb...")
-                    import wandb
-                    wandb.init(
-                        project=args.wandb,
-                        name=args.run_name + " " + args.my_timestamp,
-                        config=args,
-                        save_code=False,
-                    )
-                    trainer.my_wandb = wandb
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         args = self.args
@@ -95,8 +85,8 @@ class train_callback(pl.Callback):
             try:
                 t_cost = (t_now - trainer.my_time_ns) / 1e9
                 kt_s = token_per_step / t_cost / 1000
-                self.log("REAL it/s", 1.0 / t_cost, prog_bar=True, on_step=True)
-                self.log("Kt/s", kt_s, prog_bar=True, on_step=True)
+                self.log("train/iter_per_second", 1.0 / t_cost, logger=True)
+                self.log("train/Ktoken_per_second", kt_s, logger=True)
             except:
                 pass
             trainer.my_time_ns = t_now
@@ -104,15 +94,10 @@ class train_callback(pl.Callback):
             trainer.my_loss_sum += trainer.my_loss
             trainer.my_loss_count += 1
             trainer.my_epoch_loss = trainer.my_loss_sum / trainer.my_loss_count
-            self.log("lr", trainer.my_lr, prog_bar=True, on_step=True)
-            self.log("loss", trainer.my_epoch_loss, prog_bar=True, on_step=True)
-            # self.log("s", real_step, prog_bar=True, on_step=True)
+            self.log("train/lr", trainer.my_lr, logger=True)
+            self.log("train/loss", trainer.my_epoch_loss, logger=True)
+            self.log("train/Gtokens", real_step * token_per_step / 1e9, logger=True)
 
-            if len(args.wandb) > 0:
-                lll = {"loss": trainer.my_loss, "lr": trainer.my_lr, "Gtokens": real_step * token_per_step / 1e9}
-                if kt_s > 0:
-                    lll["kt/s"] = kt_s
-                trainer.my_wandb.log(lll, step=int(real_step))
             if args.magic_prime > 0:
                 expand_factor = 2 if args.my_qa_mask > 0 else 1
                 if int(real_step) == int(args.magic_prime * expand_factor // args.real_bsz) - 1 + int(args.my_random_steps):
@@ -130,6 +115,7 @@ class train_callback(pl.Callback):
         dataset.global_rank = trainer.global_rank
         dataset.real_epoch = int(args.epoch_begin + trainer.current_epoch)
         dataset.world_size = trainer.world_size
+        pl_module.real_epoch = dataset.real_epoch
         # print(f'########## world_size {dataset.world_size} global_rank {dataset.global_rank} real_epoch {dataset.real_epoch} ##########')
 
     def on_train_epoch_end(self, trainer, pl_module):

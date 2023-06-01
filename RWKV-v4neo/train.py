@@ -55,6 +55,7 @@ if __name__ == "__main__":
     parser.add_argument("--random_seed", default="-1", type=int)
 
     parser.add_argument("--data_file", default="", type=str)
+    parser.add_argument("--val_text_file", default="", type=str)
     parser.add_argument("--data_type", default="utf-8", type=str)
     parser.add_argument("--vocab_size", default=0, type=int)  # vocab_size = 0 means auto (for char-level LM and .txt data)
 
@@ -135,11 +136,10 @@ if __name__ == "__main__":
     args.my_timestamp = datetime.datetime.today().strftime("%Y-%m-%d-%H-%M-%S")
     args.enable_checkpointing = False
     args.replace_sampler_ddp = False
-    args.logger = False
     args.gradient_clip_val = 1.0
     args.num_sanity_val_steps = 0
-    args.check_val_every_n_epoch = int(1e20)
-    args.log_every_n_steps = int(1e20)
+    # args.check_val_every_n_epoch = int(1e20)
+    # args.log_every_n_steps = int(1e20)
     args.max_epochs = -1  # continue forever
     args.betas = (args.beta1, args.beta2)
     args.real_bsz = int(args.num_nodes) * int(args.devices) * args.micro_bsz
@@ -155,6 +155,13 @@ if __name__ == "__main__":
         args.proj_dir = f"{args.proj_dir}-{args.run_name}"
     else:
         args.run_name = f"{args.vocab_size} ctx{args.ctx_len} L{args.n_layer} D{args.n_embd}"
+
+    args.logger = False
+    real_logger = None
+    if len(args.wandb) > 0:
+        from lightning.pytorch.loggers import WandbLogger
+        args.logger = real_logger = WandbLogger(project=args.wandb, name=args.run_name + " " + args.my_timestamp)
+
     if not os.path.exists(args.proj_dir):
         os.makedirs(args.proj_dir)
 
@@ -320,12 +327,13 @@ if __name__ == "__main__":
                 load_dict[k] = model.state_dict()[k]
     model.load_state_dict(load_dict)
 
-    trainer = Trainer.from_argparse_args(
+    trainer: Trainer = Trainer.from_argparse_args(
         args,
-        callbacks=[train_callback(args)],
+        callbacks=[train_callback(args)]
     )
 
     if trainer.global_rank == 0:
+        print(trainer.logger)
         for n in model.state_dict():
             shape = model.state_dict()[n].shape
             shape = [i for i in shape if i != 1]
@@ -341,4 +349,18 @@ if __name__ == "__main__":
     # must set shuffle=False, persistent_workers=False (because worker is in another thread)
     data_loader = DataLoader(train_data, shuffle=False, pin_memory=True, batch_size=args.micro_bsz, num_workers=1, persistent_workers=False, drop_last=True)
 
-    trainer.fit(model, data_loader)
+    val_data_loader = None
+    if len(args.val_text_file) > 0:
+        from transformers import PreTrainedTokenizerFast
+        from datasets import load_dataset
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_file="20B_tokenizer.json")
+        dataset = load_dataset("text",
+                               data_files=args.val_text_file,
+                               split='train')
+        print(dataset)
+        dataset = dataset.map(lambda x: tokenizer(x['text']),
+                              batched=True).with_format("torch")
+        val_data_loader = DataLoader(dataset, shuffle=False, batch_size=None)
+
+    trainer.fit(model, data_loader, val_data_loader)
