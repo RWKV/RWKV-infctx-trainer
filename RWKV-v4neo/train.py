@@ -59,7 +59,7 @@ if __name__ == "__main__":
     parser.add_argument("--vocab_size", default=0, type=int)  # vocab_size = 0 means auto (for char-level LM and .txt data)
 
     parser.add_argument("--ctx_len", default=1024, type=int)
-    parser.add_argument("--epoch_steps", default=1000, type=int)  # a mini "epoch" has [epoch_steps] steps
+    parser.add_argument("--ctx_len_cutoff", default=8192, type=int)
     parser.add_argument("--epoch_count", default=500, type=int)  # train for this many "epochs". will continue afterwards with lr = lr_final
     parser.add_argument("--epoch_begin", default=0, type=int)  # if you load a model trained for x "epochs", set epoch_begin = x
     parser.add_argument("--epoch_save", default=5, type=int)  # save the model every [epoch_save] "epochs"
@@ -78,10 +78,6 @@ if __name__ == "__main__":
     parser.add_argument("--adam_eps", default=1e-8, type=float)
     parser.add_argument("--grad_cp", default=0, type=int)  # gradient checkpt: saves VRAM, but slower
 
-    parser.add_argument("--my_pile_version", default=1, type=int)  # my special pile version
-    parser.add_argument("--my_pile_stage", default=0, type=int)  # my special pile mode
-    parser.add_argument("--my_pile_shift", default=-1, type=int)  # my special pile mode - text shift
-    parser.add_argument("--my_pile_edecay", default=0, type=int)
     parser.add_argument("--layerwise_lr", default=1, type=int)  # layerwise lr for faster convergence (but slower it/s)
     parser.add_argument("--ds_bucket_mb", default=200, type=int)  # deepspeed bucket size in MB. 200 seems enough
     # parser.add_argument("--cuda_cleanup", default=0, type=int)  # extra cuda cleanup (sometimes helpful)
@@ -155,66 +151,6 @@ if __name__ == "__main__":
     if not os.path.exists(args.proj_dir):
         os.makedirs(args.proj_dir)
 
-    if args.my_pile_stage > 0:
-        magic_prime_bak = args.magic_prime
-
-        if args.my_pile_version == 1:
-            if args.ctx_len == 1024:
-                args.magic_prime = 324331313
-            elif args.ctx_len == 2048:
-                args.magic_prime = 162165671
-            elif args.ctx_len == 4096:
-                args.magic_prime = 81082817
-            elif args.ctx_len == 8192:
-                args.magic_prime = 40541399
-        else:
-            if args.ctx_len == 1024:
-                args.magic_prime = 1670239709
-            elif args.ctx_len == 2048:
-                args.magic_prime = 835119767
-            elif args.ctx_len == 4096:
-                args.magic_prime = 417559889
-            elif args.ctx_len == 6144:
-                args.magic_prime = 278373239
-            elif args.ctx_len == 8192:
-                args.magic_prime = 208779911
-        if args.my_pile_shift < 0:
-            args.my_pile_shift = 0
-
-        if magic_prime_bak > 0:
-            args.magic_prime = magic_prime_bak
-        args.epoch_count = args.magic_prime // 40320
-
-        args.epoch_steps = 40320 // args.real_bsz
-        assert args.epoch_steps * args.real_bsz == 40320
-        if args.my_pile_stage == 2:
-            assert args.lr_final == args.lr_init
-        if args.my_pile_stage >= 2:  # find latest saved model
-            list_p = []
-            for p in os.listdir(args.proj_dir):
-                if p.startswith("rwkv") and p.endswith(".pth"):
-                    p = ((p.split("-"))[1].split("."))[0]
-                    if p != "final":
-                        if p == "init":
-                            p = -1
-                        else:
-                            p = int(p)
-                        list_p += [p]
-            list_p.sort()
-            max_p = list_p[-1]
-            if len(list_p) > 1:
-                args.my_pile_prev_p = list_p[-2]  # in case max_p is corrupted
-            if max_p == -1:
-                args.load_model = f"{args.proj_dir}/rwkv-init.pth"
-            else:
-                args.load_model = f"{args.proj_dir}/rwkv-{max_p}.pth"
-                if args.warmup_steps < 0:
-                    if args.my_pile_stage == 2:
-                        args.warmup_steps = 10
-                    else:
-                        args.warmup_steps = 30
-            args.epoch_begin = max_p + 1
-
     rank_zero_info(
         f"""
 ############################################################################
@@ -287,25 +223,8 @@ if __name__ == "__main__":
     from src.model import RWKV
     model = RWKV(args)
 
-    if len(args.load_model) == 0 or args.my_pile_stage == 1:  # shall we build the initial weights?
-        init_weight_name = f"{args.proj_dir}/rwkv-init.pth"
-        generate_init_weight(model, init_weight_name)  # save initial weights
-        args.load_model = init_weight_name
-
     rank_zero_info(f"########## Loading {args.load_model}... ##########")
-    try:
-        load_dict = torch.load(args.load_model, map_location="cpu")
-    except:
-        rank_zero_info(f"Bad checkpoint {args.load_model}")
-        if args.my_pile_stage >= 2:  # try again using another checkpoint
-            max_p = args.my_pile_prev_p
-            if max_p == -1:
-                args.load_model = f"{args.proj_dir}/rwkv-init.pth"
-            else:
-                args.load_model = f"{args.proj_dir}/rwkv-{max_p}.pth"
-            args.epoch_begin = max_p + 1
-            rank_zero_info(f"Trying {args.load_model}")
-            load_dict = torch.load(args.load_model, map_location="cpu")
+    load_dict = torch.load(args.load_model, map_location="cpu")
 
     if args.load_partial == 1:
         load_keys = load_dict.keys()

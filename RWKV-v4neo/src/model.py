@@ -274,15 +274,9 @@ class RWKV(pl.LightningModule):
             lr_3x = set()
             for n, p in self.named_parameters():
                 if "time_mix" in n:
-                    if args.my_pile_stage == 2:
-                        lr_2x.add(n)
-                    else:
-                        lr_1x.add(n)
+                    lr_1x.add(n)
                 elif "time_decay" in n:
-                    if args.my_pile_stage == 2:
-                        lr_3x.add(n)
-                    else:
-                        lr_2x.add(n)
+                    lr_2x.add(n)
                 elif "time_first" in n:
                     lr_3x.add(n)
                 else:
@@ -294,18 +288,11 @@ class RWKV(pl.LightningModule):
             # print('2x', lr_2x)
             # print('3x', lr_3x)
             param_dict = {n: p for n, p in self.named_parameters()}
-            if args.my_pile_stage == 2:
-                optim_groups = [
-                    {"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
-                    {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 5.0},# test: 2e-3 / args.lr_init},
-                    {"params": [param_dict[n] for n in lr_3x], "weight_decay": 0.0, "my_lr_scale": 5.0},# test: 3e-3 / args.lr_init},
-                ]
-            else:
-                optim_groups = [
-                    {"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
-                    {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 2.0},
-                    {"params": [param_dict[n] for n in lr_3x], "weight_decay": 0.0, "my_lr_scale": 3.0},
-                ]
+            optim_groups = [
+                {"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
+                {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 2.0},
+                {"params": [param_dict[n] for n in lr_3x], "weight_decay": 0.0, "my_lr_scale": 3.0},
+            ]
         else:
             optim_groups = [
                 {"params": [p for n, p in self.named_parameters()], "weight_decay": 0.0},
@@ -356,9 +343,6 @@ class RWKV(pl.LightningModule):
         B, T = idx.shape
         C = args.n_embd
 
-        states = [init_block_state(B, C, seq.device, self.emb.weight.dtype)
-                  ] * args.n_layer
-
         def checkpointed_step(idx, targets, prev_loss, last_states):
             logits, new_states = self(idx, last_states)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
@@ -367,7 +351,11 @@ class RWKV(pl.LightningModule):
 
         total_loss = torch.tensor(0, dtype=self.emb.weight.dtype)
         for i in range(math.ceil(T / args.ctx_len)):
-            print(f'step {i}')
+            if i % args.ctx_len_cutoff == 0:
+                states = [
+                    init_block_state(B, C, seq.device, self.emb.weight.dtype)
+                ] * args.n_layer
+
             if i != math.ceil(T / args.ctx_len) - 1:
                 total_loss, states = deepspeed.checkpointing.checkpoint(
                     checkpointed_step,

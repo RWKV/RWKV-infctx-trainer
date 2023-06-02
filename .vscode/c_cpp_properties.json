@@ -1,0 +1,19 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/blealtancao/.local/lib/python3.9/site-packages/torch/include",
+                "/home/blealtancao/.local/lib/python3.9/site-packages/torch/include/torch/csrc/api/include",
+                "/usr/include/python3.9"
+            ],
+            "defines": ["Tmax=1024"],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
