@@ -164,7 +164,7 @@ void cuda_forward(int B, int T, int C, float *w, bf16 *u, bf16 *k, bf16 *v, floa
     kernel_forward<<<numBlocks, threadsPerBlock>>>(B, T, C, w, u, k, v, last_state, y, new_state);
 }
 
-void cuda_backward(int B, int T, int C, float *w, bf16 *u, bf16 *k, bf16 *v, float *last_state, bf16 *gy, float *gnew_state, float *gw, bf16 *gu, bf16 *gk, bf16 *gv, float *glast_state) {
+void cuda_backward(int B, int T, int C, float *w, bf16 *u, bf16 *k, bf16 *v, float *last_state, bf16 *gy, float *gnew_state, bf16 *gw, bf16 *gu, bf16 *gk, bf16 *gv, float *glast_state) {
     dim3 threadsPerBlock( min(C, 32) ); // requires --maxrregcount 60 for optimal performance
     assert(B * C % threadsPerBlock.x == 0);
     dim3 numBlocks(B * C / threadsPerBlock.x);

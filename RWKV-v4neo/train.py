@@ -14,7 +14,7 @@ if __name__ == "__main__":
     # example: train a simple L12-D768 RWKV on dummy data
     #
     # python train.py --load_model "" --wandb "" --proj_dir "out" \
-    # --data_file "" --data_type "dummy" --vocab_size 0 \
+    # --data_file "" --vocab_size 0 \
     # --ctx_len 128 --epoch_steps 1000 --epoch_count 20 --epoch_begin 0 --epoch_save 10 \
     # --micro_bsz 16 --n_layer 12 --n_embd 768 \
     # --lr_init 6e-4 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.99 --adam_eps 1e-8 \
@@ -23,7 +23,7 @@ if __name__ == "__main__":
     # example: train a simple L6-D512 RWKV from scratch on enwik8
     #
     # python train.py --load_model "" --wandb "" --proj_dir "out" \
-    # --data_file "../data/enwik8" --data_type "utf-8" --vocab_size 0 \
+    # --data_file "../data/enwik8" --vocab_size 0 \
     # --ctx_len 512 --epoch_steps 5000 --epoch_count 500 --epoch_begin 0 --epoch_save 5 \
     # --micro_bsz 12 --n_layer 6 --n_embd 512 \
     # --lr_init 8e-4 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.99 --adam_eps 1e-8 \
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     # example: fine-tune RWKV 1.5B using 8xA100 40G = 1.76it/s = 115k token/s, VRAM 37477M
     #
     # python train.py --load_model "/fsx/BlinkDL/CODE/FP16/out_1b2/all-8040.pth" --wandb "" --proj_dir "out" \
-    # --data_file "../data/train.npy" --data_type "numpy" --vocab_size 50277 \
+    # --data_file "../data/train.npy" --vocab_size 50277 \
     # --ctx_len 1024 --epoch_steps 1000 --epoch_count 1000 --epoch_begin 0 --epoch_save 5 \
     # --micro_bsz 8 --n_layer 24 --n_embd 2048 \
     # --lr_init 1e-5 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
@@ -41,7 +41,7 @@ if __name__ == "__main__":
     # example: fine-tune RWKV 1.5B using 1 GPU fp16 (VRAM 16G) NOTE: fp16 might overflow
     #
     # python train.py --load_model "/fsx/BlinkDL/CODE/FP16/out_1b2/all-8040.pth" --wandb "" --proj_dir "out" \
-    # --data_file "../data/train.npy" --data_type "numpy" --vocab_size 50277 \
+    # --data_file "../data/train.npy" "numpy" --vocab_size 50277 \
     # --ctx_len 1024 --epoch_steps 200 --epoch_count 1000 --epoch_begin 0 --epoch_save 1 \
     # --micro_bsz 11 --n_layer 24 --n_embd 2048 \
     # --lr_init 1e-5 --lr_final 1e-5 --warmup_steps 0 --beta1 0.9 --beta2 0.999 --adam_eps 1e-8 \
@@ -56,7 +56,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--data_file", default="", type=str)
     parser.add_argument("--val_text_file", default="", type=str)
-    parser.add_argument("--data_type", default="utf-8", type=str)
     parser.add_argument("--vocab_size", default=0, type=int)  # vocab_size = 0 means auto (for char-level LM and .txt data)
 
     parser.add_argument("--ctx_len", default=1024, type=int)
@@ -145,11 +144,7 @@ if __name__ == "__main__":
     if args.dim_ffn <= 0:
         args.dim_ffn = args.n_embd * 4
 
-    if args.data_type == "wds_img":
-        args.run_name = f"v{args.my_img_version}-{args.my_img_size}-{args.my_img_bit}bit-{args.my_img_clip}x{args.my_img_clip_scale}"
-        args.proj_dir = f"{args.proj_dir}-{args.run_name}"
-    else:
-        args.run_name = f"{args.vocab_size} ctx{args.ctx_len} L{args.n_layer} D{args.n_embd}"
+    args.run_name = f"{args.vocab_size} ctx{args.ctx_len} L{args.n_layer} D{args.n_embd}"
 
     args.logger = False
     real_logger = None
@@ -226,7 +221,7 @@ if __name__ == "__main__":
 #
 # RWKV-4 {args.precision.upper()} on {args.num_nodes}x{args.devices} {args.accelerator.upper()}, bsz {args.num_nodes}x{args.devices}x{args.micro_bsz}={args.real_bsz}, {args.strategy} {'with grad_cp' if args.grad_cp > 0 else ''}
 #
-# Data = {args.data_file} ({args.data_type}), ProjDir = {args.proj_dir}
+# Data = {args.data_file}, ProjDir = {args.proj_dir}
 #
 # Epoch = {args.epoch_begin} to {args.epoch_begin + args.epoch_count - 1} (will continue afterwards), save every {args.epoch_save} epoch
 #
@@ -242,8 +237,6 @@ if __name__ == "__main__":
 """
     )
     rank_zero_info(str(vars(args)) + "\n")
-
-    assert args.data_type in ["utf-8", "utf-16le", "numpy", "binidx", "dummy", "wds_img", "uint16"]
 
     if args.lr_final == 0 or args.lr_init == 0:
         rank_zero_info("\n\nNote: lr_final = 0 or lr_init = 0. Using linear LR schedule instead.\n\n")
@@ -279,17 +272,20 @@ if __name__ == "__main__":
     ########################################################################################################
 
     from src.trainer import train_callback, generate_init_weight
-    from src.dataset import MyDataset
 
-    train_data = MyDataset(args)
-    args.vocab_size = train_data.vocab_size
 
-    if args.data_type == 'wds_img':
-        from src.model_img import RWKV_IMG
-        model = RWKV_IMG(args)
-    else:
-        from src.model import RWKV
-        model = RWKV(args)
+    from transformers import PreTrainedTokenizerFast
+    from datasets import load_dataset
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file="20B_tokenizer.json")
+
+    train_data = load_dataset(args.data_file, split="train")
+    train_data = train_data.map(lambda x: tokenizer(x['text']),
+                                batched=True).with_format("torch")
+
+    args.vocab_size = tokenizer.vocab_size + len(tokenizer.get_added_vocab())
+
+    from src.model import RWKV
+    model = RWKV(args)
 
     if len(args.load_model) == 0 or args.my_pile_stage == 1:  # shall we build the initial weights?
         init_weight_name = f"{args.proj_dir}/rwkv-init.pth"
@@ -342,16 +338,12 @@ if __name__ == "__main__":
 
     val_data_loader = None
     if len(args.val_text_file) > 0:
-        from transformers import PreTrainedTokenizerFast
-        from datasets import load_dataset
-        tokenizer = PreTrainedTokenizerFast(
-            tokenizer_file="20B_tokenizer.json")
-        dataset = load_dataset("text",
+        val_data = load_dataset("text",
                                data_files=args.val_text_file,
                                split='train')
-        print(dataset)
-        dataset = dataset.map(lambda x: tokenizer(x['text']),
+        print(val_data)
+        val_data = val_data.map(lambda x: tokenizer(x['text']),
                               batched=True).with_format("torch")
-        val_data_loader = DataLoader(dataset, shuffle=False, batch_size=None)
+        val_data_loader = DataLoader(val_data, shuffle=False, batch_size=None)
 
     trainer.fit(model, data_loader, val_data_loader)

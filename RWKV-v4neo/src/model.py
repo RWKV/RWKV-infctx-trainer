@@ -34,38 +34,35 @@ if os.environ["RWKV_JIT_ON"] == "1":
     MyModule = torch.jit.ScriptModule
     MyFunction = torch.jit.script_method
 
-from dataclasses import dataclass
 
-
-@dataclass
 class TimeMixState:
-    token_shift_state: torch.Tensor
-    wkv_state: torch.Tensor
+
+    def __init__(self, token_shift_state: torch.Tensor,
+                 wkv_state: torch.Tensor):
+        self.token_shift_state = token_shift_state
+        self.wkv_state = wkv_state
 
 
-@dataclass
 class ChannelMixState:
-    token_shift_state: torch.Tensor
+
+    def __init__(self, token_shift_state: torch.Tensor):
+        self.token_shift_state = token_shift_state
 
 
-@dataclass
 class BlockState:
-    time_mix_state: TimeMixState
-    channel_mix_state: ChannelMixState
+
+    def __init__(self, time_mix_state: torch.Tensor,
+                 channel_mix_state: torch.Tensor):
+        self.time_mix_state = time_mix_state
+        self.channel_mix_state = channel_mix_state
 
 
 def init_block_state(B, C, device, dtype):
-    wkv_state = torch.zeros((B, C, 3),
-                            device=device,
-                            memory_format=torch.contiguous_format,
-                            dtype=torch.float)
+    wkv_state = torch.zeros((B, C, 3), device=device, dtype=torch.float)
     wkv_state[:, :, -1] = 1e-38
-    token_shift_state = torch.zeros((B, C),
-                                    device=device,
-                                    memory_format=torch.contiguous_format,
-                                    dtype=dtype)
+    token_shift_state = torch.zeros((B, C), device=device, dtype=dtype)
     return BlockState(TimeMixState(token_shift_state, wkv_state),
-                      token_shift_state)
+                      ChannelMixState(token_shift_state))
 
 
 ########################################################################################################
@@ -83,77 +80,13 @@ assert os.environ[
 load(name=f"wkv_{T_MAX}_bf16",
      sources=["cuda/wkv_op_bf16.cpp", "cuda/wkv_cuda_bf16.cu"],
      verbose=True,
+     extra_cflags=["-std=c++17", "-O3", f"-DTmax={T_MAX}"],
      extra_cuda_cflags=[
          "-t 4", "-std=c++17", "-res-usage", "--maxrregcount 60",
          "--use_fast_math", "-O3", "-Xptxas -O3",
          "--extra-device-vectorization", f"-DTmax={T_MAX}"
      ],
      is_python_module=False)
-wkv_cuda = torch.ops.wkv
-
-
-class WKV(torch.autograd.Function):
-
-    @staticmethod
-    def forward(ctx, B, T, C, w, u, k, v, last_state):
-        ctx.B = B
-        ctx.T = T
-        ctx.C = C
-        #!TODO: split long sequence, parallel scan
-        # (if not do this, wkv can be a bit slower since we will have bsz=1)
-        assert T <= T_MAX
-        assert B * C % min(C, 32) == 0
-        w = -torch.exp(w.float().contiguous())
-        u = u.contiguous()
-        k = k.contiguous()
-        v = v.contiguous()
-        last_state = last_state.contiguous()
-        y = torch.empty((B, T, C),
-                        device=w.device,
-                        memory_format=torch.contiguous_format,
-                        dtype=torch.bfloat16)
-        new_state = torch.empty_like(last_state)
-        wkv_cuda.forward(B, T, C, w, u, k, v, last_state, y, new_state)
-        ctx.save_for_backward(w, u, k, v, last_state)
-        return y, new_state
-
-    @staticmethod
-    def backward(ctx, gy, gnew_state):
-        B = ctx.B
-        T = ctx.T
-        C = ctx.C
-        assert T <= T_MAX
-        assert B * C % min(C, 32) == 0
-        w, u, k, v, last_state = ctx.saved_tensors
-        gw = torch.empty((B, C),
-                         device=gy.device,
-                         memory_format=torch.contiguous_format,
-                         dtype=torch.bfloat16)
-        gu = torch.empty((B, C),
-                         device=gy.device,
-                         memory_format=torch.contiguous_format,
-                         dtype=torch.bfloat16)
-        gk = torch.empty((B, T, C),
-                         device=gy.device,
-                         memory_format=torch.contiguous_format,
-                         dtype=torch.bfloat16)
-        gv = torch.empty((B, T, C),
-                         device=gy.device,
-                         memory_format=torch.contiguous_format,
-                         dtype=torch.bfloat16)
-        glast_state = torch.empty((B, C, 3),
-                                  device=gy.device,
-                                  memory_format=torch.contiguous_format,
-                                  dtype=torch.float)
-        wkv_cuda.backward(B, T, C, w, u, k, v, last_state, gy.contiguous(),
-                          gnew_state.contiguous(), gw, gu, gk, gv, glast_state)
-        gw = torch.sum(gw, dim=0)
-        gu = torch.sum(gu, dim=0)
-        return (None, None, None, gw, gu, gk, gv, glast_state)
-
-
-def RUN_CUDA(B, T, C, w, u, k, v, last_state=None):
-    return WKV.apply(B, T, C, w, u, k, v, last_state)
 
 
 ########################################################################################################
@@ -212,10 +145,9 @@ class RWKV_TimeMix(MyModule):
 
     @MyFunction
     def forward(self, x, last_state: TimeMixState):
-        B, T, C = x.size()  # x = (Batch,Time,Channel)
-
         # Mix x with the previous timestep to produce xk, xv, xr
-        xx = torch.concat((last_state.token_shift_state, x[:, :-1]), dim=1)
+        xx = torch.concat(
+            (last_state.token_shift_state.unsqueeze(1), x[:, :-1]), dim=1)
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
@@ -226,8 +158,8 @@ class RWKV_TimeMix(MyModule):
 
         sr = torch.sigmoid(r)
 
-        y, new_wkv_state = RUN_CUDA(B, T, C, self.time_decay, self.time_first,
-                                    k, v, last_state.wkv_state)
+        y, new_wkv_state = torch.ops.rwkv.wkv(self.time_decay, self.time_first,
+                                              k, v, last_state.wkv_state)
         return self.output(sr * y), TimeMixState(x[:, -1], new_wkv_state)
 
 ########################################################################################################
@@ -252,7 +184,8 @@ class RWKV_ChannelMix(MyModule):
 
     @MyFunction
     def forward(self, x, last_state: ChannelMixState):
-        xx = torch.concat((last_state.token_shift_state, x[:, :-1]), dim=1)
+        xx = torch.concat(
+            (last_state.token_shift_state.unsqueeze(1), x[:, :-1]), dim=1)
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
         k = self.key(xk)
@@ -301,12 +234,14 @@ class Block(nn.Module):
 class L2Wrap(torch.autograd.Function):
     @staticmethod
     def forward(ctx, loss, y, token_amount):
-        ctx.save_for_backward(y, token_amount)
+        ctx.save_for_backward(y)
+        ctx.token_amount = token_amount
         return loss
 
     @staticmethod
     def backward(ctx, grad_output):
-        y, token_amount = ctx.saved_tensors
+        y, = ctx.saved_tensors
+        token_amount = ctx.token_amount
         # to encourage the logits to be close to 0
         factor = 1e-4 / token_amount
         maxx, ids = torch.max(y, -1, keepdim=True)
@@ -409,32 +344,45 @@ class RWKV(pl.LightningModule):
 
         x = self.head(x)
 
-        return x
+        return x, new_states
 
     def training_step(self, batch, batch_idx):
         args = self.args
 
-        idx, targets = batch
+        seq = batch['input_ids']
+        assert isinstance(seq, torch.Tensor) and seq.ndim == 2
+        idx, targets = seq[:, :-1], seq[:, 1:]
+
         B, T = idx.shape
         C = args.n_embd
 
-        states = [init_block_state(B, C)] * args.n_layer
+        states = [init_block_state(B, C, seq.device, self.emb.weight.dtype)
+                  ] * args.n_layer
 
         def checkpointed_step(idx, targets, prev_loss, last_states):
             logits, new_states = self(idx, last_states)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-            return prev_loss + L2Wrap(loss, logits, B * T), new_states
+            loss = L2Wrap.apply(loss, logits, B * T)
+            return prev_loss + loss, new_states
 
-        total_loss = 0
+        total_loss = torch.tensor(0, dtype=self.emb.weight.dtype)
         for i in range(math.ceil(T / args.ctx_len)):
-            total_loss, states = deepspeed.checkpointing.checkpoint(
-                checkpointed_step,
-                idx[:, i * args.ctx_len:(i + 1) * args.ctx_len],
-                targets[:, i * args.ctx_len:(i + 1) * args.ctx_len],
-                total_loss,
-                states,
-            )
-
+            print(f'step {i}')
+            if i != math.ceil(T / args.ctx_len) - 1:
+                total_loss, states = deepspeed.checkpointing.checkpoint(
+                    checkpointed_step,
+                    idx[:, i * args.ctx_len:(i + 1) * args.ctx_len],
+                    targets[:, i * args.ctx_len:(i + 1) * args.ctx_len],
+                    total_loss,
+                    states,
+                )
+            else:
+                total_loss, states = checkpointed_step(
+                    idx[:, i * args.ctx_len:(i + 1) * args.ctx_len],
+                    targets[:, i * args.ctx_len:(i + 1) * args.ctx_len],
+                    total_loss,
+                    states,
+                )
         return total_loss
 
     def training_step_end(self, batch_parts):
@@ -444,18 +392,30 @@ class RWKV(pl.LightningModule):
 
     @rank_zero_only
     def validation_step(self, batch, batch_idx):
+        args = self.args
+
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 1
         #!FIXME: temporary workaround!!! Arbitrary length should be supported later
         if len(seq) > T_MAX:
             seq = seq[:T_MAX]
 
+        T, = idx.shape
+        C = args.n_embd
+
+        state = [init_block_state(1, C, seq.device, seq.dtype)] * args.n_layer
+
         idx, target = seq[:-1], seq[1:]
-        logit = self(idx.view(1, -1))[0]
-        loss: np.ndarray = F.cross_entropy(
-            logit,
-            target,
-            reduction='none').float().cpu().numpy()
+        loss = np.array([], dtype=np.float32)
+        for i in range(math.ceil(T / args.ctx_len)):
+            logit, state = self(
+                idx[i * args.ctx_len:(i + 1) * args.ctx_len].view(1, -1),
+                state)
+            piece_loss: np.ndarray = F.cross_entropy(
+                logit,
+                target[i * args.ctx_len:(i + 1) * args.ctx_len],
+                reduction='none').float().cpu().numpy()
+            loss = np.concatenate((loss, piece_loss))
 
         print("validation loss shape: ", loss.shape)
         exp_mean_loss = []

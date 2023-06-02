@@ -106,30 +106,17 @@ class train_callback(pl.Callback):
                         to_save_dict,
                         f"{args.proj_dir}/rwkv-final.pth",
                     )
-                
+            self.log("cuda_memory_GB", torch.cuda.memory_allocated() / 1e9, prog_bar=True, logger=True)
 
     def on_train_epoch_start(self, trainer, pl_module):
         args = self.args
-        dataset = trainer.train_dataloader.dataset.datasets
-        assert "MyDataset" in str(dataset)
-        dataset.global_rank = trainer.global_rank
-        dataset.real_epoch = int(args.epoch_begin + trainer.current_epoch)
-        dataset.world_size = trainer.world_size
-        pl_module.real_epoch = dataset.real_epoch
-        # print(f'########## world_size {dataset.world_size} global_rank {dataset.global_rank} real_epoch {dataset.real_epoch} ##########')
+        pl_module.real_epoch = int(args.epoch_begin + trainer.current_epoch)
 
     def on_train_epoch_end(self, trainer, pl_module):
         args = self.args
         if trainer.is_global_zero:  # logging & save state_dict
             if (args.epoch_save > 0 and trainer.current_epoch % args.epoch_save == 0) or (trainer.current_epoch == args.epoch_count - 1):
-                if args.data_type == 'wds_img':
-                    raw_dict = pl_module.state_dict()
-                    to_save_dict = {}
-                    for k in raw_dict:
-                        if k.startswith('encoder.') or k.startswith('decoder.'):
-                            to_save_dict[k] = raw_dict[k]
-                else:
-                    to_save_dict = pl_module.state_dict()
+                to_save_dict = pl_module.state_dict()
                 try:
                     my_save(
                         to_save_dict,
