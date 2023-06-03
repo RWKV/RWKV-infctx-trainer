@@ -2,7 +2,7 @@
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ########################################################################################################
 
-import os, math, gc, importlib
+import os, math
 from typing import List, Optional
 import numpy as np
 import torch
@@ -10,29 +10,22 @@ import torch
 # torch._C._jit_set_profiling_mode(True)
 import torch.nn as nn
 from torch.nn import functional as F
-import pytorch_lightning as pl
-from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
-from pytorch_lightning.strategies import DeepSpeedStrategy
-if importlib.util.find_spec('deepspeed'):
-    import deepspeed
-    from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+import lightning as L
+from lightning.pytorch.utilities import rank_zero_info, rank_zero_only
+from lightning.pytorch.strategies import DeepSpeedStrategy
 
-# from deepspeed.runtime.fp16.onebit.zoadam import ZeroOneAdam
+import deepspeed
+from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
+import deepspeed.runtime.lr_schedules
 
-try:
-    print('RWKV_MY_TESTING', os.environ["RWKV_MY_TESTING"])
-except:
-    os.environ["RWKV_MY_TESTING"] = ''
+RWKV_JIT_ON = True
 
-def __nop(ob):
-    return ob
-
-
-MyModule = nn.Module
-MyFunction = __nop
-if os.environ["RWKV_JIT_ON"] == "1":
+if RWKV_JIT_ON:
     MyModule = torch.jit.ScriptModule
     MyFunction = torch.jit.script_method
+else:
+    MyModule = nn.Module
+    MyFunction = lambda x: x
 
 
 class TimeMixState:
@@ -65,83 +58,51 @@ def init_block_state(B, C, device, dtype):
                       ChannelMixState(token_shift_state))
 
 
-########################################################################################################
-# CUDA Kernel
-########################################################################################################
-
-T_MAX = int(os.environ["RWKV_T_MAX"])
-assert os.environ[
-    "RWKV_MY_TESTING"] == "", "a/b variants not supported in InfCtx"
-
 from torch.utils.cpp_extension import load
-
-assert os.environ[
-    "RWKV_FLOAT_MODE"] == "bf16", "InfCtx currently only supports BF16"
-load(name=f"wkv_{T_MAX}_bf16",
-     sources=["cuda/wkv_op_bf16.cpp", "cuda/wkv_cuda_bf16.cu"],
-     verbose=True,
-     extra_cflags=["-std=c++17", "-O3", f"-DTmax={T_MAX}"],
-     extra_cuda_cflags=[
-         "-t 4", "-std=c++17", "-res-usage", "--maxrregcount 60",
-         "--use_fast_math", "-O3", "-Xptxas -O3",
-         "--extra-device-vectorization", f"-DTmax={T_MAX}"
-     ],
-     is_python_module=False)
-
 
 ########################################################################################################
 # RWKV: RWKV Time-mix + RWKV Channel-mix
 ########################################################################################################
 
 
-
 class RWKV_TimeMix(MyModule):
-    def __init__(self, args, layer_id):
+
+    def __init__(self, layer_id, n_layer, n_embd, dim_att):
         super().__init__()
-        self.args = args
-        self.layer_id = layer_id
-        self.ctx_len = args.ctx_len
-        self.n_embd = args.n_embd
 
         with torch.no_grad():  # fancy init
-            ratio_0_to_1 = layer_id / (args.n_layer - 1)  # 0 to 1
-            ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
-            ddd = torch.ones(1, 1, args.n_embd)
-            for i in range(args.n_embd):
-                ddd[0, 0, i] = i / args.n_embd
+            ratio_0_to_1 = layer_id / (n_layer - 1)  # 0 to 1
+            ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
+            ddd = torch.ones(1, 1, n_embd)
+            for i in range(n_embd):
+                ddd[0, 0, i] = i / n_embd
 
             # fancy time_decay
-            decay_speed = torch.ones(args.dim_att)
-            for h in range(args.dim_att):
-                decay_speed[h] = -5 + 8 * (h / (args.dim_att - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
+            decay_speed = torch.ones(dim_att)
+            for h in range(dim_att):
+                decay_speed[h] = -5 + 8 * (h /
+                                           (dim_att - 1))**(0.7 +
+                                                            1.3 * ratio_0_to_1)
             self.time_decay = nn.Parameter(decay_speed)
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
             # fancy time_first
-            zigzag = torch.tensor([(i + 1) % 3 - 1 for i in range(args.dim_att)]) * 0.5
-            self.time_first = nn.Parameter(torch.ones(args.dim_att) * math.log(0.3) + zigzag)
+            zigzag = torch.tensor([(i + 1) % 3 - 1
+                                   for i in range(dim_att)]) * 0.5
+            self.time_first = nn.Parameter(
+                torch.ones(dim_att) * math.log(0.3) + zigzag)
 
             # fancy time_mix
             self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-            self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
-            self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            self.time_mix_v = nn.Parameter(
+                torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
+            self.time_mix_r = nn.Parameter(
+                torch.pow(ddd, 0.5 * ratio_1_to_almost0))
 
-        self.key = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.value = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.receptance = nn.Linear(args.n_embd, args.dim_att, bias=False)
-        self.output = nn.Linear(args.dim_att, args.n_embd, bias=False)
-
-        if 'a' in os.environ["RWKV_MY_TESTING"]:
-            self.register_buffer("att_mask", torch.tril(torch.ones(args.ctx_len, args.ctx_len)))
-            d_qkv = args.n_embd // 16
-            self.qq = nn.Linear(args.n_embd, d_qkv, bias=False)
-            self.kk = nn.Linear(args.n_embd, d_qkv, bias=False)
-            self.vv = nn.Linear(args.n_embd, d_qkv, bias=False)
-            self.oo = nn.Linear(d_qkv, args.n_embd, bias=False)
-            with torch.no_grad():
-                self.time_mix_qq = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-                self.time_mix_kk = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-                self.time_mix_vv = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
+        self.key = nn.Linear(n_embd, dim_att, bias=False)
+        self.value = nn.Linear(n_embd, dim_att, bias=False)
+        self.receptance = nn.Linear(n_embd, dim_att, bias=False)
+        self.output = nn.Linear(dim_att, n_embd, bias=False)
 
     @MyFunction
     def forward(self, x, last_state: TimeMixState):
@@ -162,25 +123,26 @@ class RWKV_TimeMix(MyModule):
                                               k, v, last_state.wkv_state)
         return self.output(sr * y), TimeMixState(x[:, -1], new_wkv_state)
 
+
 ########################################################################################################
 
+
 class RWKV_ChannelMix(MyModule):
-    def __init__(self, args, layer_id):
+
+    def __init__(self, layer_id, n_layer, n_embd, dim_ffn):
         super().__init__()
-        self.args = args
-        self.layer_id = layer_id
 
         with torch.no_grad():  # fancy init of time_mix
-            ratio_1_to_almost0 = 1.0 - (layer_id / args.n_layer)  # 1 to ~0
-            ddd = torch.ones(1, 1, args.n_embd)
-            for i in range(args.n_embd):
-                ddd[0, 0, i] = i / args.n_embd
+            ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
+            ddd = torch.ones(1, 1, n_embd)
+            for i in range(n_embd):
+                ddd[0, 0, i] = i / n_embd
             self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
             self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
 
-        self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
-        self.receptance = nn.Linear(args.n_embd, args.n_embd, bias=False)
-        self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
+        self.key = nn.Linear(n_embd, dim_ffn, bias=False)
+        self.receptance = nn.Linear(n_embd, n_embd, bias=False)
+        self.value = nn.Linear(dim_ffn, n_embd, bias=False)
 
     @MyFunction
     def forward(self, x, last_state: ChannelMixState):
@@ -191,7 +153,8 @@ class RWKV_ChannelMix(MyModule):
         k = self.key(xk)
         k = torch.square(torch.relu(k))
         kv = self.value(k)
-        return torch.sigmoid(self.receptance(xr)) * kv, ChannelMixState(x[:, -1])
+        return (torch.sigmoid(self.receptance(xr)) * kv,
+                ChannelMixState(x[:, -1]))
 
 
 ########################################################################################################
@@ -201,19 +164,18 @@ class RWKV_ChannelMix(MyModule):
 
 class Block(nn.Module):
 
-    def __init__(self, args, layer_id):
+    def __init__(self, layer_id, n_layer, n_embd, dim_att, dim_ffn):
         super().__init__()
-        self.args = args
         self.layer_id = layer_id
 
-        self.ln1 = nn.LayerNorm(args.n_embd)
-        self.ln2 = nn.LayerNorm(args.n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
 
         if self.layer_id == 0:
-            self.ln0 = nn.LayerNorm(args.n_embd)
+            self.ln0 = nn.LayerNorm(n_embd)
 
-        self.att = RWKV_TimeMix(args, layer_id)
-        self.ffn = RWKV_ChannelMix(args, layer_id)
+        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, dim_att)
+        self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
 
     def forward(self, x, last_state: BlockState):
         if self.layer_id == 0:
@@ -232,6 +194,7 @@ class Block(nn.Module):
 
 
 class L2Wrap(torch.autograd.Function):
+
     @staticmethod
     def forward(ctx, loss, y, token_amount):
         ctx.save_for_backward(y)
@@ -250,25 +213,64 @@ class L2Wrap(torch.autograd.Function):
         return (grad_output, gy, None)
 
 
-class RWKV(pl.LightningModule):
-    def __init__(self, args):
+class RWKV(L.LightningModule):
+
+    def __init__(self,
+                 ctx_len: int,
+                 ctx_len_cutoff: int,
+                 n_embd: int,
+                 n_layer: int,
+                 vocab_size: int,
+                 grad_cp: bool,
+                 lr_init: float,
+                 warmup_steps: int,
+                 beta1: float,
+                 beta2: float,
+                 adam_eps: float,
+                 layerwise_lr: bool = True,
+                 dim_att: Optional[int] = None,
+                 dim_ffn: Optional[int] = None,
+                 load_model: Optional[str] = None):
         super().__init__()
-        self.args = args
-        if not hasattr(args, 'dim_att'):
-            args.dim_att = args.n_embd
-        if not hasattr(args, 'dim_ffn'):
-            args.dim_ffn = args.n_embd * 4
+        self.ctx_len = ctx_len
+        self.ctx_len_cutoff = ctx_len_cutoff
+        self.n_embd = n_embd
+        self.n_layer = n_layer
+        self.layerwise_lr = layerwise_lr
+        self.grad_cp = grad_cp
+        self.lr_init = lr_init
+        self.warmup_steps = warmup_steps
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.adam_eps = adam_eps
 
-        self.emb = nn.Embedding(args.vocab_size, args.n_embd)
+        dim_att = dim_att or n_embd
+        dim_ffn = dim_ffn or n_embd * 4
 
-        self.blocks = nn.ModuleList([Block(args, i) for i in range(args.n_layer)])
+        self.emb = nn.Embedding(vocab_size, n_embd)
 
-        self.ln_out = nn.LayerNorm(args.n_embd)
-        self.head = nn.Linear(args.n_embd, args.vocab_size, bias=False)
+        load(name=f"wkv_{self.ctx_len}_bf16",
+             sources=["cuda/wkv_op_bf16.cpp", "cuda/wkv_cuda_bf16.cu"],
+             verbose=True,
+             extra_cflags=["-std=c++17", "-O3", f"-DTmax={self.ctx_len}"],
+             extra_cuda_cflags=[
+                 "-t 4", "-std=c++17", "-res-usage", "--maxrregcount 60",
+                 "--use_fast_math", "-O3", "-Xptxas -O3",
+                 "--extra-device-vectorization", f"-DTmax={self.ctx_len}"
+             ],
+             is_python_module=False)
+
+        self.blocks = nn.ModuleList([
+            Block(i, n_layer, n_embd, dim_att, dim_ffn) for i in range(n_layer)
+        ])
+
+        self.ln_out = nn.LayerNorm(n_embd)
+        self.head = nn.Linear(n_embd, vocab_size, bias=False)
+
+        self.load_state_dict(torch.load(load_model, map_location='cpu'))
 
     def configure_optimizers(self):
-        args = self.args
-        if args.layerwise_lr > 0:
+        if self.layerwise_lr:
             lr_1x = set()
             lr_2x = set()
             lr_3x = set()
@@ -289,38 +291,78 @@ class RWKV(pl.LightningModule):
             # print('3x', lr_3x)
             param_dict = {n: p for n, p in self.named_parameters()}
             optim_groups = [
-                {"params": [param_dict[n] for n in lr_1x], "weight_decay": 0.0, "my_lr_scale": 1.0},
-                {"params": [param_dict[n] for n in lr_2x], "weight_decay": 0.0, "my_lr_scale": 2.0},
-                {"params": [param_dict[n] for n in lr_3x], "weight_decay": 0.0, "my_lr_scale": 3.0},
+                {
+                    "params": [param_dict[n] for n in lr_1x],
+                    "weight_decay": 0.0,
+                    "lr": 1.0 * self.lr_init
+                },
+                {
+                    "params": [param_dict[n] for n in lr_2x],
+                    "weight_decay": 0.0,
+                    "lr": 2.0 * self.lr_init
+                },
+                {
+                    "params": [param_dict[n] for n in lr_3x],
+                    "weight_decay": 0.0,
+                    "lr": 3.0 * self.lr_init
+                },
             ]
         else:
             optim_groups = [
-                {"params": [p for n, p in self.named_parameters()], "weight_decay": 0.0},
+                {
+                    "params": [p for n, p in self.named_parameters()],
+                    "weight_decay": 0.0
+                },
             ]
 
         if self.deepspeed_offload:
-            return DeepSpeedCPUAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adamw_mode=False, weight_decay=0, amsgrad=False)
-        return FusedAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, adam_w_mode=False, weight_decay=0, amsgrad=False)
-        # return ZeroOneAdam(optim_groups, lr=self.args.lr_init, betas=self.args.betas, eps=self.args.adam_eps, bias_correction=True, weight_decay=0, amsgrad=False, cuda_aware=False)
+            optimizer = DeepSpeedCPUAdam(optim_groups,
+                                         lr=self.lr_init,
+                                         betas=(self.beta1, self.beta2),
+                                         eps=self.adam_eps,
+                                         bias_correction=True,
+                                         adamw_mode=False,
+                                         weight_decay=0,
+                                         amsgrad=False)
+        else:
+            optimizer = FusedAdam(optim_groups,
+                                  lr=self.lr_init,
+                                  betas=(self.beta1, self.beta2),
+                                  eps=self.adam_eps,
+                                  bias_correction=True,
+                                  adam_w_mode=False,
+                                  weight_decay=0,
+                                  amsgrad=False)
+
+        if self.warmup_steps > 0:
+            lr_scheduler = deepspeed.runtime.lr_schedules.WarmupLR(
+                optimizer,
+                warmup_min_lr=0.2 * self.lr_init,
+                warmup_max_lr=self.lr_init,
+                warmup_num_steps=self.warmup_steps,
+                warmup_type='linear')
+
+            return optimizer, lr_scheduler
+        else:
+            return optimizer
 
     @property
     def deepspeed_offload(self) -> bool:
         strategy = self.trainer.strategy
         if isinstance(strategy, DeepSpeedStrategy):
             cfg = strategy.config["zero_optimization"]
-            return cfg.get("offload_optimizer") or cfg.get("offload_param")
+            return "offload_optimizer" in cfg or "offload_parameters" in cfg
         return False
 
     def forward(self, idx, last_states: List[BlockState]):
-        args = self.args
         B, T = idx.size()
-        assert T <= args.ctx_len, "Cannot forward, model ctx_len is exhausted."
+        assert T <= self.ctx_len, "Cannot forward, model ctx_len is exhausted."
 
         x = self.emb(idx)
 
         new_states = []
         for block, last_state in zip(self.blocks, last_states):
-            if args.grad_cp == 1:
+            if self.grad_cp:
                 x, new_state = deepspeed.checkpointing.checkpoint(
                     block, x, last_state)
             else:
@@ -331,46 +373,57 @@ class RWKV(pl.LightningModule):
 
         x = self.head(x)
 
+        if torch.any(torch.isnan(x)):
+            raise Exception()
+
         return x, new_states
 
     def training_step(self, batch, batch_idx):
-        args = self.args
 
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
         idx, targets = seq[:, :-1], seq[:, 1:]
 
         B, T = idx.shape
-        C = args.n_embd
+        C = self.n_embd
 
-        def checkpointed_step(idx, targets, prev_loss, last_states):
+        def checkpointed_step(idx, targets, prev_loss, last_states,
+                              prev_steps):
             logits, new_states = self(idx, last_states)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
+                                   targets.view(-1))
             loss = L2Wrap.apply(loss, logits, B * T)
-            return prev_loss + loss, new_states
+            new_steps = prev_steps + idx.shape[1]
+            new_loss = prev_loss * (prev_steps / new_steps) + loss * (
+                1 - prev_steps / new_steps)
+            return new_loss, new_states, new_steps
 
         total_loss = torch.tensor(0, dtype=self.emb.weight.dtype)
-        for i in range(math.ceil(T / args.ctx_len)):
-            if i % args.ctx_len_cutoff == 0:
+        steps = 0
+        for i in range(math.ceil(T / self.ctx_len)):
+            if i % self.ctx_len_cutoff == 0:
                 states = [
                     init_block_state(B, C, seq.device, self.emb.weight.dtype)
-                ] * args.n_layer
+                ] * self.n_layer
 
-            if i != math.ceil(T / args.ctx_len) - 1:
-                total_loss, states = deepspeed.checkpointing.checkpoint(
+            if i != math.ceil(T / self.ctx_len) - 1:
+                total_loss, states, steps = deepspeed.checkpointing.checkpoint(
                     checkpointed_step,
-                    idx[:, i * args.ctx_len:(i + 1) * args.ctx_len],
-                    targets[:, i * args.ctx_len:(i + 1) * args.ctx_len],
+                    idx[:, i * self.ctx_len:(i + 1) * self.ctx_len],
+                    targets[:, i * self.ctx_len:(i + 1) * self.ctx_len],
                     total_loss,
                     states,
+                    steps,
                 )
             else:
-                total_loss, states = checkpointed_step(
-                    idx[:, i * args.ctx_len:(i + 1) * args.ctx_len],
-                    targets[:, i * args.ctx_len:(i + 1) * args.ctx_len],
+                total_loss, states, steps = checkpointed_step(
+                    idx[:, i * self.ctx_len:(i + 1) * self.ctx_len],
+                    targets[:, i * self.ctx_len:(i + 1) * self.ctx_len],
                     total_loss,
                     states,
+                    steps,
                 )
+        self.log('train/loss', total_loss)
         return total_loss
 
     def training_step_end(self, batch_parts):
@@ -380,28 +433,24 @@ class RWKV(pl.LightningModule):
 
     @rank_zero_only
     def validation_step(self, batch, batch_idx):
-        args = self.args
 
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 1
-        #!FIXME: temporary workaround!!! Arbitrary length should be supported later
-        if len(seq) > T_MAX:
-            seq = seq[:T_MAX]
 
         T, = idx.shape
-        C = args.n_embd
+        C = self.n_embd
 
-        state = [init_block_state(1, C, seq.device, seq.dtype)] * args.n_layer
+        state = [init_block_state(1, C, seq.device, seq.dtype)] * self.n_layer
 
         idx, target = seq[:-1], seq[1:]
         loss = np.array([], dtype=np.float32)
-        for i in range(math.ceil(T / args.ctx_len)):
+        for i in range(math.ceil(T / self.ctx_len)):
             logit, state = self(
-                idx[i * args.ctx_len:(i + 1) * args.ctx_len].view(1, -1),
+                idx[i * self.ctx_len:(i + 1) * self.ctx_len].view(1, -1),
                 state)
             piece_loss: np.ndarray = F.cross_entropy(
                 logit,
-                target[i * args.ctx_len:(i + 1) * args.ctx_len],
+                target[i * self.ctx_len:(i + 1) * self.ctx_len],
                 reduction='none').float().cpu().numpy()
             loss = np.concatenate((loss, piece_loss))
 
@@ -422,65 +471,4 @@ class RWKV(pl.LightningModule):
                             "cross_entropy_loss",
                             title="Loss Curve"),
         })
-
-    def generate_init_weight(self):
-        print(
-            f"""
-############################################################################
-#
-# Init model weight (slow for large models)...
-#
-############################################################################
-"""
-        )
-        m = {}
-        for n in self.state_dict():
-            p = self.state_dict()[n]
-            shape = p.shape
-
-            gain = 1.0
-            scale = 1.0
-            if "ln_" in n or ".ln" in n or "time_" in n or "_mask" in n or "pos_emb" in n or '.mask.' in n:
-                m[n] = p
-            else:
-                if n == "emb.weight":
-                    scale = -1 * self.args.lr_init
-                else:
-                    if shape[0] > shape[1]:
-                        gain = math.sqrt(shape[0] / shape[1])
-                    for kk in [".att.key.", ".att.receptance.", ".att.output.", ".att.key.", ".ffn.value.", ".ffn.receptance.", ".ffnPre.value.", ".ffnPre.receptance.", "head_q.", '.oo.', '.rr.']:
-                        if kk in n:
-                            scale = 0
-                    if n == "head.weight":
-                        scale = 0.5
-                    if "head_k." in n:
-                        scale = 0.1
-                    if "head_q." in n:
-                        scale = 0
-
-                print(f"{str(shape[0]).ljust(5)} {str(shape[1]).ljust(5)} {str(scale).ljust(4)} {n}")
-
-                if self.args.accelerator.upper() == "GPU":
-                    m[n] = torch.empty((shape[0], shape[1]), device="cuda")
-                else:
-                    m[n] = torch.empty((shape[0], shape[1]))
-
-                if scale == 0:
-                    nn.init.zeros_(m[n])
-                elif scale < 0:
-                    nn.init.uniform_(m[n], a=scale, b=-scale)
-                else:
-                    nn.init.orthogonal_(m[n], gain=gain * scale)
-
-            m[n] = m[n].cpu()
-            if os.environ["RWKV_FLOAT_MODE"] == "fp16":
-                m[n] = m[n].half()
-            elif os.environ["RWKV_FLOAT_MODE"] == "bf16":
-                m[n] = m[n].bfloat16()
-
-            # if n == "emb.weight":
-            #     print(m[n])
-
-        gc.collect()
-        torch.cuda.empty_cache()
-        return m
+        self.log('validation/loss', loss.mean())
