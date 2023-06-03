@@ -39,6 +39,17 @@ public:
     auto y = torch::empty_like(k);
     auto new_state = torch::empty_like(last_state);
 
+    assert(y.is_contiguous());
+    assert(new_state.is_contiguous());
+
+    assert(w.dtype().isScalarType(torch::ScalarType::Float));
+    assert(u.dtype().isScalarType(torch::ScalarType::BFloat16));
+    assert(k.dtype().isScalarType(torch::ScalarType::BFloat16));
+    assert(v.dtype().isScalarType(torch::ScalarType::BFloat16));
+    assert(last_state.dtype().isScalarType(torch::ScalarType::Float));
+    assert(y.dtype().isScalarType(torch::ScalarType::BFloat16));
+    assert(new_state.dtype().isScalarType(torch::ScalarType::Float));
+
     cuda_forward(B, T, C, w.data_ptr<float>(), u.data_ptr<bf16>(),
                  k.data_ptr<bf16>(), v.data_ptr<bf16>(),
                  last_state.data_ptr<float>(), y.data_ptr<bf16>(),
@@ -56,8 +67,10 @@ public:
          last_state = inputs[4];
     const auto [B, T, C] = std::tuple(k.size(0), k.size(1), k.size(2));
 
-    auto gw = torch::empty({B, C}, u.options(), torch::MemoryFormat::Contiguous);
-    auto gu = torch::empty({B, C}, u.options(), torch::MemoryFormat::Contiguous);
+    auto gw =
+        torch::empty({B, C}, u.options(), torch::MemoryFormat::Contiguous);
+    auto gu =
+        torch::empty({B, C}, u.options(), torch::MemoryFormat::Contiguous);
     auto gk = torch::empty_like(k);
     auto gv = torch::empty_like(v);
     auto glast_state = torch::empty_like(last_state);

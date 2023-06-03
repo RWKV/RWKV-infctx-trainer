@@ -52,7 +52,7 @@ class BlockState:
 
 def init_block_state(B, C, device, dtype):
     wkv_state = torch.zeros((B, C, 3), device=device, dtype=torch.float)
-    wkv_state[:, :, -1] = 1e-38
+    wkv_state[:, :, -1] = -1e38
     token_shift_state = torch.zeros((B, C), device=device, dtype=dtype)
     return BlockState(TimeMixState(token_shift_state, wkv_state),
                       ChannelMixState(token_shift_state))
@@ -372,9 +372,6 @@ class RWKV(L.LightningModule):
         x = self.ln_out(x)
 
         x = self.head(x)
-
-        if torch.any(torch.isnan(x)):
-            raise Exception()
 
         return x, new_states
 

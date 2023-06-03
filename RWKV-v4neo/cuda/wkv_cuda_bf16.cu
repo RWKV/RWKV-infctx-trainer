@@ -153,8 +153,8 @@ __global__ void kernel_backward(const int B, const int T, const int C,
 
     // Multiply by w because the w -> -exp(w) preprocessing is halfway in the backwards pass, even though it's not in the forward pass
     const int _offsetBC = _b * C + _c;
-    _gw[_offsetBC] += bf16(gw * _w[_c]);
-    _gu[_offsetBC] += gu;
+    _gw[_offsetBC] = bf16(gw * _w[_c]);
+    _gu[_offsetBC] = gu;
 }
 
 void cuda_forward(int B, int T, int C, float *w, bf16 *u, bf16 *k, bf16 *v, float *last_state, bf16 *y, float *new_state) {
