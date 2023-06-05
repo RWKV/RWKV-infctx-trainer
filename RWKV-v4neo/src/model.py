@@ -3,6 +3,7 @@
 ########################################################################################################
 
 import os, math
+from random import randint
 from typing import List, Optional
 import numpy as np
 import torch
@@ -217,7 +218,8 @@ class RWKV(L.LightningModule):
 
     def __init__(self,
                  ctx_len: int,
-                 ctx_len_cutoff: int,
+                 ctx_len_cutoffs: List[int],
+                 ctx_len_warmup_steps: List[int],
                  n_embd: int,
                  n_layer: int,
                  vocab_size: int,
@@ -233,7 +235,8 @@ class RWKV(L.LightningModule):
                  load_model: Optional[str] = None):
         super().__init__()
         self.ctx_len = ctx_len
-        self.ctx_len_cutoff = ctx_len_cutoff
+        self.ctx_len_cutoffs = ctx_len_cutoffs
+        self.ctx_len_warmup_steps = ctx_len_warmup_steps
         self.n_embd = n_embd
         self.n_layer = n_layer
         self.layerwise_lr = layerwise_lr
@@ -376,13 +379,24 @@ class RWKV(L.LightningModule):
         return x, new_states
 
     def training_step(self, batch, batch_idx):
-
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
+
+        prev_step = 0
+        for step, len_cut in zip(self.ctx_len_warmup_steps,
+                                 self.ctx_len_cutoffs):
+            if prev_step <= self.global_step < step and len_cut < seq.shape[1] - 1:
+                pos = randint(0, seq.shape[1] - len_cut - 1)
+                seq = seq[:, pos:pos + len_cut + 1]
+                break
+            prev_step = step
+
         idx, targets = seq[:, :-1], seq[:, 1:]
 
         B, T = idx.shape
         C = self.n_embd
+
+        print(f'step {self.global_step} real ctx_len {T}')
 
         def checkpointed_step(idx, targets, prev_loss, last_states,
                               prev_steps):
@@ -397,12 +411,10 @@ class RWKV(L.LightningModule):
 
         total_loss = torch.tensor(0, dtype=self.emb.weight.dtype)
         steps = 0
+        states = [
+            init_block_state(B, C, seq.device, self.emb.weight.dtype)
+        ] * self.n_layer
         for i in range(math.ceil(T / self.ctx_len)):
-            if i % self.ctx_len_cutoff == 0:
-                states = [
-                    init_block_state(B, C, seq.device, self.emb.weight.dtype)
-                ] * self.n_layer
-
             if i != math.ceil(T / self.ctx_len) - 1:
                 total_loss, states, steps = deepspeed.checkpointing.checkpoint(
                     checkpointed_step,

@@ -43,7 +43,7 @@ trainer:
   callbacks:
   - class_path: lightning.pytorch.callbacks.ModelCheckpoint
     init_args:
-      dirpath: pile-10k-ckpt
+      dirpath: /home/blealtancao/rwkv-models/pile-10k-ckpt
       filename: null
       monitor: null
       verbose: false
@@ -90,7 +90,8 @@ trainer:
   default_root_dir: null
 model:
   ctx_len: 2048
-  ctx_len_cutoff: 8192
+  ctx_len_cutoffs: [8192, 16384, 32768, 65536]
+  ctx_len_warmup_steps: [100, 200, 500, 1000]
   n_embd: 4096
   n_layer: 32
   vocab_size: 50277
@@ -105,7 +106,7 @@ model:
   dim_ffn: null
   load_model: /home/blealtancao/rwkv-models/RWKV-4-Pile-7B-20230406-ctx8192-test949.pth
 data:
-  data_path: ./pile-10k-data
+  data_path: /home/blealtancao/rwkv-models/pile-10k-data
   source: null
   tokenizer: null
 ckpt_path: null
