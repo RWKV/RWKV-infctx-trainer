@@ -90,7 +90,8 @@ trainer:
   default_root_dir: null
 model:
   ctx_len: 2048
-  ctx_len_cutoff: 8192
+  ctx_len_cutoffs: [8192, 16384, 32768, 65536]
+  ctx_len_warmup_steps: [100, 200, 500, 1000]
   n_embd: 768
   n_layer: 12
   vocab_size: 50277
