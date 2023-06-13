@@ -382,14 +382,27 @@ class RWKV(L.LightningModule):
     def compute_loss(self, batch, batch_idx, do_cutoff: bool):
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
+        seq_mask = batch['attention_mask']
 
+        # Check if attent mask is set, if not initialize it
+        if seq_mask is None or seq_mask.ndim != 2:
+            seq_mask = torch.ones_like(seq[:, 1:])
+        
         if do_cutoff:
             prev_step = 0
             for step, len_cut in zip(self.ctx_len_warmup_steps,
                                     self.ctx_len_cutoffs):
                 if prev_step <= self.global_step < step and len_cut < seq.shape[1] - 1:
                     pos = randint(0, seq.shape[1] - len_cut - 1)
-                    seq = seq[:, pos:pos + len_cut + 1]
+                    
+                    # Original
+                    # seq = seq[:, pos:pos + len_cut + 1]
+
+                    # Changed to use masking for prefix cutoff (i do not know if this makes sense)
+                    seq = seq[:, :pos + len_cut + 1]
+                    seq_mask = seq_mask[:, :pos + len_cut + 1]
+                    # Set the attention mask to 0 for the skipped tokens
+                    seq_mask[:, :pos] = 0
                     break
                 prev_step = step
 
@@ -398,11 +411,13 @@ class RWKV(L.LightningModule):
         B, T = idx.shape
         C = self.n_embd
 
-        def checkpointed_step(idx, targets, prev_loss, last_states,
+        def checkpointed_step(idx, targets, mask, prev_loss, last_states,
                               prev_steps):
             logits, new_states = self(idx, last_states)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
-                                   targets.view(-1))
+                                   targets.view(-1), reduction="none")
+            submask = mask.view(-1)[:loss.shape[0]]
+            loss = torch.sum(loss * submask) / torch.max(torch.sum(submask), torch.tensor(1, dtype=submask.dtype))
             loss = L2Wrap.apply(loss, logits, B * T)
             new_steps = prev_steps + idx.shape[1]
             new_loss = prev_loss * (prev_steps / new_steps) + loss * (
@@ -420,6 +435,7 @@ class RWKV(L.LightningModule):
                     checkpointed_step,
                     idx[:, i * self.ctx_len:(i + 1) * self.ctx_len],
                     targets[:, i * self.ctx_len:(i + 1) * self.ctx_len],
+                    seq_mask[:, i * self.ctx_len:(i + 1) * self.ctx_len],
                     total_loss,
                     states,
                     steps,
@@ -428,6 +444,7 @@ class RWKV(L.LightningModule):
                 total_loss, states, steps = checkpointed_step(
                     idx[:, i * self.ctx_len:(i + 1) * self.ctx_len],
                     targets[:, i * self.ctx_len:(i + 1) * self.ctx_len],
+                    seq_mask[:, i * self.ctx_len:(i + 1) * self.ctx_len],
                     total_loss,
                     states,
                     steps,
