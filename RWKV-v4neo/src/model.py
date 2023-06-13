@@ -18,6 +18,7 @@ from lightning.pytorch.strategies import DeepSpeedStrategy
 import deepspeed
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 import deepspeed.runtime.lr_schedules
+import wandb
 
 RWKV_JIT_ON = True
 
@@ -378,7 +379,7 @@ class RWKV(L.LightningModule):
 
         return x, new_states
 
-    def compute_loss(self, batch, do_cutoff: bool):
+    def compute_loss(self, batch, batch_idx, do_cutoff: bool):
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
 
@@ -432,14 +433,17 @@ class RWKV(L.LightningModule):
                     steps,
                 )
 
+        # @TODO : Figure out how to check if wandb is enabled, and skip the wandb log accordingly
+        wandb.log({'substep': batch_idx, 'real_ctx_len': T, 'train/loss': total_loss, 'trainer/global_step':self.global_step})
+
         return total_loss
 
     def training_step(self, batch, batch_idx):
-        total_loss = self.compute_loss(batch, True)
+        total_loss = self.compute_loss(batch, batch_idx, True)
         self.log('train/loss', total_loss, prog_bar=True)
         return total_loss
 
     def validation_step(self, batch, batch_idx):
-        total_loss = self.compute_loss(batch, False)
+        total_loss = self.compute_loss(batch, batch_idx, False)
         self.log('validation/loss', total_loss, prog_bar=True, sync_dist=True)
         return total_loss
