@@ -198,9 +198,10 @@ class Block(nn.Module):
 class L2Wrap(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, loss, y, token_amount):
+    def forward(ctx, loss, y, token_amount, currentMask):
         ctx.save_for_backward(y)
         ctx.token_amount = token_amount
+        ctx.currentMask = currentMask
         return loss
 
     @staticmethod
@@ -212,7 +213,8 @@ class L2Wrap(torch.autograd.Function):
         maxx, ids = torch.max(y, -1, keepdim=True)
         gy = torch.zeros_like(y)
         gy.scatter_(-1, ids, maxx * factor)
-        return (grad_output, gy, None)
+        gy=gy*ctx.currentMask[:,:,None]
+        return (grad_output, gy, None, None)
 
 
 class RWKV(L.LightningModule):
@@ -410,16 +412,31 @@ class RWKV(L.LightningModule):
 
         B, T = idx.shape
         C = self.n_embd
+        total_mask_sum = torch.sum(seq_mask)
 
         def checkpointed_step(idx, targets, mask, prev_loss, last_states,
                               prev_steps):
             logits, new_states = self(idx, last_states)
+            submask = mask.view(-1)[:loss.shape[0]]
+            submask_sum=torch.sum(submask)
+
+            # Special handling of empty mask 
+            # (possible when real_ctx_len is larger then ctx_len, which results into 'chunking')
+            if(submask_sum==0):
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
+                                       targets.view(-1), reduction="none")
+                loss = torch.sum(loss * submask) / 1
+                loss = L2Wrap.apply(loss, logits, total_mask_sum, submask)
+                new_steps = prev_steps # + submask_sum
+                new_loss = prev_loss+loss
+                return new_loss, new_states, new_steps
+
+            # Handling with mask
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
                                    targets.view(-1), reduction="none")
-            submask = mask.view(-1)[:loss.shape[0]]
-            loss = torch.sum(loss * submask) / torch.max(torch.sum(submask), torch.tensor(1, dtype=submask.dtype))
-            loss = L2Wrap.apply(loss, logits, B * T)
-            new_steps = prev_steps + idx.shape[1]
+            loss = torch.sum(loss * submask) / submask_sum
+            loss = L2Wrap.apply(loss, logits, total_mask_sum, submask)
+            new_steps = prev_steps + submask_sum
             new_loss = prev_loss * (prev_steps / new_steps) + loss * (
                 1 - prev_steps / new_steps)
             return new_loss, new_states, new_steps
