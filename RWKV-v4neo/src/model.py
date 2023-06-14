@@ -213,7 +213,7 @@ class L2Wrap(torch.autograd.Function):
         maxx, ids = torch.max(y, -1, keepdim=True)
         gy = torch.zeros_like(y)
         gy.scatter_(-1, ids, maxx * factor)
-        gy=gy*ctx.currentMask[:,:,None]
+        gy=gy*ctx.currentMask[:,None][None,:]
         return (grad_output, gy, None, None)
 
 
@@ -417,14 +417,14 @@ class RWKV(L.LightningModule):
         def checkpointed_step(idx, targets, mask, prev_loss, last_states,
                               prev_steps):
             logits, new_states = self(idx, last_states)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
+                                   targets.view(-1), reduction="none")
             submask = mask.view(-1)[:loss.shape[0]]
             submask_sum=torch.sum(submask)
 
             # Special handling of empty mask 
             # (possible when real_ctx_len is larger then ctx_len, which results into 'chunking')
             if(submask_sum==0):
-                loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
-                                       targets.view(-1), reduction="none")
                 loss = torch.sum(loss * submask) / 1
                 loss = L2Wrap.apply(loss, logits, total_mask_sum, submask)
                 new_steps = prev_steps # + submask_sum
@@ -432,8 +432,6 @@ class RWKV(L.LightningModule):
                 return new_loss, new_states, new_steps
 
             # Handling with mask
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
-                                   targets.view(-1), reduction="none")
             loss = torch.sum(loss * submask) / submask_sum
             loss = L2Wrap.apply(loss, logits, total_mask_sum, submask)
             new_steps = prev_steps + submask_sum
