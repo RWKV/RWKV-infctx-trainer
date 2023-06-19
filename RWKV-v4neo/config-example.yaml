@@ -252,5 +252,5 @@ data:
   # ---
   # disablePromptCompletionMasking: false
 
-# ???
+# Path to the current checkpoint to continue training from
 ckpt_path: null
