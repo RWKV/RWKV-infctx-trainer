@@ -465,8 +465,9 @@ class RWKV(L.LightningModule):
                     steps,
                 )
 
-        # @TODO : Figure out how to check if wandb is enabled, and skip the wandb log accordingly
-        wandb.log({'substep': batch_idx, 'real_ctx_len': T, 'train/loss': total_loss, 'trainer/global_step':self.global_step})
+        # Wandb logging only, if an active run exists
+        if wandb.run is not None:
+            wandb.log({'substep': batch_idx, 'real_ctx_len': T, 'train/loss': total_loss, 'trainer/global_step':self.global_step})
 
         return total_loss
 
