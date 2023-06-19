@@ -51,7 +51,7 @@ trainer:
   #     config: null
   #     entity: null
   #     reinit: null
-  #     tags: null
+  #     tags: ['RWKV']
   #     group: null
   #     notes: null
   #     magic: null
