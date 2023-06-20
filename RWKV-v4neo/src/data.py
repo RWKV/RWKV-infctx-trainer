@@ -96,8 +96,12 @@ def get_data_module(
         else:
             src_dataset = src_dataset.map(map_tokenizer, batched=True, num_proc=num_cpus, remove_columns=['text'])
 
-        # See if rechunking is needed
+        # See if rechunking is needed, this is useful only for text based datasets
+        # where we would need to split them into "digestable" context length sizes
         if source == "text" and text_chunk_size > 0:
+            # Get the newline token
+            newline_tokenSet = tokenizer(["\n"])
+
             # The rechunking function
             def rechunk_text(x):
                 # Full Raw values that we will need to "rechunk"
@@ -107,11 +111,12 @@ def get_data_module(
 
                 # Loop through the x input, and build the raw values
                 for i in range(len(x["input_ids"])):
-                    # Get the respective valeus and push them to the raw values
-                    # effectively merging the arrays
-                    full_input_ids += x["input_ids"][i]
-                    full_token_type_ids += x["token_type_ids"][i]
-                    full_attention_mask += x["attention_mask"][i]
+                    # Get the respective values and push them to the 
+                    # raw value array, effectively merging the arrays together
+                    # with the newline token in between
+                    full_input_ids += x["input_ids"][i] + newline_tokenSet["input_ids"][0]
+                    full_token_type_ids += x["token_type_ids"][i] + newline_tokenSet["token_type_ids"][0]
+                    full_attention_mask += x["attention_mask"][i] + newline_tokenSet["attention_mask"][0]
                 
                 # Total length, and sample count
                 # note that thte "remainder" will be discarded
