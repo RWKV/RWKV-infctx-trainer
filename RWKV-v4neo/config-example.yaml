@@ -81,15 +81,18 @@ trainer:
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
       dirpath: /path/to/your/checkpoint/dir
       filename: null
-      monitor: null
-      verbose: false
+      
+      # Save the top/last K checkpoints
+      save_top_k: 10
+      # Choose by the most recent checkpoints (time based)
+      monitor: 'time_log'
+      mode: max
+      
       save_last: null
-      save_top_k: 1
       # DO NOT set this as true, as the model weight exported will have format issues
       # expert as checkpoint, and use the `export_checkpoint.py` script to convert to model instead
       save_weights_only: false
-      mode: min
-      auto_insert_metric_name: true
+
       # How frequent you want to save a checkpoint for every step.
       # This will happen for every X data sample, where X = every_n_train_steps * accumulate_grad_batches
       #
@@ -100,6 +103,10 @@ trainer:
       every_n_epochs: 1
       save_on_train_epoch_end: true
       train_time_interval: null
+
+      # Other settings, you can probably leave alone
+      verbose: false
+      auto_insert_metric_name: true
   
   ########################################
   ## Training run parameter settings
