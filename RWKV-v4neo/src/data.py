@@ -22,12 +22,15 @@ def get_data_module(
         tokenizer: str = "neox",
         disablePromptCompletionMasking: bool = False
     ) -> LightningDataModule:
+    # Number of max cpu cores
+    num_cpus = cpu_count()
+
+    # Source data processing
     if source is not None:
         if tokenizer is None:
             raise ValueError('Tokenizer must be specified if source is specified')
 
         # Setup the basic load_dataset params
-        num_cpus = cpu_count()
         load_dataset_params = {
             'path': data_path,
             'num_proc': num_cpus
@@ -162,4 +165,4 @@ def get_data_module(
 
     # Load the dataset as per normal 
     dataset = load_from_disk(data_path).with_format('torch')
-    return LightningDataModule.from_datasets(dataset['train'], dataset['test'])
+    return LightningDataModule.from_datasets(dataset['train'], dataset['test'], num_workers=num_cpus)
