@@ -228,14 +228,17 @@ class RWKV(L.LightningModule):
                  vocab_size: int,
                  grad_cp: bool,
                  lr_init: float,
-                 warmup_steps: int,
-                 beta1: float,
-                 beta2: float,
-                 adam_eps: float,
+                 warmup_steps: int = -1,
+                 beta1: float = 0.9,
+                 beta2: float = 0.99,
+                 adam_eps: float = 1.0e-08,
+                 weight_decay: float = 0.01,
                  layerwise_lr: bool = True,
                  dim_att: Optional[int] = None,
                  dim_ffn: Optional[int] = None,
-                 load_model: Optional[str] = None):
+                 load_model: Optional[str] = None,
+                 torch_set_float32_matmul_precision:str = None
+                 ):
         super().__init__()
         self.ctx_len = ctx_len
         self.ctx_len_cutoffs = ctx_len_cutoffs
@@ -248,10 +251,14 @@ class RWKV(L.LightningModule):
         self.warmup_steps = warmup_steps
         self.beta1 = beta1
         self.beta2 = beta2
+        self.weight_decay = weight_decay
         self.adam_eps = adam_eps
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or n_embd * 4
+
+        if torch_set_float32_matmul_precision is not None:
+            torch.set_float32_matmul_precision(torch_set_float32_matmul_precision)
 
         self.emb = nn.Embedding(vocab_size, n_embd)
 
@@ -328,7 +335,7 @@ class RWKV(L.LightningModule):
                                          eps=self.adam_eps,
                                          bias_correction=True,
                                          adamw_mode=False,
-                                         weight_decay=0,
+                                         weight_decay=self.weight_decay,
                                          amsgrad=False)
         else:
             optimizer = FusedAdam(optim_groups,
@@ -337,7 +344,7 @@ class RWKV(L.LightningModule):
                                   eps=self.adam_eps,
                                   bias_correction=True,
                                   adam_w_mode=False,
-                                  weight_decay=0,
+                                  weight_decay=self.weight_decay,
                                   amsgrad=False)
 
         if self.warmup_steps > 0:

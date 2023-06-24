@@ -7,22 +7,26 @@ It can be later increased until no cutoff presents.
 
 The training code is by the way tremendously refactored into using PyTorch 2.0, Lightning 2.0 and DeepSpeed 2.0, and the starting script now relies on LightningCLI so you will see the [config.yaml](RWKV-v4neo/config-7B.yaml) containing all the switches, mostly standard ones that Lightning processes by itself.
 
-The data loading is also rewritten so that it no longer accepts binidx format (I'm a bit lazy!), instead it accepts HuggingFace Datasets through the `data.source` configuration, tokenize with `data.tokenizer` (e.g. `20B_tokenizer.json` provided in the repo for RWKV-4-pile series models; I haven't work on the new RWKV-4-world models yet) and stores (also in HuggingFace format) at `data.data_path`.
-Once you have prepared the tokenized data, you can leave the `data.{source, tokenizer}` empty to skip the preprocessing.
-Please notice that it currently supports only batch size of 1, and accepts no `bsz` parameter.
-
-Besides, I removed the weight initialization for the sake of simplicity, so it doesn't support training ground up now.
-The weight has to be loaded from a model file, compatible with the original format by @BlinkDL used in [RWKV-LM](https://github.com/BlinkDL/RWKV-LM).
-
 To use this repo, go into `RWKV-v4neo` directory and do
 
 ```sh
-python3 new_train.py -c {your_config}.yaml
+python3 new_train.py fit -c {your_config}.yaml
 ```
 
 Remember to modify the configuration for your own need. 
 
 See [RWKV-v4neo/config-example.yaml](./RWKV-v4neo/config-example.yaml) for documentation on the various options
+
+## Existing limitations
+
+The following features are not yet supported (that may exist in [blinks original repo](https://github.com/BlinkDL/RWKV-LM))
+- numpy file dataset
+- binidx dataset
+- model init weight
+- model resize weights (init from smaller to bigger model)
+- world tokenizer
+- Learning Rate init -> Learning Rate Final support
+- helper script to add new tokens to existing model
 
 ## Environment setup
 
@@ -46,3 +50,17 @@ python -m pip install lm-dataformat ftfy sentencepiece tokenizers wandb
 ```
 
 Due to issues with [deepspeed on windows](https://github.com/microsoft/DeepSpeed/issues/2427). Only linux environments are supported. WSl2 with windows is not recommended, due to heavy performance penalities in the process (cannot use deepspeed offload, ~50% slower)
+
+## Overall training process
+
+- Either init a new model (todo script), or download an existing model
+- Setup the [config.yaml](./RWKV-v4neo/config-example.yaml) file, customized for your foundation model / finetune use case
+- Preload the dataset using the `python3 preload_dataset.py {you-config}.yaml`
+- Start the training process `python3 new_train.py fit -c {your_config}.yaml`
+- Export the checkpoint after training is complete with `python3 export_checkpoint.py ../path/to/checkpoint`
+- From the checkpoint folder, you should find the fp32 model named `rwkv_model.pth`
+- You should probably convert this to an fp16 model (todo script)
+
+## Examples of dataset configs
+
+@TODO
