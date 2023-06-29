@@ -24,7 +24,8 @@ trainer:
   # For more details see:
   # https://lightning.ai/docs/pytorch/stable/advanced/model_parallel.html#deepspeed-zero-stage-2
   #
-  strategy: deepspeed_stage_2_offload
+  #!FIXME: currently only deepspeed_stage_1 is supported, due to that deepspeed cannot handle repeated backward hook.
+  strategy: deepspeed_stage_1
 
   # Floating point precision for the model, because RWKV is built FOR bf16
   # you should pretty much never change this setting
