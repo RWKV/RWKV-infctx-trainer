@@ -664,6 +664,9 @@ class RWKV(L.LightningModule):
 
             # Get the gradient accumulation steps size
             gradient_accumulation_steps = max(1, self.trainer.accumulate_grad_batches)
+
+            # Get the current device
+            cur_device = self.device
             
             # We get the average segment size, instead of ctx length size.
             # this helps ensure that the segment cutoffs do not make the last segment too small, 
@@ -692,7 +695,7 @@ class RWKV(L.LightningModule):
                     idx[:, i * segment_size:(i + 1) * segment_size],
                     targets[:, i * segment_size:(i + 1) * segment_size],
                     seq_mask[:, i * segment_size:(i + 1) * segment_size],
-                    torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_(True),
+                    torch.tensor(0, dtype=self.emb.weight.dtype, device=cur_device).requires_grad_(True),
                     prv_shift_states,
                     prv_wkv_states,
                     steps,
@@ -702,12 +705,14 @@ class RWKV(L.LightningModule):
                 # Compute the backward pass for the segment
                 if i >= first_learning_segment:
                     # The learning loss, should be normalized against the accumulation steps
+                    # as we are bypassing the pytorch lightning normalization
+                    # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
                     learning_loss = segment_loss / gradient_accumulation_steps
 
                     # Perform the backward pass accordingly
                     if i < segment_count-1:
                         # Undocumented multiple backward pass support
-                        # https://discord.com/channels/992359628979568762/1123248764132524242/1125374974597795920
+                        # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
                         self.manual_backward(learning_loss, optimizer, retain_graph=True)
                     else:
                         # This is the last pass, we can drop the graph after this
