@@ -661,6 +661,9 @@ class RWKV(L.LightningModule):
 
             # Get the optimizer
             optimizer = self.optimizers()
+
+            # Get the gradient accumulation steps size
+            gradient_accumulation_steps = max(1, self.trainer.accumulate_grad_batches)
             
             # We get the average segment size, instead of ctx length size.
             # this helps ensure that the segment cutoffs do not make the last segment too small, 
@@ -698,13 +701,17 @@ class RWKV(L.LightningModule):
 
                 # Compute the backward pass for the segment
                 if i >= first_learning_segment:
-                    if i == segment_count-1:
-                        # This is the last pass, we can drop the graph after this
-                        self.manual_backward(segment_loss, optimizer)
-                    else:
+                    # The learning loss, should be normalized against the accumulation steps
+                    learning_loss = segment_loss / gradient_accumulation_steps
+
+                    # Perform the backward pass accordingly
+                    if i < segment_count-1:
                         # Undocumented multiple backward pass support
                         # https://discord.com/channels/992359628979568762/1123248764132524242/1125374974597795920
-                        self.manual_backward(segment_loss, optimizer, retain_graph=True)
+                        self.manual_backward(learning_loss, optimizer, retain_graph=True)
+                    else:
+                        # This is the last pass, we can drop the graph after this
+                        self.manual_backward(learning_loss, optimizer)
                 
                 # Accumulate the total loss, since there is nothing to backprop here
                 # its respective "backward pass" should be a no-op
