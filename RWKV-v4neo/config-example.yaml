@@ -225,6 +225,9 @@ model:
   # Segmented range to performing backprop learning on
   # 1 means to apply only for the last segment
   # -1 means to apply for all segments
+  #
+  # For multi-gpu training, this must be set to 1, due to a known issue
+  # else an exception would be thrown
   bptt_learning_range: -1
 
   # Limits the bptt learning only to the "current" chunk
