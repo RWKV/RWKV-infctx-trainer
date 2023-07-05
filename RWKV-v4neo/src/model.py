@@ -2,7 +2,7 @@
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ########################################################################################################
 
-import os, math, sys
+import gc, math
 from random import randint
 from typing import List, Optional
 
