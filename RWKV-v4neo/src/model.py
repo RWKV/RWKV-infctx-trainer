@@ -324,6 +324,9 @@ class RWKV(L.LightningModule):
         if self.bptt_learning == False:
             if self.deepspeed_stage >= 2 or self.deepspeed_offload:
                 print("[WARNING]: it is highly recommended to enable bptt_learning when used to deepspeed 2/3/offloading, otherwise an exception will occur when training with dataset records, larger then the configured context length ({self.ctx_len})")
+        else:
+            if self.trainer.num_devices > 1 and (self.bptt_learning_range <= 0 or self.bptt_learning_range > 1):
+                print("[WARNING]: bptt_learning with learning_range > 1 across multiple GPU's has a major performance penalty with datasets of mixed sizes due to its constant need to keep all GPU's in sync")
         if self.layerwise_lr:
             lr_1x = set()
             lr_2x = set()
@@ -697,7 +700,13 @@ class RWKV(L.LightningModule):
             #
             # Combined, this makes this issue very hard to trace and debug, as it will manifest itself as randomly "freezing"
             # when out of sync during `self.manual_backward()` calls. Without the current work around put in place
-            shared_segment_count = self.trainer.getFabric().all_reduce(segment_count, reduce_op="max").item()
+            #
+            # We only do this, if we are doing bptt learning on more then 1 segment, and gpu count > 1
+            # otherwise we just use the segment count as it is
+            if self.trainer.num_devices > 1 and (self.bptt_learning_range > 1 or self.bptt_learning_range <= 0):
+                shared_segment_count = self.trainer.getFabric().all_reduce(segment_count, reduce_op="max").item()
+            else:
+                shared_segment_count = segment_count
 
             for i in range(shared_segment_count):
                 # Apply state truncation, if truncated learning is enabled
