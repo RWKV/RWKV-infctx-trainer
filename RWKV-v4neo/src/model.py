@@ -759,13 +759,13 @@ class RWKV(L.LightningModule):
                         # Undocumented multiple backward pass support
                         # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
                         self.manual_backward(learning_loss, optimizer, retain_graph=True)
+
+                        # Accumulate without gradient, as we already did the backward pass
+                        total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
                     else:
-                        # This is the last pass, we can drop the graph after this
-                        self.manual_backward(learning_loss, optimizer)
-                
-                # Accumulate the total loss, since there is nothing to backprop here
-                # its final respective "backward pass" should be a no-op
-                total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
+                        # This is the last pass, we let the default pytorch lightning handle the backward pass
+                        # and return the segment loss as part of the total loss
+                        total_loss = total_loss + segment_loss
 
                 # GC collect unused memory
                 gc.collect()
@@ -817,13 +817,6 @@ class RWKV(L.LightningModule):
         total_loss = self.compute_loss(batch, batch_idx, True)
         self.log('train/loss', total_loss, prog_bar=True)
         
-        # # The following barrier is required to syncronize the trainig step across all GPUs before
-        # # the optimizer step is performed for each batch. Otherwise a "hanged state" can occur.
-        # #
-        # # This is suppose to help with multi-gpu training (did not work)
-        # if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0:
-        #     self.trainer.getFabric().barrier()
-
         return total_loss
 
     def validation_step(self, batch, batch_idx):
