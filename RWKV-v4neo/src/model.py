@@ -325,8 +325,13 @@ class RWKV(L.LightningModule):
             if self.deepspeed_stage >= 2 or self.deepspeed_offload:
                 print("[WARNING]: it is highly recommended to enable bptt_learning when used to deepspeed 2/3/offloading, otherwise an exception will occur when training with dataset records, larger then the configured context length ({self.ctx_len})")
         else:
-            if self.trainer.num_devices > 1 and (self.bptt_learning_range <= 0 or self.bptt_learning_range > 1):
-                print("[WARNING]: bptt_learning with learning_range > 1 across multiple GPU's has a major performance penalty with datasets of mixed sizes due to its constant need to keep all GPU's in sync")
+            if self.trainer.num_devices > 1:
+                if self.bptt_learning_range <= 0:
+                    print("[WARNING]: unlimited bptt_learning_range across multiple GPU's has a major performance penalty with datasets of mixed sizes due to its constant need to keep all GPU's in sync (consider using bptt_learning_range=1 instead)")
+                if self.bptt_learning_range > 1:
+                    # Temporary error, till better sync logic is done for mixed document sizes
+                    # (lazy to support this right now, since i have no idea if anyone has a use for it)
+                    raise NotImplementedError("bptt_learning_range > 1 is not supported yet")
         if self.layerwise_lr:
             lr_1x = set()
             lr_2x = set()
