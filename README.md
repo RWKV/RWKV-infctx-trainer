@@ -36,8 +36,8 @@ The following venv setup using conda, modify for your use case respectively
 sudo apt-get install ninja-build
 
 # Virtual env, with python 3.11
-conda create -n rwkv-exp python=3.11 pip
-conda activate rwkv-exp
+conda create -n rwkv-infctx python=3.11 pip
+conda activate rwkv-infctx
 
 # Install pytorch
 conda install -y pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia

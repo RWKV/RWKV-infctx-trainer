@@ -3,7 +3,7 @@ seed_everything: true
 trainer:
   accelerator: gpu
   strategy: deepspeed_stage_2_offload
-  devices: 1
+  devices: auto
   num_nodes: 1
   precision: bf16
   logger:
