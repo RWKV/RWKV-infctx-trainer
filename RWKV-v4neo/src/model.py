@@ -324,9 +324,6 @@ class RWKV(L.LightningModule):
         if self.bptt_learning == False:
             if self.deepspeed_stage >= 2 or self.deepspeed_offload:
                 print("[WARNING]: it is highly recommended to enable bptt_learning when used to deepspeed 2/3/offloading, otherwise an exception will occur when training with dataset records, larger then the configured context length ({self.ctx_len})")
-        else:
-            if self.trainer.num_devices > 1 and (self.bptt_learning_range <= -1 or self.bptt_learning_range > 1):
-                raise NotImplementedError("bptt_learning_range must be limited to 1 in multi-gpu training, due to existing issues where `backprop(retain_graph=True)` where it hangs in multi-gpu training")
         if self.layerwise_lr:
             lr_1x = set()
             lr_2x = set()
@@ -544,7 +541,7 @@ class RWKV(L.LightningModule):
     # 
     # This allow us to avoid disabling the "automatic_optimization" flag
     #
-    # Which would have been required to do "segmented learning", or "Truncated Backpropagation Through Time"
+    # Which would have been required to do "segmented learning", or "Backpropagation Through Time"
     # where we would need to implement manual optimization as per
     # https://lightning.ai/docs/pytorch/stable/model/manual_optimization.html
     #
@@ -638,7 +635,7 @@ class RWKV(L.LightningModule):
         segment_count = math.ceil(T / self.ctx_len)
 
         #
-        # TBPTT learning, we split the sequence into segments
+        # BPTT learning, we split the sequence into segments
         # and perform a backward pass for each segment, on its own.
         #
         # Allowing us to perform backpropagation across context sizes much larger
@@ -661,30 +658,51 @@ class RWKV(L.LightningModule):
         #
         if do_bptt_learning:
 
-            # Get the optimizer
-            optimizer = self.optimizers()
-
-            # Get the gradient accumulation steps size
             gradient_accumulation_steps = max(1, self.trainer.accumulate_grad_batches)
-
-            # Get the current device
+            optimizer = self.optimizers()
             cur_device = self.device
             
-            # We get the average segment size, instead of ctx length size.
-            # this helps ensure that the segment cutoffs do not make the last segment too small, 
+            # We use the average segment size, instead of ctx length size.
+            # this helps ensure that the segment cutoffs do not make the last segment too small.
+            # (eg, the last chunk having only 1 token)
+            #
             # it also helps ensure the segment cutoff points are more varied, across mixed dataset sizes
-            # to avoid potentially undesired training behaviour at fixed cutoff points
+            # and avoid potentially undesired training behaviour at fixed cutoff points
             # (this only applies for segmented learning)
             segment_size = min(math.ceil(T / segment_count), self.ctx_len)
 
-            # Segmented learning range
+            # We compute when we start the segmented learning process
             if self.bptt_learning_range > 0:
                 first_learning_segment = segment_count - self.bptt_learning_range;
             else:
                 first_learning_segment = 0;
 
-            for i in range(segment_count):
+            # Dummy 2D tenros of shape [1,1], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
+            dummy_2d_zero = torch.tensor([[0]], dtype=torch.long, device=cur_device)
+
+            # Get the max segment count across all GPUs, in the current batch, which is used to keep all devices are in sync
+            # Once a thread has completed all its segments, it will do dummy checkpoint/forward/backprop with one token,
+            # and stay in sync with the thread that are still working on their segments
+            #
+            # This is used to work around an undocumented behaviour for either lightning / deepspeed loss.backward multi-gpu handling
+            # where the `self.manual_backward()` / `loss.backward()` call will block / freeze / hang when being too "out of sync"
+            #
+            # This can be viewed as a form of `fabric.barrier()` which is invoked implicitly by each `self.manual_backward()` call
+            # except that it isn't exactly a `fabric.barrier()` - because it does not block immediately and instead blocks in 
+            # the next `self.manual_backward()` call if the previous ones are too far out of sync. 
+            # (its confusing, but makes sense for efficency)
+            #
+            # Additionally because the "code line position" and params actually matter for the 'barrier' code effect,
+            # we cant work around this issue by doing dummy `self.manual_backward()` calls, in another if/else branch or loop
+            #
+            # Combined, this makes this issue very hard to trace and debug, as it will manifest itself as randomly "freezing"
+            # when out of sync during `self.manual_backward()` calls. Without the current work around put in place
+            shared_segment_count = self.trainer.getFabric().all_reduce(segment_count, reduce_op="max").item()
+
+            for i in range(shared_segment_count):
                 # Apply state truncation, if truncated learning is enabled
+                # this limits the backprop process, reduces loss learning rate, 
+                # but save vram across extreamly large backpropagation steps
                 if self.bptt_truncated_learning:
                     prv_shift_states = states.shift_states.clone().detach().requires_grad_(False)
                     prv_wkv_states = states.wkv_states.clone().detach().requires_grad_(False)
@@ -692,11 +710,22 @@ class RWKV(L.LightningModule):
                     prv_shift_states = states.shift_states
                     prv_wkv_states = states.wkv_states
                 
+                # We use a dummy masked token 0, to do additional dummy checkpoint/forward/backprop when needed
+                # for each additional call after the current "segment_count" max
+                if i < segment_count - 1:
+                    cur_idx = idx[:, i * segment_size:(i + 1) * segment_size]
+                    cur_tar = targets[:, i * segment_size:(i + 1) * segment_size]
+                    cur_msk = seq_mask[:, i * segment_size:(i + 1) * segment_size]
+                else:
+                    cur_idx = dummy_2d_zero
+                    cur_tar = dummy_2d_zero
+                    cur_msk = dummy_2d_zero
+
                 # Segmented learning, applies the forward/pass over each chunk seperately
                 segment_loss, new_shift_states, new_wkv_states, steps = checkpointed_step(
-                    idx[:, i * segment_size:(i + 1) * segment_size],
-                    targets[:, i * segment_size:(i + 1) * segment_size],
-                    seq_mask[:, i * segment_size:(i + 1) * segment_size],
+                    cur_idx,
+                    cur_tar,
+                    cur_msk,
                     torch.tensor(0, dtype=self.emb.weight.dtype, device=cur_device).requires_grad_(True),
                     prv_shift_states,
                     prv_wkv_states,
@@ -712,7 +741,7 @@ class RWKV(L.LightningModule):
                     learning_loss = segment_loss / gradient_accumulation_steps
 
                     # Perform the backward pass accordingly
-                    if i < segment_count-1:
+                    if i < shared_segment_count-1:
                         # Undocumented multiple backward pass support
                         # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
                         self.manual_backward(learning_loss, optimizer, retain_graph=True)
@@ -721,7 +750,7 @@ class RWKV(L.LightningModule):
                         self.manual_backward(learning_loss, optimizer)
                 
                 # Accumulate the total loss, since there is nothing to backprop here
-                # its respective "backward pass" should be a no-op
+                # its final respective "backward pass" should be a no-op
                 total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
 
                 # GC collect unused memory
@@ -729,7 +758,7 @@ class RWKV(L.LightningModule):
                 # torch.cuda.empty_cache()
         else:
 
-            # Normal operations without TBPTT
+            # Normal operations without BPTT
             segment_size = self.ctx_len
             for i in range(segment_count):
                 if i < segment_count-1:
