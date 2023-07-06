@@ -327,7 +327,7 @@ class RWKV(L.LightningModule):
         else:
             if self.trainer.num_devices > 1:
                 if self.bptt_learning_range <= 0:
-                    print("[WARNING]: unlimited bptt_learning_range across multiple GPU's has a major performance penalty with datasets of mixed sizes due to its constant need to keep all GPU's in sync (consider using bptt_learning_range=1 instead)")
+                    print("[WARNING]: unlimited bptt_learning_range across multiple GPU's has a performance penalty with datasets of mixed sizes due to its constant need to keep all GPU's in sync (consider using bptt_learning_range=1 instead)")
                 if self.bptt_learning_range > 1:
                     # Temporary error, till better sync logic is done for mixed document sizes
                     # (lazy to support this right now, since i have no idea if anyone has a use for it)
@@ -713,6 +713,7 @@ class RWKV(L.LightningModule):
             else:
                 shared_segment_count = segment_count
 
+            # Lets go through all the segments (including dummy ones)
             for i in range(shared_segment_count):
                 # Apply state truncation, if truncated learning is enabled
                 # this limits the backprop process, reduces loss learning rate, 
@@ -726,7 +727,7 @@ class RWKV(L.LightningModule):
                 
                 # We use a dummy masked token 0, to do additional dummy checkpoint/forward/backprop when needed
                 # for each additional call after the current "segment_count" max
-                if i < segment_count - 1:
+                if i <= segment_count - 1:
                     cur_idx = idx[:, i * segment_size:(i + 1) * segment_size]
                     cur_tar = targets[:, i * segment_size:(i + 1) * segment_size]
                     cur_msk = seq_mask[:, i * segment_size:(i + 1) * segment_size]
@@ -766,6 +767,9 @@ class RWKV(L.LightningModule):
                         # This is the last pass, we let the default pytorch lightning handle the backward pass
                         # and return the segment loss as part of the total loss
                         total_loss = total_loss + segment_loss
+                else:
+                    # Even if its not the segments we use for backward pass, we need to accumulate the loss
+                    total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
 
                 # GC collect unused memory
                 gc.collect()
