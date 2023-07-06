@@ -807,8 +807,12 @@ class RWKV(L.LightningModule):
 
         # Wandb logging only, if an active run exists
         if wandb.run is not None:
+            global_rank = self.global_rank
+            global_device_count = self.trainer.num_devices * self.trainer.num_nodes
             wandb.log({
-                'substep': batch_idx, 
+                'substep': batch_idx * global_device_count + global_rank,
+                'batchidx': batch_idx,
+                'global_rank': global_rank, 
                 'real_ctx_len': T, 
                 'train/loss': total_loss,
                 'trainer/global_step':self.global_step,
