@@ -136,7 +136,7 @@ trainer:
   #
   # You are also recommended to configure this to a large enough number to fully utilize
   # your GPU processing time %, and avoid idle time for the GPU between batches
-  accumulate_grad_batches: 12
+  accumulate_grad_batches: 10
 
   # Various other settings, you probably want to leave alone
   fast_dev_run: false
