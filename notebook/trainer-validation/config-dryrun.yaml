@@ -240,7 +240,7 @@ model:
   # Segmented range to performing backprop learning on
   # 1 means to apply only for the last segment
   # -1 means to apply for all segments
-  bptt_learning_range: 2
+  bptt_learning_range: -1
 
   # various other settings you probably should leave alone
   grad_cp: true
