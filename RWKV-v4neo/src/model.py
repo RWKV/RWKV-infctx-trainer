@@ -268,7 +268,8 @@ class RWKV(L.LightningModule):
                  dim_att: Optional[int] = None,
                  dim_ffn: Optional[int] = None,
                  load_model: Optional[str] = None,
-                 torch_set_float32_matmul_precision:str = 'high'
+                 torch_set_float32_matmul_precision:str = 'high',
+                 aggresive_cuda_cache_clear: bool = False,
                  ):
         super().__init__()
         self.ctx_len = ctx_len
@@ -290,6 +291,7 @@ class RWKV(L.LightningModule):
         self.bptt_learning = bptt_learning
         self.bptt_learning_range = bptt_learning_range
         self.bptt_truncated_learning = bptt_truncated_learning
+        self.aggresive_cuda_cache_clear = aggresive_cuda_cache_clear
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or n_embd * 4
@@ -578,6 +580,9 @@ class RWKV(L.LightningModule):
             # self._verify_is_manual_optimization("manual_backward")
             self.trainer.strategy.backward(loss, None, *args, **kwargs)
 
+    #
+    # Main compute_loss function, this is called by the trainer loop
+    #
     def compute_loss(self, batch, batch_idx, is_training_run: bool):
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
@@ -824,6 +829,10 @@ class RWKV(L.LightningModule):
         total_loss = self.compute_loss(batch, batch_idx, True)
         self.log('train/loss', total_loss, prog_bar=True)
         
+        if self.aggresive_cuda_cache_clear:
+            gc.collect()
+            torch.cuda.empty_cache()
+
         return total_loss
 
     def validation_step(self, batch, batch_idx):

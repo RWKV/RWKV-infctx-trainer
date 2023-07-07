@@ -128,12 +128,16 @@ trainer:
   # Number of datasamples to train for each step, a data sample is considered
   # a "substep" in wandb logs, and a "step" is tracked as "trainer/global_step"
   #
-  # This decides the number of datasample, to learn together from, before backproping
-  # any weight changes at the end of the batch.
+  # This decides the number of datasample * the number of GPU devices, to learn together from, 
+  # before backproping any weight changes at the end of the batch.
   #
-  # Recommended to be a big enough number (like 128/256) where it prevents the training 
-  # loss from flucuating in the process. But not too big of a number where the increased
+  # `1 trainer/global_step = accumulate_grad_batches * number of GPU devices * number of nodes`
+  #
+  # Recommended to be a big enough number (like 128/256) for finetuning where it prevents the  
+  # training loss from flucuating in the process. But not too big of a number where the increased
   # GPU vRAM usage will cause the training to crash.
+  #
+  # For foundation model training, a low accumulate_grad_batches like 8/12/16 is recommended.
   #
   # You are also recommended to configure this to a large enough number to fully utilize
   # your GPU processing time %, and avoid idle time for the GPU between batches
@@ -236,6 +240,13 @@ model:
   #
   # This is also known as tbptt (Truncated Back Propagation through time)
   bptt_truncated_learning: false
+
+  # Aggressively clear the cuda cache between each data samples.
+  # This causes a performance penalty, but reduces the vram pressure
+  #
+  # This is useful for mitigating the following memory pressure warning
+  # `1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance...`
+  aggresive_cuda_cache_clear: false
 
   # various other settings you probably should leave alone
   grad_cp: true
