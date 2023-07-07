@@ -270,8 +270,10 @@ class RWKV(L.LightningModule):
                  load_model: Optional[str] = None,
                  torch_set_float32_matmul_precision:str = 'high',
                  substep_cuda_cache_clear: bool = False,
+                 substep_logging: bool = False
                  ):
         super().__init__()
+
         self.ctx_len = ctx_len
         self.ctx_len_cutoffs = ctx_len_cutoffs
         self.ctx_len_warmup_steps = ctx_len_warmup_steps
@@ -292,6 +294,7 @@ class RWKV(L.LightningModule):
         self.bptt_learning_range = bptt_learning_range
         self.bptt_truncated_learning = bptt_truncated_learning
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
+        self.substep_logging = substep_logging
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or n_embd * 4
@@ -828,6 +831,9 @@ class RWKV(L.LightningModule):
     def training_step(self, batch, batch_idx):
         total_loss = self.compute_loss(batch, batch_idx, True)
         self.log('train/loss', total_loss, prog_bar=True)
+        # If set - forces the train/loss log line to always be on a new line
+        if self.substep_logging:
+            print("")
         
         if self.substep_cuda_cache_clear:
             gc.collect()
