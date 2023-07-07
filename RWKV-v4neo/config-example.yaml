@@ -246,7 +246,7 @@ model:
   #
   # This is useful for mitigating the following memory pressure warning
   # `1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance...`
-  aggresive_cuda_cache_clear: false
+  substep_cuda_cache_clear: false
 
   # various other settings you probably should leave alone
   grad_cp: true
