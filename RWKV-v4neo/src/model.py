@@ -2,7 +2,7 @@
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ########################################################################################################
 
-import gc, math
+import gc, math, os
 from random import randint
 from typing import List, Optional
 
@@ -22,14 +22,42 @@ from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 import deepspeed.runtime.lr_schedules
 import wandb
 
-RWKV_JIT_ON = False
-if RWKV_JIT_ON:
-    MyModule = torch.jit.ScriptModule
-    MyFunction = torch.jit.script_method
-else:
-    MyModule = nn.Module
-    MyFunction = lambda x: x
+from torch.utils.cpp_extension import load
 
+########################################################################################################
+# JIT / torch compile special handling
+########################################################################################################
+
+# Currently the features we need for torch compile, is avaliable only in
+# 2.1 nightly build (and is expected to be in 2.1 official release)
+#
+# We only enable torch compile, if we either the user has explicitly
+# set it, or we detect that we are running on a 2.1+ build automatically
+from packaging import version
+def is_torch_version_above(required_version):
+    torch_version = version.parse(torch.__version__.split('+')[0])
+    return torch_version >= version.parse(required_version)
+IS_TORCH_2_1 = is_torch_version_above("2.0.9999")
+
+# Get the JIT / torch compile option flags from the environment
+RWKV_JIT_ON        = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
+RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", "{IS_TORCH_2_1}").lower() in ("1", "true", "yes")
+
+# We enable JITModule/Function or torch compile function
+# based on the current runtime settings
+if RWKV_TORCH_COMPILE:
+    JITModule   = nn.Module
+    JITFunction = lambda x: x
+elif RWKV_JIT_ON:
+    JITModule   = torch.jit.ScriptModule
+    JITFunction = torch.jit.script_method
+else:
+    JITModule   = nn.Module
+    JITFunction = lambda x: x
+
+########################################################################################################
+# RWKV: State Blocks
+########################################################################################################
 
 class TimeMixState:
 
@@ -84,15 +112,11 @@ class BlockStateList:
         self.wkv_states[layer] = state.time_mix_state.wkv_state
         self.shift_states[layer, 1] = state.channel_mix_state.shift_state
 
-
-from torch.utils.cpp_extension import load
-
 ########################################################################################################
 # RWKV: RWKV Time-mix + RWKV Channel-mix
 ########################################################################################################
 
-
-class RWKV_TimeMix(MyModule):
+class RWKV_TimeMix(JITModule):
 
     def __init__(self, layer_id, n_layer, n_embd, dim_att):
         super().__init__()
@@ -131,7 +155,7 @@ class RWKV_TimeMix(MyModule):
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
 
-    @MyFunction
+    @JITFunction
     def forward(self, x, last_state: TimeMixState):
         # Mix x with the previous timestep to produce xk, xv, xr
         xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
@@ -154,7 +178,7 @@ class RWKV_TimeMix(MyModule):
 ########################################################################################################
 
 
-class RWKV_ChannelMix(MyModule):
+class RWKV_ChannelMix(JITModule):
 
     def __init__(self, layer_id, n_layer, n_embd, dim_ffn):
         super().__init__()
@@ -171,7 +195,7 @@ class RWKV_ChannelMix(MyModule):
         self.receptance = nn.Linear(n_embd, n_embd, bias=False)
         self.value = nn.Linear(dim_ffn, n_embd, bias=False)
 
-    @MyFunction
+    @JITFunction
     def forward(self, x, last_state: ChannelMixState):
         xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
                           dim=1)
