@@ -22,8 +22,7 @@ from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 import deepspeed.runtime.lr_schedules
 import wandb
 
-RWKV_JIT_ON = True
-
+RWKV_JIT_ON = False
 if RWKV_JIT_ON:
     MyModule = torch.jit.ScriptModule
     MyFunction = torch.jit.script_method
