@@ -141,3 +141,18 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+# Additional folders used for the experiment
+# and standard hidden files ignore. Including 
+# example files generated via notebook tutorials
+.*
+model/
+dataset/
+datapath/
+checkpoint/
+node_modules/
+
+# Ignore generated lightning logs and config files
+*/lightning_logs/
+*/config.yaml
