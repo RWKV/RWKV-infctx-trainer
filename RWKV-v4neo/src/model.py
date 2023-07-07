@@ -41,19 +41,25 @@ IS_TORCH_2_1 = is_torch_version_above("2.0.9999")
 
 # Get the JIT / torch compile option flags from the environment
 RWKV_JIT_ON        = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
-RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", "{IS_TORCH_2_1}").lower() in ("1", "true", "yes")
+RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", f"{IS_TORCH_2_1}").lower() in ("1", "true", "yes")
+RWKV_TORCH_RUN_MODE = None
 
 # We enable JITModule/Function or torch compile function
 # based on the current runtime settings
 if RWKV_TORCH_COMPILE:
+    RWKV_TORCH_RUN_MODE = "torch-compile"
     JITModule   = nn.Module
     JITFunction = lambda x: x
 elif RWKV_JIT_ON:
+    RWKV_TORCH_RUN_MODE = "torch-jit"
     JITModule   = torch.jit.ScriptModule
     JITFunction = torch.jit.script_method
 else:
+    RWKV_TORCH_RUN_MODE = "torch-native"
     JITModule   = nn.Module
     JITFunction = lambda x: x
+
+print(f"[RWKV.model] Running RWKV model with : {RWKV_TORCH_RUN_MODE}")
 
 ########################################################################################################
 # RWKV: State Blocks
