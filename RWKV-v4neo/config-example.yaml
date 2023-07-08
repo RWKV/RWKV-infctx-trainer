@@ -235,7 +235,6 @@ model:
   # `1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance...`
   substep_cuda_cache_clear: false
 
-  
   # Experimental cutoff settings
   # ---
   # Data samples would be cut down to the respective max ctx_len_cutoffs

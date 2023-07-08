@@ -191,14 +191,6 @@ model:
   # to a resonable number sutible to the current GPU setup
   ctx_len: 4096
   
-  # Data samples would be cut down to the respective max ctx_len_cutoffs
-  # values if its larger then ctx_len. If the data sample is larger then
-  # the largest len_cutoff, the remaining data will be discarded
-  ctx_len_cutoffs: [4096, 8192, 16384, 32768, 65536]
-  # Experimental settings, number of tokens to skip in the data sample
-  # prefix, for the respective cutoff length. Used to speed up the process
-  ctx_len_warmup_steps: [0, 0, 0, 0, 0]
-
   # Learning rate of the training process
   # ---
   # Initia learning rate of the process
@@ -224,11 +216,6 @@ model:
   adam_eps: 1.0e-08
   weight_decay: 0.01
 
-  # torch.set_float32_matmul_precision, used to optimize operations with tensor cores
-  # this should be set as null, for non cuda core GPUs
-  torch_set_float32_matmul_precision: 'high'
-  # torch_set_float32_matmul_precision: null
-
   # Segmented based learning, used to work around training of large context length
   # beyond what can be supported by the current GPU vram architecture
   #
@@ -244,6 +231,25 @@ model:
 
   # Force each substep to be logged as a seperate line
   substep_logging: true
+
+  # Experimental cutoff settings
+  # ---
+  # Data samples would be cut down to the respective max ctx_len_cutoffs
+  # values if its larger then ctx_len. If the data sample is larger then
+  # the largest len_cutoff, the remaining data will be discarded
+  #
+  # Leave it as a blank array to disable the feature
+  ctx_len_cutoffs: []
+  # Experimental settings, number of tokens to skip in the data sample
+  # prefix, for the respective cutoff length. Used to speed up the process
+  #
+  # Leave it as a blank array to disable the feature
+  ctx_len_warmup_steps: []
+
+  # torch.set_float32_matmul_precision, used to optimize operations with tensor cores
+  # this should be set as null, for non cuda core GPUs
+  torch_set_float32_matmul_precision: 'high'
+  # torch_set_float32_matmul_precision: null
 
   # various other settings you probably should leave alone
   grad_cp: true
