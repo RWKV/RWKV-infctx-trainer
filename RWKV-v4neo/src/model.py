@@ -55,20 +55,33 @@ if RWKV_TORCH_COMPILE:
     JITFunction  = lambda x: x
 
     # PS: i have tried mode="max-autotune", and mode="reduce-overhead", however they crash
-    #     for now. We may introduce them in the future once they are stable
+    #     for now (8th July 2023). I may introduce them in the future once they are stable
+    #
+    #     Additionally, torch.compile has issues with the pytorch.lightning module
+    # ---
 
-    # TCompileMax, is reserved only for functions we know that can be perfectly compiled
-    # without any graph breaks - providing the highest level of optimization via torch.compile
+    # We generally have 2 major options, either we use torch.compile
+    # onto the key top level functions (train, val, test, predict, etc)
+    # and let the compiler handle all the decision making on how to optimize
+    #
+    # However this was found to basically just match JIT level of performance exactly
+    # ---
+    # TCompileMax          = lambda x: x
+    # TCompileBaseline     = lambda x: torch.compile(x, fullgraph=False)
+
+    # Alternatively, we can perform a much more aggressive optimization on critical functions
+    # that we know are compatible with torch.compile(fullgraph=True) - which provides the highest
+    # level of optimization possible with torch.compile
+    # ---
     TCompileMax        = lambda x: torch.compile(x, fullgraph=True)
-
-    # # Baseline, and eager mode are for torch comile operations, that can be partially optimized
-    # TCompileBaseline   = lambda x: torch.compile(x, fullgraph=False)
-    # TCompileEager      = lambda x: torch.compile(x, fullgraph=False, backend="eager")
-
-    # We use native lambda, for baseline / eager compile, as current benchmark shows that
-    # it is generally faster to leave them as native python functions instead
-    # (this may change in the future as torch.compile improves)
     TCompileBaseline   = lambda x: x
+
+    # ---
+    # Because torch.compile is expected to change overtime, the two options should 
+    # be tested every now and then, for any performance changes
+    #
+    # and we should switch over to the broaded automated approach if its "faster"
+    # ---
 
     # Used to wrap functions which are **not** torch.compile compatible
     TCompileDisable    = torch._dynamo.disable
@@ -101,6 +114,8 @@ print(f"[RWKV.model] Running RWKV model via the following optimization mode : {R
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
+# and wrapping them within a torch._dynamo.disable, this is required to get
+# the baseline torc.compile to work
 # ---
 
 @TCompileDisable
