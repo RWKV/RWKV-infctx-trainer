@@ -61,9 +61,14 @@ if RWKV_TORCH_COMPILE:
     # without any graph breaks - providing the highest level of optimization via torch.compile
     TCompileMax        = lambda x: torch.compile(x, fullgraph=True)
 
-    # Baseline, and eager mode are for torch comile operations, that can be partially optimized
-    TCompileBaseline   = lambda x: torch.compile(x, fullgraph=False)
-    TCompileEager      = lambda x: torch.compile(x, fullgraph=False, backend="eager")
+    # # Baseline, and eager mode are for torch comile operations, that can be partially optimized
+    # TCompileBaseline   = lambda x: torch.compile(x, fullgraph=False)
+    # TCompileEager      = lambda x: torch.compile(x, fullgraph=False, backend="eager")
+
+    # We use native lambda, for baseline / eager compile, as current benchmark shows that
+    # it is generally faster to leave them as native python functions instead
+    # (this may change in the future as torch.compile improves)
+    TCompileBaseline   = lambda x: x
 
     # Used to wrap functions which are **not** torch.compile compatible
     TCompileDisable    = torch._dynamo.disable
@@ -81,7 +86,6 @@ elif RWKV_JIT_ON:
 
     TCompileMax        = lambda x: x
     TCompileBaseline   = lambda x: x
-    TCompileEager      = lambda x: x
     TCompileDisable    = lambda x: x
 else:
     RWKV_TORCH_RUN_MODE = "torch-native"
@@ -91,7 +95,6 @@ else:
 
     TCompileMax        = lambda x: x
     TCompileBaseline   = lambda x: x
-    TCompileEager      = lambda x: x
     TCompileDisable    = lambda x: x
 
 print(f"[RWKV.model] Running RWKV model via the following optimization mode : {RWKV_TORCH_RUN_MODE}")
@@ -275,9 +278,8 @@ class RWKV_ChannelMix(JITModClass):
 
 
 ########################################################################################################
-# The RWKV Model with our blocks
+# The RWKV Model blocks
 ########################################################################################################
-
 
 class Block(nn.Module):
 
@@ -314,6 +316,15 @@ class L2Wrap(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, loss, y, token_amount, currentMask):
+        # Currently (8th July 2023), save_for_backward, causes an issue with
+        # pytorch.compile (see: https://github.com/pytorch/pytorch/blob/e600505e3209eaf539e8bc99870ea55236cefbf5/torch/_dynamo/variables/higher_order_ops.py#L735)
+        # 
+        # Due to L2Wrap being a major hotspot, we should monitor this status
+        # so that once its resolved, we can include the L2Wrap step in the torch.compile path
+        #
+        # See also:
+        # - checkpointed_step
+        # - _RWKV_checkpointed_step_optimized
         ctx.save_for_backward(y)
         ctx.token_amount = token_amount
         ctx.currentMask = currentMask
@@ -331,7 +342,27 @@ class L2Wrap(torch.autograd.Function):
         gy = gy * ctx.currentMask[:, None][None, :]
         return (grad_output, gy, None, None)
 
+########################################################################################################
+# Static optimized functions
+########################################################################################################
 
+# @ TCompileMax
+# def _RWKV_checkpointed_step_optimized(
+#         logits, new_shift_states, new_wkv_states, 
+#         idx, targets, mask, prev_loss, last_shift_states, last_wkv_states, prev_steps,
+#         total_mask_sum
+#     ):
+#     loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
+#                             targets.view(-1),
+#                             reduction="none")
+#     submask = mask.view(-1)[:loss.shape[0]]
+#     submask_sum = torch.sum(submask)
+#     loss = torch.sum(loss * submask) / total_mask_sum  
+#     return loss, submask, submask_sum
+
+########################################################################################################
+# Core RWKV module
+########################################################################################################
 class RWKV(L.LightningModule):
 
     def __init__(self,
@@ -618,9 +649,17 @@ class RWKV(L.LightningModule):
 
         new_states = BlockStateList.empty(self.n_layer, B, self.n_embd,
                                           x.device, x.dtype)
-        for i, (block, last_state) in enumerate(
-                zip(self.blocks,
-                    BlockStateList(last_shift_states, last_wkv_states))):
+        # Avoid using the zip operation, as torch.compile throws an exception on it
+        # with `zip not reconized as a valid function`
+        # ---
+        # for i, (block, last_state) in enumerate(
+        #         zip(self.blocks,
+        #             BlockStateList(last_shift_states, last_wkv_states))):
+        # ---
+        for i in range(len(self.blocks)):
+            block = self.blocks[i]
+            last_state = BlockStateList(last_shift_states, last_wkv_states)[i]
+
             if self.grad_cp:
                 x, new_state = deepspeed_checkpoint(
                     block, x, last_state)
@@ -689,8 +728,17 @@ class RWKV(L.LightningModule):
         # Perform cutoff for training run
         if is_training_run:
             prev_step = 0
-            for step, len_cut in zip(self.ctx_len_warmup_steps,
-                                     self.ctx_len_cutoffs):
+
+            # Avoid using the zip operation, as torch.compile throws an exception on it
+            # with `zip not reconized as a valid function`
+            # ---
+            # for step, len_cut in zip(self.ctx_len_warmup_steps,
+            #                          self.ctx_len_cutoffs):
+            # ---
+            for i in range(min(len(self.ctx_len_warmup_steps), len(self.ctx_len_cutoffs))):
+                step = self.ctx_len_warmup_steps[i]
+                len_cut = self.ctx_len_cutoffs[i]
+
                 if prev_step <= self.global_step < step and len_cut < seq.shape[
                         1] - 1:
                     pos = randint(0, seq.shape[1] - len_cut - 1)
@@ -716,18 +764,28 @@ class RWKV(L.LightningModule):
         # If total_mask_sum, we skip, as there is no tokens of value to learn from anyway
         if total_mask_sum == 0:
             return 0
-
+        
         def checkpointed_step(idx, targets, mask, prev_loss, last_shift_states,
                               last_wkv_states, prev_steps):
             logits, new_shift_states, new_wkv_states = self(
                 idx, last_shift_states, last_wkv_states)
+            
+            # # If torch.compile is enabled, this is a heavily optimized varient
+            # # (especially on F.cross_entropy) else its just another static function
+            # loss, submask, submask_sum = _RWKV_checkpointed_step_optimized(
+            #     logits, new_shift_states, new_wkv_states, 
+            #     idx, targets, mask, prev_loss, 
+            #     last_shift_states, last_wkv_states, prev_steps,
+            #     total_mask_sum
+            # )
+
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
-                                   targets.view(-1),
-                                   reduction="none")
+                                    targets.view(-1),
+                                    reduction="none")
             submask = mask.view(-1)[:loss.shape[0]]
             submask_sum = torch.sum(submask)
-
             loss = torch.sum(loss * submask) / total_mask_sum  
+
             loss = L2Wrap.apply(loss, logits, total_mask_sum, submask)
             new_steps = prev_steps + submask_sum
             new_loss = prev_loss + loss
