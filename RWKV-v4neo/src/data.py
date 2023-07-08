@@ -307,7 +307,7 @@ class RWKVDataModule(LightningDataModule):
         multi_column_keys: list = None,
         multi_column_prefix: list = None,
         multi_column_masking: list = None,
-        multi_column_separator: str = None,
+        multi_column_seperator: str = None,
         # prompt/completion format masking support
         disable_prompt_mask: bool = False
     ):
