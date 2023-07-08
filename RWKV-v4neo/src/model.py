@@ -47,7 +47,7 @@ RWKV_TORCH_RUN_MODE = None
 # We enable JITMod*/Function when supporting torch.jit
 # We use TorchCompile* when supporting torch compile
 # based on the current runtime settings
-if RWKV_TORCH_COMPILE:
+if RWKV_TORCH_COMPILE and torch._dynamo is not None:
     RWKV_TORCH_RUN_MODE = "torch-compile"
 
     JITModClass  = nn.Module
@@ -57,7 +57,7 @@ if RWKV_TORCH_COMPILE:
     # PS: i have tried mode="max-autotune", and mode="reduce-overhead", however they crash
     #     for now (8th July 2023). I may introduce them in the future once they are stable
     #
-    #     Additionally, torch.compile has issues with the pytorch.lightning module
+    #     Additionally, torch.compile has issues with the pytorch.lightning module directly
     # ---
 
     # We generally have 2 major options, either we use torch.compile
@@ -157,6 +157,7 @@ class BlockStateList:
         self.wkv_states = wkv_states
         self.shift_states = shift_states
 
+    # @ TCompileMax (no difference)
     @staticmethod
     def create(N, B, C, device, dtype):
         result = BlockStateList.empty(N, B, C, device, dtype)
@@ -165,6 +166,7 @@ class BlockStateList:
         result.shift_states[:] = 0
         return result
 
+    # @ TCompileMax (no difference)
     @staticmethod
     def empty(N, B, C, device, dtype):
         wkv_states = torch.empty((N, B, C, 3),
@@ -334,12 +336,11 @@ class L2Wrap(torch.autograd.Function):
         # Currently (8th July 2023), save_for_backward, causes an issue with
         # pytorch.compile (see: https://github.com/pytorch/pytorch/blob/e600505e3209eaf539e8bc99870ea55236cefbf5/torch/_dynamo/variables/higher_order_ops.py#L735)
         # 
-        # Due to L2Wrap being a major hotspot, we should monitor this status
+        # Due to L2Wrap being a major hotspot, we should monitor this for future support.
         # so that once its resolved, we can include the L2Wrap step in the torch.compile path
         #
         # See also:
         # - checkpointed_step
-        # - _RWKV_checkpointed_step_optimized
         ctx.save_for_backward(y)
         ctx.token_amount = token_amount
         ctx.currentMask = currentMask
@@ -361,19 +362,9 @@ class L2Wrap(torch.autograd.Function):
 # Static optimized functions
 ########################################################################################################
 
-# @ TCompileMax
-# def _RWKV_checkpointed_step_optimized(
-#         logits, new_shift_states, new_wkv_states, 
-#         idx, targets, mask, prev_loss, last_shift_states, last_wkv_states, prev_steps,
-#         total_mask_sum
-#     ):
-#     loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
-#                             targets.view(-1),
-#                             reduction="none")
-#     submask = mask.view(-1)[:loss.shape[0]]
-#     submask_sum = torch.sum(submask)
-#     loss = torch.sum(loss * submask) / total_mask_sum  
-#     return loss, submask, submask_sum
+# @ TCompileMax (no speed improvement)
+# def F_cross_entropy_reduction_none_optimized(logits, targets):
+#     return F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction="none")
 
 ########################################################################################################
 # Core RWKV module
@@ -785,18 +776,10 @@ class RWKV(L.LightningModule):
             logits, new_shift_states, new_wkv_states = self(
                 idx, last_shift_states, last_wkv_states)
             
-            # # If torch.compile is enabled, this is a heavily optimized varient
-            # # (especially on F.cross_entropy) else its just another static function
-            # loss, submask, submask_sum = _RWKV_checkpointed_step_optimized(
-            #     logits, new_shift_states, new_wkv_states, 
-            #     idx, targets, mask, prev_loss, 
-            #     last_shift_states, last_wkv_states, prev_steps,
-            #     total_mask_sum
-            # )
-
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
                                     targets.view(-1),
                                     reduction="none")
+
             submask = mask.view(-1)[:loss.shape[0]]
             submask_sum = torch.sum(submask)
             loss = torch.sum(loss * submask) / total_mask_sum  
