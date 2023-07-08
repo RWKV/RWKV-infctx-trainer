@@ -325,7 +325,7 @@ data:
   # multi_column_keys: ['instruction', 'input', 'output']
   # multi_column_prefix: ['Instruction:\n', 'Input:\n', 'Output:\n']
   # multi_column_masking: [false, true, false]
-  # multi_column_seperator: '\n\n'
+  # multi_column_separator: '\n\n'
 
   # If processing prompt/completion jsonl pairs, the prompt is masked by default
   # use this flag to disable this default behaviour
