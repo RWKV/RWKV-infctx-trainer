@@ -44,22 +44,69 @@ RWKV_JIT_ON        = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes
 RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", f"{IS_TORCH_2_1}").lower() in ("1", "true", "yes")
 RWKV_TORCH_RUN_MODE = None
 
-# We enable JITModule/Function or torch compile function
+# We enable JITMod*/Function when supporting torch.jit
+# We use TorchCompile* when supporting torch compile
 # based on the current runtime settings
 if RWKV_TORCH_COMPILE:
     RWKV_TORCH_RUN_MODE = "torch-compile"
-    JITModule   = nn.Module
-    JITFunction = lambda x: x
+
+    JITModClass  = nn.Module
+    JITModMethod = lambda x: x
+    JITFunction  = lambda x: x
+
+    # PS: i have tried mode="max-autotune", and mode="reduce-overhead", however they crash
+    #     for now. We may introduce them in the future once they are stable
+
+    # TCompileMax, is reserved only for functions we know that can be perfectly compiled
+    # without any graph breaks - providing the highest level of optimization via torch.compile
+    TCompileMax        = lambda x: torch.compile(x, fullgraph=True)
+
+    # Baseline, and eager mode are for torch comile operations, that can be partially optimized
+    TCompileBaseline   = lambda x: torch.compile(x, fullgraph=False)
+    TCompileEager      = lambda x: torch.compile(x, fullgraph=False, backend="eager")
+
+    # Used to wrap functions which are **not** torch.compile compatible
+    TCompileDisable    = torch._dynamo.disable
+
+    # The following are known warnings in the nightly build, that can be safely ignored for stable release
+    #
+    # `torch._inductor.utils: [WARNING] DeviceCopy in input program` 
+    # https://discuss.pytorch.org/t/what-can-cause-warning-devicecopy-in-input-program/175566
+
 elif RWKV_JIT_ON:
     RWKV_TORCH_RUN_MODE = "torch-jit"
-    JITModule   = torch.jit.ScriptModule
-    JITFunction = torch.jit.script_method
+    JITModClass  = torch.jit.ScriptModule
+    JITModMethod = torch.jit.script_method
+    JITFunction  = torch.jit.script
+
+    TCompileMax        = lambda x: x
+    TCompileBaseline   = lambda x: x
+    TCompileEager      = lambda x: x
+    TCompileDisable    = lambda x: x
 else:
     RWKV_TORCH_RUN_MODE = "torch-native"
-    JITModule   = nn.Module
-    JITFunction = lambda x: x
+    JITModClass  = nn.Module
+    JITModMethod = lambda x: x
+    JITFunction  = lambda x: x
 
-print(f"[RWKV.model] Running RWKV model with : {RWKV_TORCH_RUN_MODE}")
+    TCompileMax        = lambda x: x
+    TCompileBaseline   = lambda x: x
+    TCompileEager      = lambda x: x
+    TCompileDisable    = lambda x: x
+
+print(f"[RWKV.model] Running RWKV model via the following optimization mode : {RWKV_TORCH_RUN_MODE}")
+
+# ---
+# Isolating out known operations that **does not work** with torch.compile
+# ---
+
+@TCompileDisable
+def deepspeed_checkpoint(*args, **kwargs):
+    return deepspeed.checkpointing.checkpoint(*args, **kwargs)
+
+@TCompileDisable
+def wkv_op(time_decay, time_first, k, v, wkv_state):
+    return torch.ops.rwkv.wkv(time_decay, time_first, k, v, wkv_state)
 
 ########################################################################################################
 # RWKV: State Blocks
@@ -122,7 +169,7 @@ class BlockStateList:
 # RWKV: RWKV Time-mix + RWKV Channel-mix
 ########################################################################################################
 
-class RWKV_TimeMix(JITModule):
+class RWKV_TimeMix(JITModClass):
 
     def __init__(self, layer_id, n_layer, n_embd, dim_att):
         super().__init__()
@@ -161,8 +208,9 @@ class RWKV_TimeMix(JITModule):
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
 
-    @JITFunction
-    def forward(self, x, last_state: TimeMixState):
+    @JITModMethod
+    @TCompileMax
+    def _forward_kvsr(self, x, last_state: TimeMixState):
         # Mix x with the previous timestep to produce xk, xv, xr
         xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
                           dim=1)
@@ -176,15 +224,26 @@ class RWKV_TimeMix(JITModule):
 
         sr = torch.sigmoid(r)
 
-        y, new_wkv_state = torch.ops.rwkv.wkv(self.time_decay, self.time_first,
-                                              k, v, last_state.wkv_state)
-        return self.output(sr * y), TimeMixState(x[:, -1], new_wkv_state)
+        return k, v, sr
+
+    @JITModMethod
+    @TCompileMax
+    def _forward_out(self, sr, y, x_l, new_wkv_state):
+        return self.output(sr * y), TimeMixState(x_l, new_wkv_state)
+
+    @JITModMethod
+    @TCompileBaseline
+    def forward(self, x, last_state: TimeMixState):
+        k, v, sr = self._forward_kvsr(x, last_state)
+        y, new_wkv_state = wkv_op(self.time_decay, self.time_first,
+                                  k, v, last_state.wkv_state)
+        return self._forward_out(sr, y, x[:, -1], new_wkv_state)
 
 
 ########################################################################################################
 
 
-class RWKV_ChannelMix(JITModule):
+class RWKV_ChannelMix(JITModClass):
 
     def __init__(self, layer_id, n_layer, n_embd, dim_ffn):
         super().__init__()
@@ -201,7 +260,8 @@ class RWKV_ChannelMix(JITModule):
         self.receptance = nn.Linear(n_embd, n_embd, bias=False)
         self.value = nn.Linear(dim_ffn, n_embd, bias=False)
 
-    @JITFunction
+    @JITModMethod
+    @TCompileMax
     def forward(self, x, last_state: ChannelMixState):
         xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
                           dim=1)
@@ -357,7 +417,7 @@ class RWKV(L.LightningModule):
     def configure_optimizers(self):
         if self.bptt_learning == False:
             if self.deepspeed_stage >= 2 or self.deepspeed_offload:
-                print("[WARNING]: it is highly recommended to enable bptt_learning when used to deepspeed 2/3/offloading, otherwise an exception will occur when training with dataset records, larger then the configured context length ({self.ctx_len})")
+                print(f"[WARNING]: it is highly recommended to enable bptt_learning when used to deepspeed 2/3/offloading, otherwise an exception will occur when training with dataset records, larger then the configured context length ({self.ctx_len})")
         else:
             if self.trainer.num_devices > 1:
                 if self.bptt_learning_range <= 0:
@@ -548,6 +608,7 @@ class RWKV(L.LightningModule):
             return "stage" in cfg
         return -1
 
+    @TCompileBaseline
     def forward(self, idx: torch.Tensor, last_shift_states: torch.Tensor,
                 last_wkv_states: torch.Tensor):
         B, T = idx.size()
@@ -561,7 +622,7 @@ class RWKV(L.LightningModule):
                 zip(self.blocks,
                     BlockStateList(last_shift_states, last_wkv_states))):
             if self.grad_cp:
-                x, new_state = deepspeed.checkpointing.checkpoint(
+                x, new_state = deepspeed_checkpoint(
                     block, x, last_state)
             else:
                 x, new_state = block(x, last_state)
@@ -817,7 +878,7 @@ class RWKV(L.LightningModule):
             segment_size = self.ctx_len
             for i in range(segment_count):
                 if i < segment_count-1:
-                    total_loss, new_shift_states, new_wkv_states, steps = deepspeed.checkpointing.checkpoint(
+                    total_loss, new_shift_states, new_wkv_states, steps = deepspeed_checkpoint(
                         checkpointed_step,
                         idx[:, i * segment_size:(i + 1) * segment_size],
                         targets[:, i * segment_size:(i + 1) * segment_size],
@@ -858,10 +919,12 @@ class RWKV(L.LightningModule):
 
         return total_loss
 
+    @TCompileBaseline
     def training_step(self, batch, batch_idx):
         total_loss = self.compute_loss(batch, batch_idx, True)
+
         self.log('train/loss', total_loss, prog_bar=True)
-        # If set - forces the train/loss log line to always be on a new line
+        # If set - forces the above train/loss log line to always be on a new line
         if self.substep_logging:
             print("")
         
@@ -871,6 +934,7 @@ class RWKV(L.LightningModule):
 
         return total_loss
 
+    @TCompileBaseline
     def validation_step(self, batch, batch_idx):
         total_loss = self.compute_loss(batch, batch_idx, False)
         self.log('validation/loss', total_loss, prog_bar=True, sync_dist=True)
