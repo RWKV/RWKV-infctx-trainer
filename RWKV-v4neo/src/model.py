@@ -247,7 +247,7 @@ class RWKV_TimeMix(JITModClass):
         return k, v, sr
 
     @JITModMethod
-    # @ TCompileMax (performs better without TCompileMax)
+    @TCompileMax
     def _forward_out(self, sr, y, x_l, new_wkv_state):
         return self.output(sr * y), TimeMixState(x_l, new_wkv_state)
 
