@@ -38,16 +38,22 @@ sudo apt-get install ninja-build
 # Update conda & its package listings
 conda update conda
 
-# Virtual env, with python 3.11
+# Virtual env, with python 3.10
+# python 3.11 have issues with torch.compile / h100s
+# and if you want to use 3.11, you will need to do a nightly build install
 conda create -n rwkv-infctx python=3.11 pip
 conda activate rwkv-infctx
 
 # Install pytorch (>=2.0.1)
-# conda install -y pytorch==2.0.1 torchvision==0.15.1 torchaudio==2.0.1 pytorch-cuda=11.8 -c pytorch -c nvidia
+conda install -y pytorch==2.0.1 torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
 
-# Currently for torch.compile + 3.11 to work, we need the nightly 2.0.1
-# we expect this fix to be out in 2.0.2, and if so, use the previous line instead
-conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch-nightly -c nvidia
+# Currently for torch.compile + 3.11 to work, for some paltforms, you will need the nightly build
+# if so you may need to try the following instead
+# ---
+# conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch-nightly -c nvidia
+
+# Verify your pytorch version 
+python -c "import torch; print(torch.__version__)"
 
 # We use python -m pip, instead of pip directly, as it resolve issues with venv not loading the right pip
 python -m pip install datasets transformers 

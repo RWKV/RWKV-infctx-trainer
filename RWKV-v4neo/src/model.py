@@ -47,7 +47,7 @@ RWKV_TORCH_RUN_MODE = None
 # We enable JITMod*/Function when supporting torch.jit
 # We use TorchCompile* when supporting torch compile
 # based on the current runtime settings
-if RWKV_TORCH_COMPILE and torch._dynamo is not None:
+if RWKV_TORCH_COMPILE:
     RWKV_TORCH_RUN_MODE = "torch-compile"
 
     JITModClass  = nn.Module
@@ -110,7 +110,7 @@ else:
     TCompileBaseline   = lambda x: x
     TCompileDisable    = lambda x: x
 
-print(f"[RWKV.model] Running RWKV model via the following optimization mode : {RWKV_TORCH_RUN_MODE}")
+print(f"[RWKV.model] Running RWKV model using '{RWKV_TORCH_RUN_MODE}' with torch '{torch.__version__}'")
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
