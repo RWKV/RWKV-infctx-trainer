@@ -662,10 +662,10 @@ class RWKV(L.LightningModule):
         #         zip(self.blocks,
         #             BlockStateList(last_shift_states, last_wkv_states))):
         # ---
+        bs_list = BlockStateList(last_shift_states, last_wkv_states)
         for i in range(len(self.blocks)):
             block = self.blocks[i]
-            last_state = BlockStateList(last_shift_states, last_wkv_states)[i]
-
+            last_state = bs_list[i]
             if self.grad_cp:
                 x, new_state = deepspeed_checkpoint(
                     block, x, last_state)
@@ -901,7 +901,7 @@ class RWKV(L.LightningModule):
                     steps,
                 )
                 states = BlockStateList(new_shift_states, new_wkv_states)
-
+                
                 # Compute the backward pass for the segment
                 if i >= first_learning_segment:
                     # The learning loss, should be normalized against the accumulation steps
