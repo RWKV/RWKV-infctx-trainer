@@ -166,3 +166,4 @@ node_modules/
 
 # Keep the memory experiment word list
 !notebook/experiment/memory/memory_dataset/*.txt
+!notebook/experiment/memory/memory_script/*.txt

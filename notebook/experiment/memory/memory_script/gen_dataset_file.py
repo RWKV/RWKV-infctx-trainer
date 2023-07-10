@@ -10,7 +10,8 @@ def load_words(file_path):
         valid_words = list(word_file.read().split())
     return valid_words
 
-full_words = load_words('full_word_list.txt')
+# Get the full word list relative to the script
+full_words = load_words(os.path.join(os.path.dirname(__file__), 'full_word_list.txt'))
 
 def generate_jsonl(output_file_path, max_words, num_samples):
     prompt_templates = [
@@ -66,4 +67,4 @@ output_file_path, max_words, num_samples = sys.argv[1], int(sys.argv[2]), int(sy
 
 generate_jsonl(output_file_path, max_words, num_samples)
 
-print(f'Generated JSONL file with {num_samples} samples at {os.path.abspath(output_file_path)}')
+print(f'Generated JSONL file with - {max_words} max words, {num_samples} samples - at {output_file_path}')
