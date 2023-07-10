@@ -137,7 +137,7 @@ trainer:
   #
   # You are also recommended to configure this to a large enough number to fully utilize
   # your GPU processing time %, and avoid idle time for the GPU between batches
-  accumulate_grad_batches: 64
+  accumulate_grad_batches: 256
 
   # Various other settings, you probably want to leave alone
   fast_dev_run: false
@@ -316,10 +316,10 @@ data:
   # If no match is found, this will fallback to the default prompt/completion or text column, 
   # or throw an error if the default fallback is not found
   # ---
-  # multi_column_keys: ['instruction', 'input', 'output']
-  # multi_column_prefix: ['# Instruction:\n', '# Context:\n', '# Answer:\n']
-  # multi_column_masking: [false, true, false]
-  # multi_column_separator: '\n\n'
+  multi_column_keys: ['input_prefix', 'input', 'output_prefix', 'output', 'closing']
+  multi_column_prefix: ['', '', '', '', '']
+  multi_column_masking: [false, true, false, false, false]
+  multi_column_separator: ''
 
   # If processing prompt/completion jsonl pairs, the prompt is masked by default
   # use this flag to disable this default behaviour
