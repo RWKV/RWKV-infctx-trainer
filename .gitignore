@@ -163,3 +163,6 @@ node_modules/
 # Ignore generated lightning logs and config files
 */lightning_logs/
 */config.yaml
+
+# Keep the memory experiment word list
+!notebook/experiment/memory/memory_dataset/*.txt
