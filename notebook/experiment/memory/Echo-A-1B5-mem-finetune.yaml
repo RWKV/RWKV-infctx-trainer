@@ -80,7 +80,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/Echo-A-1B5-instruct/
+      dirpath: ../checkpoint/Echo-A-1B5-mem-finetune/
       filename: null
       
       # Save the top/last K checkpoints
@@ -195,7 +195,7 @@ model:
   # Learning rate of the training process
   # ---
   # Initia learning rate of the process
-  lr_init: 4e-4
+  lr_init: 5e-4
   # Final learning rate after the learning rate period
   # learning rate will stay at final value from then onwards
   #
