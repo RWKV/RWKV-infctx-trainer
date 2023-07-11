@@ -3,6 +3,7 @@ from lightning.pytorch.strategies.deepspeed import DeepSpeedStrategy
 import lightning as Lightning
 import torch
 import math
+import wandb
 
 # We extend the native pytorch lightning trainer to add the following
 #
@@ -21,7 +22,11 @@ class RWKVLightningTrainer(Trainer):
             **kwargs,
         ):
 
+        # trainer_config args (used for wndb logging)
+        trainer_config = dict(kwargs)
+
         # Compute the accumulate_grad_batches, using the target_batch_size
+        self.target_batch_size = target_batch_size
         if target_batch_size > 0:
 
             # Check if the accumulate_grad_batches is already set
@@ -46,9 +51,13 @@ class RWKVLightningTrainer(Trainer):
             # Compute the accumulate_grad_batches
             accumulate_grad_batches = max( 1, math.floor(target_batch_size / (num_nodes * num_devices)) )
             kwargs["accumulate_grad_batches"] = accumulate_grad_batches
+            effective_batch_size = accumulate_grad_batches * num_nodes * num_devices
+
+            # Log the applied accumulate_grad_batches
+            trainer_config["__accumulate_grad_batches"] = accumulate_grad_batches
+            trainer_config["__effective_batch_size"] = effective_batch_size
 
             # Log the computed accumulate_grad_batches
-            effective_batch_size = accumulate_grad_batches * num_nodes * num_devices
             print(
                 f"\n[RWKV.Trainer] Applying 'target_batch_size' with the following:\n"+
                 f"   - target_batch_size:       {target_batch_size}\n"+
@@ -58,6 +67,16 @@ class RWKVLightningTrainer(Trainer):
                 f"   - effective_batch_size:    {effective_batch_size}\n"
             )
 
+        # Update WANDB config
+        # ---
+        trainer_config["target_batch_size"] = target_batch_size
+        del trainer_config["logger"]
+        del trainer_config["callbacks"]
+        wandb.config.update({
+            "trainer": trainer_config
+        })
+
+        # Call the parent constructor
         super().__init__(*args, **kwargs)
         self._fabric_instance = None
 

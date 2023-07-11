@@ -384,10 +384,10 @@ class RWKV(L.LightningModule):
                  # Alternative to lr_init / lr_final
                  # that is multiplied by the gradient_accumulation_steps
                  # to get the actual learning rate
-                 sample_lr_init: float = -1.0,
-                 sample_lr_final: float = -1.0,
+                 target_lr_init: float = -1.0,
+                 target_lr_final: float = -1.0,
                  # Learning rate schedule
-                 # use only sample_lr_init / lr_init
+                 # use only target_lr_init / lr_init
                  # to configure a constant learning rate
                  lr_init: float = -1.0,
                  lr_final: float = -1.0,
@@ -411,8 +411,17 @@ class RWKV(L.LightningModule):
                  substep_logging: bool = False,
                  torch_set_float32_matmul_precision:str = 'high'
                  ):
+
+        # Lets save everything in one shot
+        # (this is used for wandb logging)
+        self.setup_args = locals()
+        del self.setup_args["self"]
+        del self.setup_args["__class__"]
+
+        # Setup the model
         super().__init__()
 
+        # Save the various other params for later
         self.ctx_len = ctx_len
         self.ctx_len_cutoffs = ctx_len_cutoffs
         self.ctx_len_warmup_steps = ctx_len_warmup_steps
@@ -420,8 +429,8 @@ class RWKV(L.LightningModule):
         self.n_layer = n_layer
         self.layerwise_lr = layerwise_lr
         self.grad_cp = grad_cp
-        self.sample_lr_init = sample_lr_init
-        self.sample_lr_final = sample_lr_final
+        self.target_lr_init = target_lr_init
+        self.target_lr_final = target_lr_final
         self.lr_init = lr_init
         self.lr_final = lr_final
         self.lr_period = lr_period
@@ -478,6 +487,43 @@ class RWKV(L.LightningModule):
                     # (lazy to support this right now, since i have no idea if anyone has a use for it)
                     raise NotImplementedError("bptt_learning_range > 1 is not supported yet")
         
+        # Get the learning rate used for the optimizer
+        lr_init = self.lr_init
+        lr_final = self.lr_final
+        target_lr_init = self.target_lr_init
+        target_lr_final = self.target_lr_final
+
+        assert not (target_lr_init <= 0.0 and lr_init <= 0.0), f"Either 'target_lr_init' ({target_lr_init})  or 'lr_init' ({lr_init}) must be specified"
+        assert not (target_lr_init > 0.0 and lr_init >= 0.0), f"Use either 'target_lr_init'  ({target_lr_init}) or 'lr_init' ({lr_init})"
+        
+        if target_lr_init > 0.0:
+            assert self.trainer.target_batch_size > 0, "'target_batch_size' must be specified in the trainer, when using 'target_lr_init'"
+            lr_init = target_lr_init * self.trainer.accumulate_grad_batches / self.trainer.target_batch_size
+        if target_lr_final > 0.0:
+            assert self.trainer.target_batch_size > 0, "'target_batch_size' must be specified in the trainer, when using 'target_lr_final'"
+            lr_final = target_lr_final * self.trainer.accumulate_grad_batches / self.trainer.target_batch_size
+
+        # If the final learning rate is not specified, use the initial learning rate
+        if lr_final < 0:
+            lr_final = self.lr_init
+
+        # Log the learning rate, and various other parameters
+        if self.trainer.local_rank == 0:
+            start_lr_e = "{:.3e}".format(lr_init)
+            lr_final_e = "{:.3e}".format(lr_final)
+            print(f"\n[RWKV.model] Configuring optimizer with\n"+
+                  f"    - lr_init:  {start_lr_e} ({lr_init})\n"+
+                  f"    - lr_final: {lr_final_e} ({lr_final})\n")
+
+            # Get the setup args
+            model_args = dict(self.setup_args)
+            model_args["__lr_init"] = lr_init
+            model_args["__lr_final"] = lr_final
+
+            # Update WANDB
+            wandb.config.update({ "model": model_args })
+
+        # Setup layerwise learning rate
         if self.layerwise_lr:
             lr_1x = set()
             lr_2x = set()
@@ -502,17 +548,17 @@ class RWKV(L.LightningModule):
                 {
                     "params": [param_dict[n] for n in lr_1x],
                     "weight_decay": 0.0,
-                    "lr": 1.0 * self.lr_init
+                    "lr": 1.0 * lr_init
                 },
                 {
                     "params": [param_dict[n] for n in lr_2x],
                     "weight_decay": 0.0,
-                    "lr": 2.0 * self.lr_init
+                    "lr": 2.0 * lr_init
                 },
                 {
                     "params": [param_dict[n] for n in lr_3x],
                     "weight_decay": 0.0,
-                    "lr": 3.0 * self.lr_init
+                    "lr": 3.0 * lr_init
                 },
             ]
         else:
@@ -523,36 +569,10 @@ class RWKV(L.LightningModule):
                 },
             ]
 
-        # Get the learning rate used for the optimizer
-        starting_lr = self.lr_init
-        ending_lr = self.lr_final
-        sample_lr_init = self.sample_lr_init
-        sample_lr_final = self.sample_lr_final
-
-        if sample_lr_init < 0.0 and starting_lr < 0.0:
-            raise ValueError("Either sample_lr_init or lr_init must be specified")
-        if sample_lr_init > 0.0 and starting_lr > 0.0:
-            raise ValueError("Use either sample_lr_init or lr_init")
-
-        if sample_lr_init > 0.0:
-            starting_lr = sample_lr_init * self.trainer.accumulate_grad_batches
-        if sample_lr_final > 0.0:
-            ending_lr = sample_lr_final * self.trainer.accumulate_grad_batches
-
-        if ending_lr < 0:
-            ending_lr = self.lr_init
-
-        if self.trainer.local_rank == 0:
-            start_lr_e = "{:.3e}".format(starting_lr)
-            ending_lr_e = "{:.3e}".format(ending_lr)
-            print(f"\n[RWKV.model] Configuring optimizer with\n"+
-                  f"    - lr_init:  {start_lr_e} ({starting_lr})\n"+
-                  f"    - lr_final: {ending_lr_e} ({ending_lr})\n")
-
         # Setup the adam optimizers
         if self.deepspeed_offload:
             optimizer = DeepSpeedCPUAdam(optim_groups,
-                                         lr=starting_lr,
+                                         lr=lr_init,
                                          betas=(self.beta1, self.beta2),
                                          eps=self.adam_eps,
                                          bias_correction=True,
@@ -561,7 +581,7 @@ class RWKV(L.LightningModule):
                                          amsgrad=False)
         else:
             optimizer = FusedAdam(optim_groups,
-                                  lr=starting_lr,
+                                  lr=lr_init,
                                   betas=(self.beta1, self.beta2),
                                   eps=self.adam_eps,
                                   bias_correction=True,
@@ -589,7 +609,7 @@ class RWKV(L.LightningModule):
 
         else:
             # Skip the lr_scheduler process if lr_init and lr_final are the same
-            if starting_lr == ending_lr:
+            if lr_init == lr_final:
                 return optimizer
 
             # The total number of steps to perform training rate decay with
@@ -620,7 +640,7 @@ class RWKV(L.LightningModule):
             lr_scheduler = torch.optim.lr_scheduler.LinearLR(
                 optimizer,
                 start_factor=1.0,
-                end_factor= ending_lr / starting_lr,
+                end_factor= lr_final / lr_init,
                 total_iters=lr_total_step
             )
 
