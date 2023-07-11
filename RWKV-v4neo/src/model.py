@@ -521,7 +521,8 @@ class RWKV(L.LightningModule):
             model_args["__lr_final"] = lr_final
 
             # Update WANDB
-            wandb.config.update({ "model": model_args })
+            if wandb.run is not None:
+                wandb.config.update({ "model": model_args })
 
         # Setup layerwise learning rate
         if self.layerwise_lr:

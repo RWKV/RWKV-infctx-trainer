@@ -140,9 +140,10 @@ trainer:
   # This number is divided by the number of GPUs, and nodes configured
   # So if you have 4 GPUs, and 2 nodes, and this is configured as 128
   # Each GPU will process 128/4/2 = 16 datasamples per step, via accumulate_grad_batches
-  target_batch_size: 16
+  target_batch_size: 128
 
-  # Number of datasamples to accumulate before backproping
+  # # Number of datasamples to accumulate before backproping, per GPU
+  # # this can't be used with target_batch_size.
   # accumulate_grad_batches: -1
 
   # Various other settings, you probably want to leave alone
@@ -209,19 +210,23 @@ model:
   # Learning rate of the training process
   # ---
 
-  # Learing rate on a per data sample basis
-  # this is automatically multiplied by accumulate_grad_batches
-  # to compute the actual lr_init and lr_final values
-  sample_lr_init: 8e-5
-  sample_lr_final: 5e-5
+  # Learing rate normalized to the target_batch_size
+  #
+  # If number of nodes & gpus is 1, this is the actual learning rate
+  # as the accumulate_grad_batches == target_batch_size
+  #
+  # Otherwise this is normalized using the following formula
+  # lr = lr / target_batch_size * accumulate_grad_batches
+  #
+  # This reduces the need to readjust the learning rate when changing
+  # the number of nodes & gpus used for training.
+  target_lr_init:  0.001
+  target_lr_final: 0.0001
 
   # # Initia learning rate of the process
   # lr_init: 6e-4
   # # Final learning rate after the learning rate period
   # # learning rate will stay at final value from then onwards
-  # #
-  # # NOTE: lr_final / lr_period does not work with warmup_steps
-  # #       and will be ignored (or replaced) with the warmup_steps logic instead
   # lr_final: 4e-4
 
   # Number of epoch to reduce the learning rate from lr_init to lr_final
