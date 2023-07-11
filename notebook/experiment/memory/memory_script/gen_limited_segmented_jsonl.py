@@ -26,28 +26,13 @@ def generate_jsonl(output_file_path, max_words, num_samples):
             'closing':"\n```\n"
         },
         {
-            'input_prefix': "Simon:\n```\n", 
-            'output_prefix': "\n```\n\nSays:\n```\n", 
-            'closing':"\n```\n"
-        },
-        {
             'input_prefix': "Memorize the following document:\n```\n", 
             'output_prefix': "```\n\nType it out below:\n```\n", 
             'closing':"\n```\n"
         },
         {
-            'input_prefix': "Memorize the following document:\n```\n", 
-            'output_prefix': "```\n\nFor the above document, type it out below:\n```\n", 
-            'closing':"\n```\n"
-        },
-        {
             'input_prefix': "Memorise and reply back with the following document:\n```\n", 
             'output_prefix': "```\n\nReply:\n```\n", 
-            'closing':"\n```\n"
-        },
-        {
-            'input_prefix': "Document:\n```\n", 
-            'output_prefix': "```\n\nReply back with the above document\n\nReply:\n```\n", 
             'closing':"\n```\n"
         },
         {
@@ -60,6 +45,21 @@ def generate_jsonl(output_file_path, max_words, num_samples):
             'output_prefix': "```\n\nResponse:\n```\n", 
             'closing':"\n```\n"
         }
+        # {
+        #     'input_prefix': "Simon:\n```\n", 
+        #     'output_prefix': "\n```\n\nSays:\n```\n", 
+        #     'closing':"\n```\n"
+        # },
+        # {
+        #     'input_prefix': "Memorize the following document:\n```\n", 
+        #     'output_prefix': "```\n\nFor the above document, type it out below:\n```\n", 
+        #     'closing':"\n```\n"
+        # },
+        # {
+        #     'input_prefix': "Document:\n```\n", 
+        #     'output_prefix': "```\n\nReply back with the above document\n\nReply:\n```\n", 
+        #     'closing':"\n```\n"
+        # },
     ] 
 
     def get_random_prompt_completion_pair():
