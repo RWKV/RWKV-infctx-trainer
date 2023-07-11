@@ -140,9 +140,10 @@ trainer:
   # This number is divided by the number of GPUs, and nodes configured
   # So if you have 4 GPUs, and 2 nodes, and this is configured as 128
   # Each GPU will process 128/4/2 = 16 datasamples per step, via accumulate_grad_batches
-  target_batch_size: 16
+  target_batch_size: 128
 
-  # Number of datasamples to accumulate before backproping
+  # # Number of datasamples to accumulate before backproping, per GPU
+  # # this can't be used with target_batch_size.
   # accumulate_grad_batches: -1
 
   # Various other settings, you probably want to leave alone
@@ -219,8 +220,8 @@ model:
   #
   # This reduces the need to readjust the learning rate when changing
   # the number of nodes & gpus used for training.
-  target_lr_init:  8e-4
-  target_lr_final: 7e-4
+  target_lr_init:  0.001
+  target_lr_final: 0.0001
 
   # # Initia learning rate of the process
   # lr_init: 6e-4

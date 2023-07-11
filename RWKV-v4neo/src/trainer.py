@@ -69,12 +69,13 @@ class RWKVLightningTrainer(Trainer):
 
         # Update WANDB config
         # ---
-        trainer_config["target_batch_size"] = target_batch_size
-        del trainer_config["logger"]
-        del trainer_config["callbacks"]
-        wandb.config.update({
-            "trainer": trainer_config
-        })
+        if wandb.run is not None:
+            trainer_config["target_batch_size"] = target_batch_size
+            del trainer_config["logger"]
+            del trainer_config["callbacks"]
+            wandb.config.update({
+                "trainer": trainer_config
+            })
 
         # Call the parent constructor
         super().__init__(*args, **kwargs)

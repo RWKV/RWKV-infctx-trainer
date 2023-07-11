@@ -322,7 +322,8 @@ class RWKVDataModule(LightningDataModule):
         self._loaded_dataset = None
 
         # Log to wandb
-        wandb.config.update({ "data":dict(self._init_locals) })
+        if wandb.run is not None:
+            wandb.config.update({ "data":dict(self._init_locals) })
 
     
     # Called once for initial setup
