@@ -373,31 +373,43 @@ class RWKV(L.LightningModule):
 
     def __init__(self,
                  ctx_len: int,
-                 ctx_len_cutoffs: List[int],
-                 ctx_len_warmup_steps: List[int],
                  n_embd: int,
                  n_layer: int,
                  vocab_size: int,
-                 grad_cp: bool,
-                 lr_init: float,
+                 # Model file path to load from
+                 load_model: Optional[str] = None,
+                 # Context length schedule
+                 ctx_len_cutoffs: List[int] = [],
+                 ctx_len_warmup_steps: List[int] = [],
+                 # Alternative to lr_init / lr_final
+                 # that is multiplied by the gradient_accumulation_steps
+                 # to get the actual learning rate
+                 sample_lr_init: float = -1.0,
+                 sample_lr_final: float = -1.0,
+                 # Learning rate schedule
+                 # use only sample_lr_init / lr_init
+                 # to configure a constant learning rate
+                 lr_init: float = -1.0,
                  lr_final: float = -1.0,
                  lr_period: int = -1,
                  lr_period_type: str = 'epoch',
-                 warmup_steps: int = -1,
+                 # Adam optimizer settings
                  beta1: float = 0.9,
                  beta2: float = 0.99,
                  adam_eps: float = 1.0e-08,
                  weight_decay: float = 0.01,
+                 warmup_steps: int = -1,
+                 # Backprop settings
+                 grad_cp: bool = True,
                  bptt_learning: bool = True,
                  bptt_learning_range: int = -1,
                  bptt_truncated_learning: bool = False,
                  layerwise_lr: bool = True,
                  dim_att: Optional[int] = None,
                  dim_ffn: Optional[int] = None,
-                 load_model: Optional[str] = None,
-                 torch_set_float32_matmul_precision:str = 'high',
                  substep_cuda_cache_clear: bool = False,
-                 substep_logging: bool = False
+                 substep_logging: bool = False,
+                 torch_set_float32_matmul_precision:str = 'high'
                  ):
         super().__init__()
 
@@ -408,6 +420,8 @@ class RWKV(L.LightningModule):
         self.n_layer = n_layer
         self.layerwise_lr = layerwise_lr
         self.grad_cp = grad_cp
+        self.sample_lr_init = sample_lr_init
+        self.sample_lr_final = sample_lr_final
         self.lr_init = lr_init
         self.lr_final = lr_final
         self.lr_period = lr_period
@@ -463,6 +477,7 @@ class RWKV(L.LightningModule):
                     # Temporary error, till better sync logic is done for mixed document sizes
                     # (lazy to support this right now, since i have no idea if anyone has a use for it)
                     raise NotImplementedError("bptt_learning_range > 1 is not supported yet")
+        
         if self.layerwise_lr:
             lr_1x = set()
             lr_2x = set()
@@ -508,12 +523,26 @@ class RWKV(L.LightningModule):
                 },
             ]
 
-        # Set ending_lr to starting_lr, as default behavior
+        # Get the learning rate used for the optimizer
         starting_lr = self.lr_init
         ending_lr = self.lr_final
+        sample_lr_init = self.sample_lr_init
+        sample_lr_final = self.sample_lr_final
+
+        if sample_lr_init < 0.0 and starting_lr < 0.0:
+            raise ValueError("Either sample_lr_init or lr_init must be specified")
+        if sample_lr_init > 0.0 and starting_lr > 0.0:
+            raise ValueError("Use either sample_lr_init or lr_init")
+
+        if sample_lr_init > 0.0:
+            starting_lr = sample_lr_init * self.trainer.accumulate_grad_batches
+        if sample_lr_final > 0.0:
+            ending_lr = sample_lr_final * self.trainer.accumulate_grad_batches
+
         if ending_lr < 0:
             ending_lr = self.lr_init
 
+        # Setup the adam optimizers
         if self.deepspeed_offload:
             optimizer = DeepSpeedCPUAdam(optim_groups,
                                          lr=starting_lr,
