@@ -35,7 +35,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'Echo-A-1B5 memory-finetune (bs=128, train-ctx=4096)'
+      name: 'Echo-A-1B5 memory-finetune (bs=64, train-ctx=1024)'
       # name: 'Echo-A-1B5 Foundation'
       project: 'RWKV-Memory-Experiment'
       tags: ['RWKV', 'memory-exp']
@@ -84,7 +84,7 @@ trainer:
       filename: null
       
       # Save the top/last K checkpoints
-      save_top_k: 2
+      save_top_k: 3
       # Choose by the most recent checkpoints (time based)
       monitor: 'step'
       mode: max
@@ -137,7 +137,11 @@ trainer:
   #
   # You are also recommended to configure this to a large enough number to fully utilize
   # your GPU processing time %, and avoid idle time for the GPU between batches
-  accumulate_grad_batches: 128
+  target_batch_size: 128
+
+  # # Number of datasamples to accumulate before backproping, per GPU
+  # # this can't be used with target_batch_size.
+  # accumulate_grad_batches: -1
 
   # Various other settings, you probably want to leave alone
   fast_dev_run: false
@@ -195,13 +199,14 @@ model:
   # Learning rate of the training process
   # ---
   # Initia learning rate of the process
-  lr_init: 5e-4
+  target_lr_init: 8e-4
   # Final learning rate after the learning rate period
   # learning rate will stay at final value from then onwards
   #
   # NOTE: lr_final / lr_period does not work with warmup_steps
   #       and will be ignored (or replaced) with the warmup_steps logic instead
-  lr_final: 4e-4
+  target_lr_final: 5e-4
+
   # Number of epoch to reduce the learning rate from lr_init to lr_final
   #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
   #  0 means lr_final will apply immediately
@@ -267,13 +272,13 @@ data:
 
   # Use data_dir, if you are using source=text/json/etc
   # this should be relative to the data_path
-  source_data_dir: ../notebook/experiment/memory/memory_dataset/dataset/
+  source_data_dir: ../notebook/experiment/memory/dataset/
 
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
   # This process is skipped if set to zero
   test_split: 0.05
-  test_split_shuffle: false
+  test_split_shuffle: true
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
   # If using a custom tokenizer, provide the tokenizer file path
@@ -316,10 +321,10 @@ data:
   # If no match is found, this will fallback to the default prompt/completion or text column, 
   # or throw an error if the default fallback is not found
   # ---
-  # multi_column_keys: ['instruction', 'input', 'output']
-  # multi_column_prefix: ['# Instruction:\n', '# Context:\n', '# Answer:\n']
-  # multi_column_masking: [false, true, false]
-  # multi_column_separator: '\n\n'
+  multi_column_keys: ['input_prefix', 'input', 'output_prefix', 'output', 'closing']
+  multi_column_prefix: ['', '', '', '', '']
+  multi_column_masking: [false, true, false, false, false]
+  multi_column_separator: ''
 
   # If processing prompt/completion jsonl pairs, the prompt is masked by default
   # use this flag to disable this default behaviour
