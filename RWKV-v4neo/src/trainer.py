@@ -25,6 +25,9 @@ class RWKVLightningTrainer(Trainer):
         # trainer_config args (used for wndb logging)
         trainer_config = dict(kwargs)
 
+        # target batch size logging
+        target_batch_size_log_msg = ""
+
         # Compute the accumulate_grad_batches, using the target_batch_size
         self.target_batch_size = target_batch_size
         if target_batch_size > 0:
@@ -58,14 +61,14 @@ class RWKVLightningTrainer(Trainer):
             trainer_config["__effective_batch_size"] = effective_batch_size
 
             # Log the computed accumulate_grad_batches
-            print(
+            # this is done after _init_ so we can confirm local rank
+            target_batch_size_log_msg = ("\n"+
                 f"\n[RWKV.Trainer] Applying 'target_batch_size' with the following:\n"+
                 f"   - target_batch_size:       {target_batch_size}\n"+
                 f"   - num_nodes:               {num_nodes}\n"+
                 f"   - num_devices:             {num_devices}\n"+
                 f"   - accumulate_grad_batches: {accumulate_grad_batches}\n"
-                f"   - effective_batch_size:    {effective_batch_size}\n"
-            )
+                f"   - effective_batch_size:    {effective_batch_size}\n")
 
         # Update WANDB config
         # ---
@@ -80,6 +83,11 @@ class RWKVLightningTrainer(Trainer):
         # Call the parent constructor
         super().__init__(*args, **kwargs)
         self._fabric_instance = None
+
+        # Log the target_batch_size_log_msg
+        # if local rank is 0
+        if target_batch_size_log_msg != "" and self.local_rank == 0:
+            print(target_batch_size_log_msg)
 
     def getFabric(self):
         if self._fabric_instance is not None:
