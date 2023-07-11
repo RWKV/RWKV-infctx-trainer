@@ -8,6 +8,7 @@ import math
 #
 # - local "fabric" support, as the trainer object is one of the few
 #   objects that is available to all the processess
+# - target_batch_size, which automatically computes the accumulate_grad_batches
 class RWKVLightningTrainer(Trainer):
     def __init__(
             self,
