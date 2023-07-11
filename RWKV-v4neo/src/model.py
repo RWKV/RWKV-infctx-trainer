@@ -542,6 +542,13 @@ class RWKV(L.LightningModule):
         if ending_lr < 0:
             ending_lr = self.lr_init
 
+        if self.trainer.local_rank == 0:
+            start_lr_e = "{:.3e}".format(starting_lr)
+            ending_lr_e = "{:.3e}".format(ending_lr)
+            print(f"\n[RWKV.model] Configuring optimizer with\n"+
+                  f"    - lr_init:  {start_lr_e} ({starting_lr})\n"+
+                  f"    - lr_final: {ending_lr_e} ({ending_lr})\n")
+
         # Setup the adam optimizers
         if self.deepspeed_offload:
             optimizer = DeepSpeedCPUAdam(optim_groups,

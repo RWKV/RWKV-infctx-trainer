@@ -50,7 +50,7 @@ class RWKVLightningTrainer(Trainer):
             # Log the computed accumulate_grad_batches
             effective_batch_size = accumulate_grad_batches * num_nodes * num_devices
             print(
-                f"[RWKV.Trainer] Applying 'target_batch_size' with the following:\n"+
+                f"\n[RWKV.Trainer] Applying 'target_batch_size' with the following:\n"+
                 f"   - target_batch_size:       {target_batch_size}\n"+
                 f"   - num_nodes:               {num_nodes}\n"+
                 f"   - num_devices:             {num_devices}\n"+
