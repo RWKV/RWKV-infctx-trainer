@@ -324,7 +324,6 @@ class RWKVDataModule(LightningDataModule):
         # Log to wandb
         if wandb.run is not None:
             wandb.config.update({ "data":dict(self._init_locals) })
-
     
     # Called once for initial setup
     def prepare_data(self):
