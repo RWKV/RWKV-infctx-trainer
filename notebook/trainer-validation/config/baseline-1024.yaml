@@ -136,7 +136,15 @@ trainer:
   #
   # You are also recommended to configure this to a large enough number to fully utilize
   # your GPU processing time %, and avoid idle time for the GPU between batches
-  accumulate_grad_batches: 10
+  #
+  # This number is divided by the number of GPUs, and nodes configured
+  # So if you have 4 GPUs, and 2 nodes, and this is configured as 128
+  # Each GPU will process 128/4/2 = 16 datasamples per step, via accumulate_grad_batches
+  target_batch_size: 128
+
+  # # Number of datasamples to accumulate before backproping, per GPU
+  # # this can't be used with target_batch_size.
+  # accumulate_grad_batches: -1
 
   # Various other settings, you probably want to leave alone
   fast_dev_run: false
@@ -194,21 +202,33 @@ model:
   # Data samples would be cut down to the respective max ctx_len_cutoffs
   # values if its larger then ctx_len. If the data sample is larger then
   # the largest len_cutoff, the remaining data will be discarded
-  ctx_len_cutoffs: [1024, 2048, 4096, 8192, 16384, 32768, 65536]
+  ctx_len_cutoffs: []
   # Experimental settings, number of tokens to skip in the data sample
   # prefix, for the respective cutoff length. Used to speed up the process
-  ctx_len_warmup_steps: [0, 0, 0, 0, 0, 0, 0]
+  ctx_len_warmup_steps: []
 
   # Learning rate of the training process
   # ---
-  # Initia learning rate of the process
-  lr_init: 6e-4
-  # Final learning rate after the learning rate period
-  # learning rate will stay at final value from then onwards
+
+  # Learing rate normalized to the target_batch_size
   #
-  # NOTE: lr_final / lr_period does not work with warmup_steps
-  #       and will be ignored (or replaced) with the warmup_steps logic instead
-  lr_final: 4e-4
+  # If number of nodes & gpus is 1, this is the actual learning rate
+  # as the accumulate_grad_batches == target_batch_size
+  #
+  # Otherwise this is normalized using the following formula
+  # lr = lr / target_batch_size * accumulate_grad_batches
+  #
+  # This reduces the need to readjust the learning rate when changing
+  # the number of nodes & gpus used for training.
+  target_lr_init:  0.001
+  target_lr_final: 0.0001
+
+  # # Initia learning rate of the process
+  # lr_init: 6e-4
+  # # Final learning rate after the learning rate period
+  # # learning rate will stay at final value from then onwards
+  # lr_final: 4e-4
+
   # Number of epoch to reduce the learning rate from lr_init to lr_final
   #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
   #  0 means lr_final will apply immediately

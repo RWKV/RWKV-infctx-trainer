@@ -2,6 +2,7 @@ from lightning import LightningDataModule
 
 from torch.utils.data import Dataset, DataLoader
 
+import wandb
 from datasets import load_from_disk, load_dataset
 from transformers import PreTrainedTokenizerFast
 from multiprocessing import cpu_count
@@ -314,10 +315,15 @@ class RWKVDataModule(LightningDataModule):
         # Capture the init parameters
         self._init_locals = locals()
         del self._init_locals["self"]
+        del self._init_locals["__class__"]
         
         super().__init__()
         self.data_path = data_path
         self._loaded_dataset = None
+
+        # Log to wandb
+        if wandb.run is not None:
+            wandb.config.update({ "data":dict(self._init_locals) })
     
     # Called once for initial setup
     def prepare_data(self):
