@@ -31,11 +31,6 @@ def generate_jsonl(output_file_path, max_words, num_samples):
             'closing':"\n```\n"
         },
         {
-            'input_prefix': "Memorise and reply back with the following document:\n```\n", 
-            'output_prefix': "```\n\nReply:\n```\n", 
-            'closing':"\n```\n"
-        },
-        {
             'input_prefix': "Document:\n```\n", 
             'output_prefix': "```\n\nReply back with the previous document\n\nReply:\n```\n", 
             'closing':"\n```\n"
@@ -45,6 +40,11 @@ def generate_jsonl(output_file_path, max_words, num_samples):
             'output_prefix': "```\n\nResponse:\n```\n", 
             'closing':"\n```\n"
         }
+        # {
+        #     'input_prefix': "Memorise and reply back with the following document:\n```\n", 
+        #     'output_prefix': "```\n\nReply:\n```\n", 
+        #     'closing':"\n```\n"
+        # },
         # {
         #     'input_prefix': "Simon:\n```\n", 
         #     'output_prefix': "\n```\n\nSays:\n```\n", 
