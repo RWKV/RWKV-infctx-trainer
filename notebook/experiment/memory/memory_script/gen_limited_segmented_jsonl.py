@@ -76,7 +76,7 @@ def generate_jsonl(output_file_path, max_words, num_samples):
             document_lst.append(' '.join(paragraph))
             document_lst.append("\n\n")
 
-        document = "".join(document_lst)
+        document = ("".join(document_lst)).strip()
         selected_template = random.choice(array_template)
         return {
             'input_prefix': selected_template['input_prefix'],
