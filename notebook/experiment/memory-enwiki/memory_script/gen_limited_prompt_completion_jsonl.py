@@ -17,13 +17,13 @@ def generate_jsonl(output_file_path, max_words, num_samples):
     prompt_templates = [
         "Telephone:\n```\n{document}\n```\n\nGame:",
         "Input:\n```\n{document}\n```\n\nOutput:",
-        "Memorize the following document:\n```\n{document}```\n\nType it out below:",
-        "Memorise and reply back with the following document:\n```\n{document}```\n\nReply:",
-        "Document:\n```\n{document}```\n\nReply back with the previous document\n\nReply:",
-        "Instruction: Repeat this text exactly as it is\n\nInput:\n```\n{document}```\n\nResponse:",
+        "Memorize the following document:\n```\n{document}\n```\n\nType it out below:",
+        "Memorise and reply back with the following document:\n```\n{document}\n```\n\nReply:",
+        "Document:\n```\n{document}\n```\n\nReply back with the previous document\n\nReply:",
+        "Instruction: Repeat this text exactly as it is\n\nInput:\n```\n{document}\n```\n\nResponse:",
         # "Simon:\n```\n{document}\n```\n\nSays:",
-        # "Memorize the following document:\n```\n{document}```\n\nFor the above document, type it out below:",
-        # "Document:\n```\n{document}```\n\nReply back with the above document\n\nReply:",
+        # "Memorize the following document:\n```\n{document}\n```\n\nFor the above document, type it out below:",
+        # "Document:\n```\n{document}\n```\n\nReply back with the above document\n\nReply:",
     ]
     completion_templates = [
         "\n```\n{document}\n```\n",

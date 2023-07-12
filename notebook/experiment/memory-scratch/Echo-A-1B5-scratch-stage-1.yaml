@@ -35,7 +35,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'Echo-A-1B5 memory-scratch (bs=64, train-ctx=4096)'
+      name: 'Echo-A-1B5 scratch-stage-1 (bs=64, train-ctx=4096)'
       # name: 'Echo-A-1B5 Foundation'
       project: 'RWKV-Memory-Experiment'
       tags: ['RWKV', 'memory-exp']
@@ -80,7 +80,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/Echo-A-1B5-mem-scratch/
+      dirpath: ../checkpoint/Echo-A-1B5-scratch-stage-1/
       filename: null
       
       # Save the top/last K checkpoints
@@ -103,7 +103,7 @@ trainer:
       # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
       # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
       # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
-      every_n_train_steps: 250
+      every_n_train_steps: 10
       every_n_epochs: null
       save_on_train_epoch_end: true
       train_time_interval: null
@@ -137,7 +137,11 @@ trainer:
   #
   # You are also recommended to configure this to a large enough number to fully utilize
   # your GPU processing time %, and avoid idle time for the GPU between batches
-  accumulate_grad_batches: 256
+  target_batch_size: 256
+
+  # # Number of datasamples to accumulate before backproping, per GPU
+  # # this can't be used with target_batch_size.
+  # accumulate_grad_batches: -1
 
   # Various other settings, you probably want to leave alone
   fast_dev_run: false
@@ -236,6 +240,12 @@ model:
   torch_set_float32_matmul_precision: 'high'
   # torch_set_float32_matmul_precision: null
 
+  # We limit bptt_learning_range, to 1, to ensure high throughput within a multi-gpu setup. 
+  # (by skipping some syncronization code). Additionally, as bptt learning should not be triggering 
+  # anyway as the data sample should be within ctx size 99% of the time
+  bptt_learning: true
+  bptt_learning_range: 1
+
   # various other settings you probably should leave alone
   grad_cp: true
   warmup_steps: -1
@@ -286,7 +296,7 @@ data:
   #
   # This is ignored, if set to -1
   min_token_size: -1
-  max_token_size: -1
+  max_token_size: 512
 
   # Rechunking of text dataset, this is done only when source is set as 'text'
   # and will merge the various sentencees, into larger chunks up to the target size
@@ -320,6 +330,9 @@ data:
   multi_column_prefix: ['', '', '', '', '']
   multi_column_masking: [false, true, false, false, false]
   multi_column_separator: ''
+
+  # !!! NOTE : prompt/completion only works, if the same data sample does not contain
+  #            any of the multi_column_keys, or the default text column
 
   # If processing prompt/completion jsonl pairs, the prompt is masked by default
   # use this flag to disable this default behaviour
