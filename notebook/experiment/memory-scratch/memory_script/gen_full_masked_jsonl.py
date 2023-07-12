@@ -53,7 +53,10 @@ def generate_jsonl(output_file_path, max_words, num_samples):
         template_index = random.randint(0, len(prompt_templates) - 1)
         prompt = prompt_templates[template_index].format(document=document)
         completion = completion_templates[template_index].format(document=document)
-        return {'prompt': prompt, 'completion': completion}
+        return {
+            'input': prompt, 'output': completion,
+            'input_prefix': "", 'output_prefix': "", 'closing': ""
+        }
 
     with open(output_file_path, 'w') as f:
         for i in range(num_samples):
