@@ -194,7 +194,7 @@ model:
   # This allows the training of extreamly large context length (eg. 100k),
   # without eating up too much vram by keeping the training context length
   # to a resonable number sutible to the current GPU setup
-  ctx_len: 4096
+  ctx_len: 512
   
   # Learning rate of the training process
   # ---
@@ -258,7 +258,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/picocreator/memory-experiment/dataset/
+  data_path: ../datapath/picocreator/experiment/memory-scratch/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -277,7 +277,7 @@ data:
 
   # Use data_dir, if you are using source=text/json/etc
   # this should be relative to the data_path
-  source_data_dir: ../notebook/experiment/memory-enwiki/dataset/
+  source_data_dir: ../notebook/experiment/memory-scratch/dataset/
 
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
