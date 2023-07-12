@@ -35,7 +35,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'Echo-A-1B5 scratch-stage-1 (bs=64, train-ctx=4096)'
+      name: 'Echo-A-1B5 scratch-stage-1 (bs=256, train-ctx=512)'
       # name: 'Echo-A-1B5 Foundation'
       project: 'RWKV-Memory-Experiment'
       tags: ['RWKV', 'memory-exp']
