@@ -267,7 +267,7 @@ data:
 
   # Use data_dir, if you are using source=text/json/etc
   # this should be relative to the data_path
-  source_data_dir: ../notebook/experiment/memory/dataset/
+  source_data_dir: ../notebook/experiment/memory-enwiki/dataset/
 
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
