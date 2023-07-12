@@ -329,16 +329,21 @@ class RWKVDataModule(LightningDataModule):
     def prepare_data(self):
         prepare_data_static(**self._init_locals)
     
-    # Called once for every process in DDP
-    def setup(self, stage):
-        # Load the dataset as per normal 
+    # Setup process that is universal
+    def _internal_setup(self):
         if self._loaded_dataset is None:
             self._loaded_dataset = load_from_disk(self.data_path).with_format('torch')
 
+    # Called once for every process in DDP
+    def setup(self, stage):
+        self._internal_setup()
+
     # Return the train dataloader
     def train_dataloader(self):
+        self._internal_setup()
         return DataLoader(self._loaded_dataset['train'], num_workers=num_cpus)
     
     # Return the validation dataloader
     def val_dataloader(self):
+        self._internal_setup()
         return DataLoader(self._loaded_dataset['test'], num_workers=num_cpus)
