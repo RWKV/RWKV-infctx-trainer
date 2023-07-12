@@ -283,7 +283,7 @@ data:
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
   # This process is skipped if set to zero
-  test_split: 0.05
+  test_split: 0.01
   test_split_shuffle: true
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
