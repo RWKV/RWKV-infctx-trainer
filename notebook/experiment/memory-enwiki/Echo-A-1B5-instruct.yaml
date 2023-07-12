@@ -137,7 +137,7 @@ trainer:
   #
   # You are also recommended to configure this to a large enough number to fully utilize
   # your GPU processing time %, and avoid idle time for the GPU between batches
-  target_batch_size: 24
+  target_batch_size: 32
 
   # Alternative to batch size
   # accumulate_grad_batches: 12
@@ -275,7 +275,7 @@ data:
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
   # This process is skipped if set to zero
-  test_split: 0.05
+  test_split: 0.005
   test_split_shuffle: false
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
