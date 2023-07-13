@@ -11,7 +11,7 @@ def load_words(file_path):
     return valid_words
 
 # Get the full word list relative to the script
-full_words = load_words(os.path.join(os.path.dirname(__file__), 'full_word_list.txt'))
+full_words = load_words(os.path.join(os.path.dirname(__file__), 'limited_word_list.txt'))
 
 def generate_jsonl(output_file_path, max_words, num_samples):
     prompt_templates = [
