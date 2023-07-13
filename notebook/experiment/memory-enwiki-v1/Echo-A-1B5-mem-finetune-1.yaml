@@ -35,7 +35,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'Echo-A-1B5 memory-finetune-4 (bs=256, train-ctx=2048)'
+      name: 'Echo-A-1B5 memory-finetune-1 (bs=256, train-ctx=512)'
       # name: 'Echo-A-1B5 Foundation'
       project: 'RWKV-Memory-Experiment'
       tags: ['RWKV', 'memory-exp']
@@ -80,7 +80,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/Echo-A-1B5-mem-finetune-4/
+      dirpath: ../checkpoint/Echo-A-1B5-mem-finetune-1/
       filename: null
       
       # Save the top/last K checkpoints
@@ -103,7 +103,7 @@ trainer:
       # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
       # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
       # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
-      every_n_train_steps: 25
+      every_n_train_steps: 10
       every_n_epochs: null
       save_on_train_epoch_end: true
       train_time_interval: null
@@ -176,7 +176,7 @@ trainer:
 ########################################
 model:
   # Model to start the finetune/training process from
-  load_model: ../model/Echo-A-1B5-Tune3.pth
+  load_model: ../model/Echo-A-1B5-Stage2.pth
 
   # The model size setting, this MUST match
   # your current model settings, refer to the model card
@@ -194,18 +194,18 @@ model:
   # This allows the training of extreamly large context length (eg. 100k),
   # without eating up too much vram by keeping the training context length
   # to a resonable number sutible to the current GPU setup
-  ctx_len: 2048
+  ctx_len: 512
   
   # Learning rate of the training process
   # ---
   # Initia learning rate of the process
-  lr_init: 1e-4
+  lr_init: 8e-4
   # Final learning rate after the learning rate period
   # learning rate will stay at final value from then onwards
   #
   # NOTE: lr_final / lr_period does not work with warmup_steps
   #       and will be ignored (or replaced) with the warmup_steps logic instead
-  lr_final: 1e-4
+  lr_final: 5e-4
 
   # Number of epoch to reduce the learning rate from lr_init to lr_final
   #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
@@ -259,7 +259,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/picocreator/experiment/memory/enwiki-finetune-4/
+  data_path: ../datapath/picocreator/memory-experiment/dataset/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -278,12 +278,12 @@ data:
 
   # Use data_dir, if you are using source=text/json/etc
   # this should be relative to the data_path
-  source_data_dir: ../notebook/experiment/memory-enwiki/dataset/
+  source_data_dir: ../notebook/experiment/memory-enwiki-v1/dataset/
 
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
   # This process is skipped if set to zero
-  test_split: 0.005
+  test_split: 0.01
   test_split_shuffle: true
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
@@ -297,7 +297,7 @@ data:
   #
   # This is ignored, if set to -1
   min_token_size: -1
-  max_token_size: 2048
+  max_token_size: -1
 
   # Rechunking of text dataset, this is done only when source is set as 'text'
   # and will merge the various sentencees, into larger chunks up to the target size
@@ -327,10 +327,10 @@ data:
   # If no match is found, this will fallback to the default prompt/completion or text column, 
   # or throw an error if the default fallback is not found
   # ---
-  # multi_column_keys: ['input_prefix', 'input', 'output_prefix', 'output', 'closing']
-  # multi_column_prefix: ['', '', '', '', '']
-  # multi_column_masking: [false, true, false, false, false]
-  # multi_column_separator: ''
+  multi_column_keys: ['input_prefix', 'input', 'output_prefix', 'output', 'closing']
+  multi_column_prefix: ['', '', '', '', '']
+  multi_column_masking: [false, true, false, false, false]
+  multi_column_separator: ''
 
   # If processing prompt/completion jsonl pairs, the prompt is masked by default
   # use this flag to disable this default behaviour
