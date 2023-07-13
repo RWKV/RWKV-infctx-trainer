@@ -35,7 +35,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'Echo-A-1B5 scratch-stage-1 (bs=256, train-ctx=512)'
+      name: 'Echo-A-1B5 scratch-stage-2 (bs=256, train-ctx=512)'
       # name: 'Echo-A-1B5 Foundation'
       project: 'RWKV-Memory-Experiment'
       tags: ['RWKV', 'memory-exp']
@@ -80,7 +80,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/Echo-A-1B5-scratch-stage-1/
+      dirpath: ../checkpoint/Echo-A-1B5-scratch-stage-2/
       filename: null
       
       # Save the top/last K checkpoints
@@ -176,7 +176,7 @@ trainer:
 ########################################
 model:
   # Model to start the finetune/training process from
-  load_model: ../model/Echo-A-1B5-Init.pth
+  load_model: ../model/Echo-A-1B5-Scratch-Stage-1.pth
 
   # The model size setting, this MUST match
   # your current model settings, refer to the model card
@@ -199,13 +199,13 @@ model:
   # Learning rate of the training process
   # ---
   # Initia learning rate of the process
-  lr_init: 8e-4
+  lr_init: 5e-4
   # Final learning rate after the learning rate period
   # learning rate will stay at final value from then onwards
   #
   # NOTE: lr_final / lr_period does not work with warmup_steps
   #       and will be ignored (or replaced) with the warmup_steps logic instead
-  lr_final: 5e-4
+  lr_final: 1e-4
   # Number of epoch to reduce the learning rate from lr_init to lr_final
   #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
   #  0 means lr_final will apply immediately
