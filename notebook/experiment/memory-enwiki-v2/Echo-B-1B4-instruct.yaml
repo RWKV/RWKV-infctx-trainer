@@ -242,7 +242,7 @@ model:
   # We disable bptt / limit bptt_learning_range, to 1, to ensure high throughput within a multi-gpu setup. 
   # (by skipping some syncronization code). Additionally, as bptt learning should not be triggering 
   # anyway as the data sample should be within ctx size 99% of the time
-  bptt_learning: false
+  bptt_learning: true
   bptt_learning_range: 1
 
   # various other settings you probably should leave alone
