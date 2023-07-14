@@ -180,8 +180,8 @@ model:
   # The model size setting, this MUST match
   # your current model settings, refer to the model card
   # of the downloaded model for more details
-  n_embd: 2048
-  n_layer: 24
+  n_embd: 1024
+  n_layer: 96
   vocab_size: 50277
 
   # Context length to use for the training process
