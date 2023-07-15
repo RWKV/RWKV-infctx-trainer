@@ -308,7 +308,7 @@ data:
   # Apply text rechunk to the dataset, even if its not a 'text' source
   # This is done only after dataset filtering, and if source is not 'text'
   # ---
-  # text_rechunk_force: false
+  text_rechunk_force: true
 
   # Custom text column to use, useful for dataset with alternative training columns labels
   # This is checked before multi column merging, default is null (disabled)
