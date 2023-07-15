@@ -25,6 +25,16 @@ import wandb
 from torch.utils.cpp_extension import load
 
 ########################################################################################################
+# Enable / Disable lightning module code, we use the model directly as an nn.Module, for inference
+########################################################################################################
+
+RWKV_USE_NN_MODULE = os.getenv("RWKV_USE_NN_MODULE", "0").lower() in ("1", "true", "yes")
+if RWKV_USE_NN_MODULE:
+    RWKV_MAIN_MODULE=nn.Module
+else:
+    RWKV_MAIN_MODULE=L.LightningModule
+
+########################################################################################################
 # JIT / torch compile special handling
 ########################################################################################################
 
@@ -369,7 +379,7 @@ class L2Wrap(torch.autograd.Function):
 ########################################################################################################
 # Core RWKV module
 ########################################################################################################
-class RWKV(L.LightningModule):
+class RWKV(RWKV_MAIN_MODULE):
 
     def __init__(self,
                  ctx_len: int,
@@ -703,8 +713,8 @@ class RWKV(L.LightningModule):
         return -1
 
     @TCompileBaseline
-    def forward(self, idx: torch.Tensor, last_shift_states: torch.Tensor,
-                last_wkv_states: torch.Tensor):
+    def forward(self, idx: torch.Tensor, last_shift_states: torch.Tensor = None,
+                last_wkv_states: torch.Tensor = None):
         B, T = idx.size()
         assert T <= self.ctx_len, "Cannot forward, model ctx_len is exhausted."
 
@@ -712,6 +722,16 @@ class RWKV(L.LightningModule):
 
         new_states = BlockStateList.empty(self.n_layer, B, self.n_embd,
                                           x.device, x.dtype)
+        
+        if last_shift_states is None:
+            cur_bs_list = BlockStateList.empty(
+                self.n_layer, B,
+                self.n_embd,
+                x.device, x.dtype
+            )
+        else:
+            cur_bs_list = BlockStateList(last_shift_states, last_wkv_states)
+
         # Avoid using the zip operation, as torch.compile throws an exception on it
         # with `zip not reconized as a valid function`
         # ---
@@ -719,10 +739,9 @@ class RWKV(L.LightningModule):
         #         zip(self.blocks,
         #             BlockStateList(last_shift_states, last_wkv_states))):
         # ---
-        bs_list = BlockStateList(last_shift_states, last_wkv_states)
         for i in range(len(self.blocks)):
             block = self.blocks[i]
-            last_state = bs_list[i]
+            last_state = cur_bs_list[i]
             if self.grad_cp:
                 x, new_state = deepspeed_checkpoint(
                     block, x, last_state)
@@ -990,7 +1009,7 @@ class RWKV(L.LightningModule):
             # Normal operations without BPTT
             segment_size = self.ctx_len
             for i in range(segment_count):
-                if i < segment_count-1:
+                if i < segment_count-1 and is_training_run:
                     total_loss, new_shift_states, new_wkv_states, steps = deepspeed_checkpoint(
                         checkpointed_step,
                         idx[:, i * segment_size:(i + 1) * segment_size],
