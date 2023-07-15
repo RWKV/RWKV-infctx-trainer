@@ -165,5 +165,5 @@ node_modules/
 */config.yaml
 
 # Keep the memory experiment word list
-!notebook/experiment/memory/memory_dataset/*.txt
-!notebook/experiment/memory/memory_script/*.txt
+!notebook/experiment/*/memory_dataset/*.txt
+!notebook/experiment/*/memory_script/*.txt
