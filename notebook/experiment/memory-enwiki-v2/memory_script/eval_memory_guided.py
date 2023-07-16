@@ -3,6 +3,8 @@ import sys
 import os
 import difflib
 import copy
+import torch
+from torch.nn import functional as F
 
 #---
 # Given the RWKV model path
@@ -14,8 +16,13 @@ import copy
 # Check for argument, else throw error
 if len(sys.argv) < 2:
     print("No arguments supplied")
-    print("Usage: python3 eval_model_memory.py <rwkv_model_path>")
+    print("Usage: python3 eval_model_memory.py <rwkv_model_path> [verbose]")
     sys.exit(1)
+
+# Verbose mode
+verbose = False
+if len(sys.argv) >= 3 and sys.argv[2] == "verbose":
+    verbose = True
 
 # set these before import RWKV
 os.environ['RWKV_JIT_ON'] = '1'
@@ -104,6 +111,10 @@ def validate_model(token_count):
     # Score counter
     matched_tokens = 0
 
+    # Line break for verbose mode
+    if verbose:
+        print("## ------------------ ")
+
     # Lets evaluate the logits, and check if they match one by one
     for i in range(len(target_tokens)):
         # Get the target token
@@ -113,13 +124,37 @@ def validate_model(token_count):
         for n in token_ban:
             logits[n] = -float('inf')
 
-        # Sample the logits
-        token = pipeline.sample_logits(logits, 0.1, 0.0, 1)
+        # We are using a custom sampling method to provide more insight
+        # to the probability distribution of the target token
+
+        # Softmax and Sample the logits
+        probs = F.softmax(logits, dim=-1)
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+
+        # Get the top token info
+        top_token = sorted_indices[0].item()
+        top_prob = sorted_probs[0].item()
 
         # Check if the token matches, and score it
-        if token == target:
+        if top_token == target:
             matched_tokens += 1
 
+        # Find the target token position
+        if verbose:
+            for j in range(len(sorted_indices)):
+                if sorted_indices[j].item() == target:
+                    target_pos = j
+                    target_prob = sorted_probs[j].item()
+
+            top_token_str = model.decode([top_token])
+            target_token_str = model.decode([target])
+
+            # Print the results
+            if top_token == target:
+                print(f' - token {i} (hit) : "{top_token_str}" ({top_prob*100:.2f}%)')
+            else:
+                print(f' - token {i} (miss): "{top_token_str}" ({top_prob*100:.2f}%) | "{target_token_str}" pos={target_pos} ({target_prob*100:.2f}%)')
+        
         # Forward with the target token
         logits, state = model.forward([target], state)
     
@@ -127,7 +162,9 @@ def validate_model(token_count):
     matched_percentage = matched_tokens / token_count * 100.0
 
     # Print the results
-    print(f'Model validation at {token_count} tokens : {matched_percentage}% similarity, with {matched_tokens} matched token, and {token_count - matched_tokens} token mismatch')
+    print(f'## Model validation for {token_count} tokens : {matched_percentage}% similarity, with {matched_tokens} matched token, and {token_count - matched_tokens} token mismatch')
+    if verbose:
+        print("## ------------------ ")
 
     # # Print more info if there are differences
     # if(char_diff_count > 0):
