@@ -114,6 +114,7 @@ def validate_model(token_count):
     # Line break for verbose mode
     if verbose:
         print("## ------------------ ")
+        print(f'## Model validation for {token_count} tokens')
 
     # Lets evaluate the logits, and check if they match one by one
     for i in range(len(target_tokens)):
@@ -146,8 +147,8 @@ def validate_model(token_count):
                     target_pos = j
                     target_prob = sorted_probs[j].item()
 
-            top_token_str = model.decode([top_token])
-            target_token_str = model.decode([target])
+            top_token_str = pipeline.decode([top_token])
+            target_token_str = pipeline.decode([target])
 
             # Print the results
             if top_token == target:
