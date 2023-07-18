@@ -16,13 +16,17 @@ from torch.nn import functional as F
 # Check for argument, else throw error
 if len(sys.argv) < 2:
     print("No arguments supplied")
-    print("Usage: python3 eval_model_memory.py <rwkv_model_path> [verbose]")
+    print("Usage: python3 eval_model_memory.py <rwkv_model_path> [verbose/csv-file-path]")
     sys.exit(1)
 
 # Verbose mode
 verbose = False
-if len(sys.argv) >= 3 and sys.argv[2] == "verbose":
-    verbose = True
+csv_file_path = None
+if len(sys.argv) >= 3:
+    if sys.argv[2] == "verbose":
+        verbose = True
+    else:
+        csv_file_path = sys.argv[2]
 
 # set these before import RWKV
 os.environ['RWKV_JIT_ON'] = '1'
@@ -53,9 +57,13 @@ model_path = sys.argv[1]
 model = RWKV(model=model_path, strategy=model_run_strat)
 pipeline = PIPELINE(model, tokenizer_path) 
 
-# Get the cursed " on" token
+# The evaluation size range
+MAX_TOKENS = 1000
+
+# Get the cursed " on" token (this happens only in some models)
 on_token = pipeline.encode(" on")[0]
 markdown_token = pipeline.encode("```")[0]
+newline_token = pipeline.encode("\n")[0]
 
 # Pipeline args to use
 token_ban = [on_token] # ban the generation of some tokens
@@ -71,6 +79,22 @@ pipeline_args = PIPELINE_ARGS(
 # Read the test word list, taken from ./eval_word_list.txt
 with open(os.path.join(script_dir,'./eval_word_list.txt'), 'r') as f:
     test_word_list = f.read()
+
+# Open the CSV file, to write into
+if csv_file_path != None:
+    import csv
+    csv_file_handle = open(csv_file_path, 'w', newline='')
+    csv_writer = csv.writer(csv_file_handle)
+
+    # Write the header
+    csv_writer.writerow([
+        'eval_token_count', 'token_idx', 'matched', 
+        'top_token_str', 'top_token_percentage', 
+        'eval_token_str', 'eval_token_pos', 'eval_token_percentage', 
+        'is_random_baseline'
+    ])
+else:
+    csv_writer = None
 
 # Convert it to tokens
 test_word_tokens = pipeline.encode(test_word_list)
@@ -95,18 +119,27 @@ def get_words_tokens_with_token_count(token_count):
     return target_words
 
 # Function for validating once the model at a specific token count
-def validate_model(token_count):
+def validate_model(token_count, withoutInstructAndInput=False):
     # Get the target tokens
     target_tokens = test_word_tokens[:token_count]
 
-    # Clone the state
-    state = copy.deepcopy(prompt_prefix_state)
+    logits = None
+    state = None
 
-    # Compute the document to memorize
-    logits, state = model.forward(target_tokens, state)
+    # We validate with, the instruct and input
+    # having the option to disable this, helps us have a randomized baseline score
+    if withoutInstructAndInput == True:
+        # Because we actuall need a logit to start with, we compromise with a new line at minimum
+        logits, state = model.forward([newline_token], state)
+    else:
+        # Clone the state
+        state = copy.deepcopy(prompt_prefix_state)
 
-    # Compute the mid segment
-    logits, state = model.forward(mid_segment_tokens, state)
+        # Compute the document to memorize
+        logits, state = model.forward(target_tokens, state)
+
+        # Compute the mid segment
+        logits, state = model.forward(mid_segment_tokens, state)
 
     # Score counter
     matched_tokens = 0
@@ -141,7 +174,7 @@ def validate_model(token_count):
             matched_tokens += 1
 
         # Find the target token position
-        if verbose:
+        if verbose or csv_writer != None:
             for j in range(len(sorted_indices)):
                 if sorted_indices[j].item() == target:
                     target_pos = j
@@ -150,11 +183,25 @@ def validate_model(token_count):
             top_token_str = pipeline.decode([top_token])
             target_token_str = pipeline.decode([target])
 
-            # Print the results
-            if top_token == target:
-                print(f' - token {i} (hit) : "{top_token_str}" ({top_prob*100:.2f}%)')
-            else:
-                print(f' - token {i} (miss): "{top_token_str}" ({top_prob*100:.2f}%) | "{target_token_str}" pos={target_pos} ({target_prob*100:.2f}%)')
+            # Print the results, for verbose
+            if verbose:
+                if top_token == target:
+                    print(f' - token {i} (hit) : "{top_token_str}" ({top_prob*100:.2f}%)')
+                else:
+                    print(f' - token {i} (miss): "{top_token_str}" ({top_prob*100:.2f}%) | "{target_token_str}" pos={target_pos} ({target_prob*100:.2f}%)')
+
+            # Log it to CSV file if enabled
+            if csv_writer != None:
+                # We need to encode the strings safely (escape special characters, new lines, etc)
+                top_token_str = top_token_str.encode('unicode_escape').decode('utf-8')
+                target_token_str = target_token_str.encode('unicode_escape').decode('utf-8')
+                csv_writer.writerow([
+                    token_count, i, top_token == target,
+                    top_token_str, top_prob,
+                    target_token_str, target_pos, target_prob,
+                    withoutInstructAndInput == True
+                ])
+            
         
         # Forward with the target token
         logits, state = model.forward([target], state)
@@ -163,7 +210,11 @@ def validate_model(token_count):
     matched_percentage = matched_tokens / token_count * 100.0
 
     # Print the results
-    print(f'## Model validation for {token_count} tokens : {matched_percentage}% similarity, with {matched_tokens} matched token, and {token_count - matched_tokens} token mismatch')
+    if withoutInstructAndInput == False:
+        print(f'## Model validation for {token_count} tokens : {matched_percentage}% similarity, with {matched_tokens} matched token, and {token_count - matched_tokens} token mismatch')
+    else:
+        print(f"## Finished baseline model to eval output predictive matching (aka 0 memory?), for {MAX_TOKENS} tokens")
+    
     if verbose:
         print("## ------------------ ")
 
@@ -181,50 +232,27 @@ print("### Model validation start ###")
 print("###")
 
 # Validate the model at different token counts
-validate_model(5)
-validate_model(10)
-validate_model(15)
-validate_model(20)
-validate_model(25)
-validate_model(30)
-validate_model(35)
-validate_model(40)
-validate_model(45)
-validate_model(50)
-validate_model(55)
-validate_model(60)
-validate_model(65)
-validate_model(70)
-validate_model(75)
-validate_model(80)
-validate_model(85)
-validate_model(90)
-validate_model(95)
-validate_model(100)
-validate_model(105)
-validate_model(110)
-validate_model(120)
-validate_model(130)
-validate_model(140)
-validate_model(150)
-validate_model(175)
-validate_model(200)
-validate_model(225)
-validate_model(250)
-validate_model(275)
-validate_model(300)
-validate_model(325)
-validate_model(350)
-validate_model(375)
-validate_model(400)
-validate_model(425)
-validate_model(450)
-validate_model(475)
-validate_model(500)
-validate_model(550)
-validate_model(600)
-validate_model(650)
-validate_model(700)
+
+# We validate in increments of 5, from 5 to 150
+for i in range(5, 150, 5):
+    validate_model(i)
+
+# We validate in increments of 10 from 150 to 300
+for i in range(150, 300, 10):
+    validate_model(i)
+
+# We validate in increments of 25 from 300 to 700
+for i in range(300, 700, 25):
+    validate_model(i)
+
+# We validate in increments of 50 from 700 to 1000
+for i in range(700, MAX_TOKENS, 50):
+    validate_model(i)
+
+# Lets do the baseline
+if csv_file_path != None:
+    validate_model(MAX_TOKENS, withoutInstructAndInput=True)
+
 # validate_model(750)
 # validate_model(800)
 # validate_model(850)
