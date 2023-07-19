@@ -25,16 +25,6 @@ import wandb
 from torch.utils.cpp_extension import load
 
 ########################################################################################################
-# Enable / Disable lightning module code, we use the model directly as an nn.Module, for inference
-########################################################################################################
-
-RWKV_USE_NN_MODULE = os.getenv("RWKV_USE_NN_MODULE", "0").lower() in ("1", "true", "yes")
-if RWKV_USE_NN_MODULE:
-    RWKV_MAIN_MODULE=nn.Module
-else:
-    RWKV_MAIN_MODULE=L.LightningModule
-
-########################################################################################################
 # JIT / torch compile special handling
 ########################################################################################################
 
@@ -393,7 +383,7 @@ class L2Wrap(torch.autograd.Function):
 ########################################################################################################
 # Core RWKV module
 ########################################################################################################
-class RWKV(RWKV_MAIN_MODULE):
+class RWKV(L.LightningModule):
 
     def __init__(self,
                  ctx_len: int,
