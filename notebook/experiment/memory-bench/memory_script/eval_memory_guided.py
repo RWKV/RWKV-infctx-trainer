@@ -39,8 +39,8 @@ from rwkv.utils import PIPELINE_ARGS
 # Model strategy to use
 # model_run_strat='cpu fp32' # CPU only, use if you dun have a GPU
 # model_run_strat='cuda fp32' # Entire model is in the GPU (use if you have enough vram)
-model_run_strat='cuda fp32 *11+' # GPU streaming, if you have vram issues for 14B model
-# model_run_strat='cuda fp16 *0+' # GPU streaming, if you have really low vram
+# model_run_strat='cuda fp32 *11+' # GPU streaming, if you have vram issues for 14B model
+model_run_strat='cuda fp32 *6+' # GPU streaming, if you have really low vram
 
 # Dir of this script
 script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -245,8 +245,8 @@ for i in range(150, 300, 10):
 for i in range(300, 700, 25):
     validate_model(i)
 
-# We validate in increments of 50 from 700 to 1000
-for i in range(700, MAX_TOKENS, 50):
+# We validate in increments of 50 from 700 to MAXTOKEN (inclusive)
+for i in range(700, MAX_TOKENS+1, 50):
     validate_model(i)
 
 # Lets do the baseline
