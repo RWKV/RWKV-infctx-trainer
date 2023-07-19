@@ -1222,7 +1222,17 @@ class SimpleRWKV():
             return self._forward(tokens, stateObj)
 
     # Sampling logits
-    def sample_logits(self, logits, prv_tokens=[0], temperature=1.0, top_p=0.9):
+    def sample_logits(
+            self, logits, 
+            prv_tokens=[0], 
+            temperature=1.0, top_p=0.9,
+            token_ban: list = []
+            ):
+        # Apply token ban
+        for x in token_ban:
+            logits[x] = -float("Inf")
+
+        # Handle sampling with temperature
         if temperature > 0.0:
             probs = F.softmax(logits, dim=-1)
             sorted_probs = torch.sort(probs, descending=True)[0]
@@ -1244,6 +1254,7 @@ class SimpleRWKV():
             max_tokens: int = 32,
             temperature: float = 1.0,
             top_p: float = 0.9,
+            token_ban: list = [],
             start_state = None,
             stream_to_stdout: bool = False,
         ):
@@ -1271,15 +1282,11 @@ class SimpleRWKV():
         full_tokens = enc.copy()
         out_tokens = []
         for i in range(max_tokens):
-            if temperature > 0.0:
-                ttt = self.sample_logits(
-                    logits, prv_tokens=full_tokens,
-                    temperature=temperature, top_p=top_p
-                )
-            else: 
-                # Since the tokenizer sample does not support temp==0
-                # we handle this case ourself, by fining the top token
-                ttt = torch.argmax(logits, dim=-1).item()
+            ttt = self.sample_logits(
+                logits, prv_tokens=full_tokens,
+                temperature=temperature, top_p=top_p,
+                token_ban=token_ban
+            )
             
             # Append the token
             out_tokens.append(ttt)
