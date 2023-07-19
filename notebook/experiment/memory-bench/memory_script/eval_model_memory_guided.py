@@ -10,6 +10,8 @@ from torch.nn import functional as F
 # Given the RWKV model path
 # Evaluate token memorization capabilities of the model
 #
+# This uses the model training code instead
+#
 # Runs on GPU
 #---
 
@@ -28,56 +30,29 @@ if len(sys.argv) >= 3:
     else:
         csv_file_path = sys.argv[2]
 
-# set these before import RWKV
-os.environ['RWKV_JIT_ON'] = '1'
-os.environ["RWKV_CUDA_ON"] = '1' # '1' to compile CUDA kernel (10x faster), requires c++ compiler & cuda libraries
+# Lets load the SimpleRWKV model
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '../../../../'))
+V4NEO_DIR = os.path.join(PROJECT_DIR, 'RWKV-v4neo')
+sys.path.insert(1, V4NEO_DIR)
 
-from rwkv.model import RWKV
-from rwkv.utils import PIPELINE
-from rwkv.utils import PIPELINE_ARGS
-
-# Model strategy to use
-# model_run_strat='cpu fp32' # CPU only, use if you dun have a GPU
-# model_run_strat='cuda fp32' # Entire model is in the GPU (use if you have enough vram)
-# model_run_strat='cuda fp32 *11+' # GPU streaming, if you have vram issues for 14B model
-model_run_strat='cuda fp32 *6+' # GPU streaming, if you have really low vram
-
-# Dir of this script
-script_dir = os.path.dirname(os.path.realpath(__file__))
-
-# Tokenizer file path
-tokenizer_path = os.path.abspath(os.path.join(script_dir,"../../../../RWKV-v4neo/20B_tokenizer.json")) # 20B_tokenizer.json is in https://github.com/BlinkDL/ChatRWKV
-# Check if file exists
-if not os.path.isfile(tokenizer_path):
-    print("Tokenizer file not found: ", tokenizer_path)
-    sys.exit(1)
-
-# download models: https://huggingface.co/BlinkDL
+from src.model import SimpleRWKV
 model_path = sys.argv[1]
-model = RWKV(model=model_path, strategy=model_run_strat)
-pipeline = PIPELINE(model, tokenizer_path) 
+model = SimpleRWKV(model_path, device="cuda")
 
 # The evaluation size range
 MAX_TOKENS = 1000
 
 # Get the cursed " on" token (this happens only in some models)
-on_token = pipeline.encode(" on")[0]
-markdown_token = pipeline.encode("```")[0]
-newline_token = pipeline.encode("\n")[0]
+on_token = model.encode(" on")[0]
+markdown_token = model.encode("```")[0]
+newline_token = model.encode("\n")[0]
 
 # Pipeline args to use
 token_ban = [on_token] # ban the generation of some tokens
-pipeline_args = PIPELINE_ARGS(
-                     temperature = 0.2, top_p = 0.2, 
-                     top_k = 1, # top_k = 0 then ignore
-                     alpha_frequency = 0,
-                     alpha_presence = 0,
-                     token_ban = token_ban, # ban the generation of some tokens
-                     token_stop = [0,markdown_token], # stop generation whenever you see any token here
-                     chunk_len = 256) # split input into chunks to save VRAM (shorter -> slower)
 
 # Read the test word list, taken from ./eval_word_list.txt
-with open(os.path.join(script_dir,'./eval_word_list.txt'), 'r') as f:
+with open(os.path.join(SCRIPT_DIR,'./eval_word_list.txt'), 'r') as f:
     test_word_list = f.read()
 
 # Open the CSV file, to write into
@@ -103,7 +78,7 @@ else:
     csv_writer = None
 
 # Convert it to tokens
-test_word_tokens = pipeline.encode(test_word_list)
+test_word_tokens = model.encode(test_word_list)
 
 # Prompt template prefix to use
 prompt_prefix = "Instruction: Repeat this text exactly as it is\n\nInput:\n```\n"
@@ -112,13 +87,13 @@ reply_prefix = "Response:\n```\n"
 reply_suffix = "\n```\n"
 
 # Process the prompt prefix
-prompt_prefix_logits, prompt_prefix_state = model.forward(pipeline.encode(prompt_prefix), None)
-mid_segment_tokens = pipeline.encode(prompt_suffix+reply_prefix)
+prompt_prefix_logits, prompt_prefix_state = model.forward(model.encode(prompt_prefix), None)
+mid_segment_tokens = model.encode(prompt_suffix+reply_prefix)
 
 # Function use to get words with the following token count
 def get_words_tokens_with_token_count(token_count):
     target_tokens = test_word_tokens[:token_count]
-    target_words = pipeline.decode(target_tokens)
+    target_words = model.decode(target_tokens)
     
     # Normalize to lowercase
     target_words = target_words.lower()
@@ -186,8 +161,8 @@ def validate_model(token_count, withoutInstructAndInput=False):
                     target_pos = j
                     target_prob = sorted_probs[j].item()
 
-            top_token_str = pipeline.decode([top_token])
-            target_token_str = pipeline.decode([target])
+            top_token_str = model.decode([top_token])
+            target_token_str = model.decode([target])
 
             # Print the results, for verbose
             if verbose:

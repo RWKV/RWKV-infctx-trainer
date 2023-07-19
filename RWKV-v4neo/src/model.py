@@ -24,6 +24,10 @@ import wandb
 
 from torch.utils.cpp_extension import load
 
+# Script dir for various files
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+CUDA_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../cuda"))
+
 ########################################################################################################
 # JIT / torch compile special handling
 ########################################################################################################
@@ -469,7 +473,10 @@ class RWKV(L.LightningModule):
         self.emb = nn.Embedding(vocab_size, n_embd)
 
         load(name=f"wkv_{self.ctx_len}_bf16",
-             sources=["cuda/wkv_op_bf16.cpp", "cuda/wkv_cuda_bf16.cu"],
+             sources=[
+                os.path.join(CUDA_DIR, "wkv_op_bf16.cpp"),
+                os.path.join(CUDA_DIR, "wkv_cuda_bf16.cu")
+            ],
              verbose=True,
              extra_cflags=["-std=c++17", "-O3", f"-DTmax={self.ctx_len}"],
              extra_cuda_cflags=[
