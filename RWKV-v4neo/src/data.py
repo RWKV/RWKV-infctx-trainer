@@ -49,7 +49,7 @@ def prepare_data_static(**kargs):
         if kargs["multi_column_keys"] is None:
             multi_column_keys = ['instruction', 'input', 'output']
             multi_column_prefix = ['Instruction:\n', 'Input:\n', 'Output:\n']
-            multi_column_train_mask = [True, True, False]
+            multi_column_train_mask = [True, False, True]
             multi_column_separator = '\n\n'
         else:
             multi_column_keys = kargs["multi_column_keys"]
