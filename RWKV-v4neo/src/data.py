@@ -49,12 +49,12 @@ def prepare_data_static(**kargs):
         if kargs["multi_column_keys"] is None:
             multi_column_keys = ['instruction', 'input', 'output']
             multi_column_prefix = ['Instruction:\n', 'Input:\n', 'Output:\n']
-            multi_column_masking = [True, True, False]
+            multi_column_train_mask = [True, True, False]
             multi_column_separator = '\n\n'
         else:
             multi_column_keys = kargs["multi_column_keys"]
             multi_column_prefix = kargs["multi_column_prefix"]
-            multi_column_masking = kargs["multi_column_masking"]
+            multi_column_train_mask = kargs["multi_column_train_mask"]
             multi_column_separator = kargs["multi_column_separator"]
         
         # Tokenized encodings for multi column keys
@@ -65,7 +65,7 @@ def prepare_data_static(**kargs):
         # Process the multi column settings
         if multi_column_enabled:
             # Check if the multi column keys lengths are valid (only if it is enabled)
-            if len(multi_column_keys) != len(multi_column_prefix) or len(multi_column_keys) != len(multi_column_masking):
+            if len(multi_column_keys) != len(multi_column_prefix) or len(multi_column_keys) != len(multi_column_train_mask):
                 raise ValueError('Multi column keys, prefix and masking must be the same length')
             # Tokenize the multi column strings
             for i in range(len(multi_column_keys)):
@@ -132,10 +132,10 @@ def prepare_data_static(**kargs):
                             token_type_ids += column_encodings['token_type_ids']
 
                             # Override the attention mask if masking is enabled
-                            if multi_column_masking[i]:
+                            if multi_column_train_mask[i]:
                                 attention_mask += ([1] * len(column_encodings['input_ids']))
                             else:
-                                attention_mask += column_encodings['attention_mask']
+                                attention_mask += ([0] * len(column_encodings['input_ids']))
                     
                     # Return the merged columns
                     return {
@@ -307,7 +307,7 @@ class RWKVDataModule(LightningDataModule):
         # and need to be merged
         multi_column_keys: list = None,
         multi_column_prefix: list = None,
-        multi_column_masking: list = None,
+        multi_column_train_mask: list = None,
         multi_column_separator: str = None,
         # prompt/completion format masking support
         disable_prompt_mask: bool = False
