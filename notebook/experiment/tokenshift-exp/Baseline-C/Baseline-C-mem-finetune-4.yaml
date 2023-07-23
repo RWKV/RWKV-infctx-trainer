@@ -193,7 +193,7 @@ model:
   # This allows the training of extreamly large context length (eg. 100k),
   # without eating up too much vram by keeping the training context length
   # to a resonable number sutible to the current GPU setup
-  ctx_len: 1024
+  ctx_len: 4096
   
   # Learning rate of the training process
   # ---
