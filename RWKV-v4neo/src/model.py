@@ -1065,3 +1065,227 @@ class RWKV(L.LightningModule):
         total_loss = self.compute_loss(batch, batch_idx, False)
         self.log('validation/loss', total_loss, prog_bar=True, sync_dist=True)
         return total_loss
+
+########################################################################################################
+# SimpleRWKV, a wrapper for RWKV that allows for simple usage of the model
+########################################################################################################
+
+# SimpleRWKV specific imports
+from transformers import PreTrainedTokenizerFast
+
+# Current script dir
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+SCRIPT_PARENT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '../'))
+
+# SimpleRWKV is a wrapper for RWKV that allows for simple usage of the model
+#
+# it is not meant to be highly performant, but rather a simple minimal way to run the RWKV trainer module
+# in inference mode, and can be used to validate the model trainer code / its changes
+class SimpleRWKV():
+
+    def __init__(
+            self,
+            model_path: str,
+            ctx_len:int = 1024,
+            device:str = "cuda",
+            dtype:str = "fp32",
+            tokenizer = "pile",
+        ):
+
+        # Device type must be cuda, cpu type is not supported (yet?)
+        if device != "cuda":
+            raise NotImplementedError("Only cuda device is supported (for now)")
+        # Log the mismatch dtype
+        if dtype != "fp32":
+            print("[SimpleRWKV] Warning: dtype mismatch, only fp32 is supported (for now)")
+
+        # Setup the tokenizer
+        if tokenizer == "pile":
+            tokenizer_file = os.path.join(SCRIPT_PARENT_DIR,"20B_tokenizer.json")
+            tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
+            vocab_size = 50277
+        else:
+            raise NotImplementedError("Only pile tokenizer is supported")
+        self.fastTokenizer = tokenizer
+
+        # Load the model, yes i know this is a double load 
+        # but the goal of SimpleRWKV is not to optimize init, but to "just work"
+        _torch_load = torch.load(model_path, map_location="cpu")
+
+        # Get the model params
+        keys = list(_torch_load.keys())
+
+        # Get the maximum block id
+        max_block_id = 0
+        for x in keys:
+            if 'blocks.' in x:
+                block_id = int(x.split('.')[1])
+                max_block_id = max(max_block_id, block_id)
+        
+        # Compute the layer count, embed sizes, and vocab size
+        n_layer = max_block_id + 1
+        n_embd = _torch_load['head.weight'].shape[1]
+        vocab_size = max(_torch_load['head.weight'].shape[0], vocab_size)
+
+        # Lets delete the _torch_load to free up memory
+        del _torch_load
+
+        # Prepare the model config with the model path, and custom torch load
+        model_config = {}
+        model_config["load_model"] = model_path
+        model_config["n_embd"] = n_embd 
+        model_config["n_layer"] = n_layer 
+        model_config["vocab_size"] = vocab_size 
+        model_config["ctx_len"] = ctx_len
+
+        # This feature depends on deepspeed
+        model_config["grad_cp"] = False
+        # model_config["_torch_load_state"] = loaded_state
+
+        # Save the config settings
+        self.ctx_len = ctx_len
+        self.device = device
+
+        # Lets actually load the model
+        self.model = RWKV(**model_config)
+
+        # Lets map it over to the respective device type
+        # and set it to run as eval/inference mode
+        self.model.to(device)
+        self.model.eval()
+
+    # Encoding strings
+    def encode(self, text: str):
+        return self.fastTokenizer.encode(text)
+
+    # Decoding strings
+    def decode(self, tokens: list):
+        return self.fastTokenizer.decode(tokens)
+
+    # Forwarding logic, withoout torch._no_grad() context
+    def _forward(
+            self, tokens:list, 
+            stateObj = None
+        ):
+
+        logits_arr = None
+        token_len = len(tokens)
+
+        # Get the shift/wkv state
+        if stateObj is None:
+            shift_states = None
+            wkv_states = None
+        else:
+            shift_states = stateObj["shift_states"]
+            wkv_states = stateObj["wkv_states"]
+        
+        # For each token, process the state, in batches up to ctx_len
+        for i in range(0, token_len, self.ctx_len):
+            # Get the tokens for this batch
+            batch_tokens = torch.tensor(
+                [tokens[i:i+self.ctx_len]], 
+                dtype=torch.long, 
+                device=self.device
+            )
+
+            # Compute the logits and state
+            logits_arr, shift_states, wkv_states = self.model.forward(
+                batch_tokens, shift_states, wkv_states
+            )
+
+        # Return the logits and state
+        return logits_arr[0][-1], { "shift_states": shift_states, "wkv_states": wkv_states }
+    
+    # Forwarding logic, with torch._no_grad() context
+    def forward(
+            self, tokens:list, 
+            stateObj = None
+        ):
+        with torch.no_grad():
+            return self._forward(tokens, stateObj)
+
+    # Sampling logits
+    def sample_logits(
+            self, logits, 
+            prv_tokens=[0], 
+            temperature=1.0, top_p=0.9,
+            token_ban: list = []
+            ):
+        # Apply token ban
+        for x in token_ban:
+            logits[x] = -float("Inf")
+
+        # Handle sampling with temperature
+        if temperature > 0.0:
+            probs = F.softmax(logits, dim=-1)
+            sorted_probs = torch.sort(probs, descending=True)[0]
+            cumulative_probs = torch.cumsum(sorted_probs, dim=-1).cpu().numpy()
+            cutoff = float(sorted_probs[np.argmax(cumulative_probs > top_p)])
+            probs[probs < cutoff] = 0
+            if temperature != 1.0:
+                probs = probs.pow(1.0 / temperature)
+            out = torch.multinomial(probs, num_samples=1)[0]
+            return out
+        else: 
+            # Since the tokenizer sample does not support temp==0
+            # we handle this case ourself, by fining the top token
+            return torch.argmax(logits, dim=-1).item()
+
+    # Completion API
+    def completion(self, 
+            prompt, 
+            max_tokens: int = 32,
+            temperature: float = 1.0,
+            top_p: float = 0.9,
+            token_ban: list = [],
+            start_state = None,
+            stream_to_stdout: bool = False,
+        ):
+        # Encode the context, if its a string
+        if isinstance(prompt, str):
+            enc = self.encode(prompt)
+        # Check if the prompt is a list of tokens
+        elif isinstance(prompt, list):
+            enc = prompt
+        else:
+            raise ValueError("Prompt must be a string or a list of tokens")
+
+        # Keep track of the logits and state
+        logits = None
+        stateObj = start_state
+
+        # For each token, process the state
+        logits, stateObj = self.forward(enc, stateObj)
+
+        # # Garbage collect
+        # gc.collect()
+        # torch.cuda.empty_cache()
+
+        # Generate each token
+        full_tokens = enc.copy()
+        out_tokens = []
+        for i in range(max_tokens):
+            ttt = self.sample_logits(
+                logits, prv_tokens=full_tokens,
+                temperature=temperature, top_p=top_p,
+                token_ban=token_ban
+            )
+            
+            # Append the token
+            out_tokens.append(ttt)
+            full_tokens.append(ttt)
+            if stream_to_stdout:
+                print(self.decode([ttt]), end="", flush=True)
+
+            # Perform the forward pass
+            logits, stateObj = self.forward([ttt], stateObj)
+
+        # Decode the tokens
+        out_str = self.decode(out_tokens)
+
+        # # Garbage collect
+        # gc.collect()
+        # torch.cuda.empty_cache()
+
+        # Return the output string, and state
+        return out_str, stateObj
