@@ -4,7 +4,7 @@ from torch.utils.data import Dataset, DataLoader
 
 import wandb
 from datasets import load_from_disk, load_dataset
-from transformers import PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
 num_cpus = cpu_count()
 
@@ -47,7 +47,24 @@ def prepare_data_static(**kargs):
             from .tokenizer.trie_tokenizer import TRIE_TOKENIZER
             world_tokenizer = TRIE_TOKENIZER(os.path.join(SRC_DIR, "./tokenizer/rwkv_vocab_v20230424.txt"))
         else:
-            hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=kargs["tokenizer"])
+            # AutoTokenizer
+            tokenizerName = kargs["tokenizer"]
+
+            # with custom args and props
+            tokenizerKWArgs = {}
+            tokenizerProps = {}
+            if kargs["autoTokenizer"] is not None:
+                if kargs["autoTokenizer"]["kwargs"] is not None:
+                    tokenizerKWArgs = kargs["autoTokenizer"]["kwargs"]
+                if kargs["autoTokenizer"]["props"] is not None:
+                    tokenizerProps  = kargs["autoTokenizer"]["props"]
+
+            # Intialize the tokenizer, with kwargs
+            hf_tokenizer = AutoTokenizer.from_pretrained(tokenizerName, **tokenizerKWArgs)
+
+            # Configure the tokenizer properties
+            for k, v in tokenizerProps.items():
+                setattr(hf_tokenizer, k, v)
 
         # Function used to tokenize the dataset as per HF tokenizer format
         # if given the textual data, it will return the tokenized data
@@ -325,11 +342,14 @@ class RWKVDataModule(LightningDataModule):
         # Test split of source data, if it was not already done
         test_split: float = 0.1,
         test_split_shuffle: bool = False,
-        # Custom tokenizer settings
-        tokenizer: str = "neox",
         # Text rechunking size
         text_rechunk_size: int = 4096,
         text_rechunk_force: bool = False,
+        # ---
+        # Tokenizer settings
+        # ---
+        tokenizer: str = "neox",
+        autoTokenizer = None,
         # ---
         # HF dataset conversion helpers
         # ---
