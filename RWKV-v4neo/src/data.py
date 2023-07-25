@@ -42,7 +42,7 @@ def prepare_data_static(**kargs):
         # according to either its predefined name or its path
         # (defaults to neox)
         if kargs["tokenizer"] == "neox":
-            tokenizer_file = os.path.join(SRC_DIR, "../tokenizer.json")
+            tokenizer_file = os.path.join(SRC_DIR, "./20B_tokenizer.json")
             tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
         elif kargs["tokenizer"] == "world":
             raise NotImplementedError("World tokenizer not implemented yet")
