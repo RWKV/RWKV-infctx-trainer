@@ -2,6 +2,7 @@ from lightning import LightningDataModule
 
 from torch.utils.data import Dataset, DataLoader
 
+import wandb
 from datasets import load_from_disk, load_dataset
 from transformers import PreTrainedTokenizerFast
 from multiprocessing import cpu_count
@@ -48,12 +49,12 @@ def prepare_data_static(**kargs):
         if kargs["multi_column_keys"] is None:
             multi_column_keys = ['instruction', 'input', 'output']
             multi_column_prefix = ['Instruction:\n', 'Input:\n', 'Output:\n']
-            multi_column_masking = [True, True, False]
+            multi_column_train_mask = [True, False, True]
             multi_column_separator = '\n\n'
         else:
             multi_column_keys = kargs["multi_column_keys"]
             multi_column_prefix = kargs["multi_column_prefix"]
-            multi_column_masking = kargs["multi_column_masking"]
+            multi_column_train_mask = kargs["multi_column_train_mask"]
             multi_column_separator = kargs["multi_column_separator"]
         
         # Tokenized encodings for multi column keys
@@ -64,7 +65,7 @@ def prepare_data_static(**kargs):
         # Process the multi column settings
         if multi_column_enabled:
             # Check if the multi column keys lengths are valid (only if it is enabled)
-            if len(multi_column_keys) != len(multi_column_prefix) or len(multi_column_keys) != len(multi_column_masking):
+            if len(multi_column_keys) != len(multi_column_prefix) or len(multi_column_keys) != len(multi_column_train_mask):
                 raise ValueError('Multi column keys, prefix and masking must be the same length')
             # Tokenize the multi column strings
             for i in range(len(multi_column_keys)):
@@ -131,10 +132,10 @@ def prepare_data_static(**kargs):
                             token_type_ids += column_encodings['token_type_ids']
 
                             # Override the attention mask if masking is enabled
-                            if multi_column_masking[i]:
+                            if multi_column_train_mask[i]:
                                 attention_mask += ([1] * len(column_encodings['input_ids']))
                             else:
-                                attention_mask += column_encodings['attention_mask']
+                                attention_mask += ([0] * len(column_encodings['input_ids']))
                     
                     # Return the merged columns
                     return {
@@ -306,7 +307,7 @@ class RWKVDataModule(LightningDataModule):
         # and need to be merged
         multi_column_keys: list = None,
         multi_column_prefix: list = None,
-        multi_column_masking: list = None,
+        multi_column_train_mask: list = None,
         multi_column_separator: str = None,
         # prompt/completion format masking support
         disable_prompt_mask: bool = False
@@ -314,25 +315,35 @@ class RWKVDataModule(LightningDataModule):
         # Capture the init parameters
         self._init_locals = locals()
         del self._init_locals["self"]
+        del self._init_locals["__class__"]
         
         super().__init__()
         self.data_path = data_path
         self._loaded_dataset = None
+
+        # Log to wandb
+        if wandb.run is not None:
+            wandb.config.update({ "data":dict(self._init_locals) })
     
     # Called once for initial setup
     def prepare_data(self):
         prepare_data_static(**self._init_locals)
     
-    # Called once for every process in DDP
-    def setup(self, stage):
-        # Load the dataset as per normal 
+    # Setup process that is universal
+    def _internal_setup(self):
         if self._loaded_dataset is None:
             self._loaded_dataset = load_from_disk(self.data_path).with_format('torch')
 
+    # Called once for every process in DDP
+    def setup(self, stage):
+        self._internal_setup()
+
     # Return the train dataloader
     def train_dataloader(self):
+        self._internal_setup()
         return DataLoader(self._loaded_dataset['train'], num_workers=num_cpus)
     
     # Return the validation dataloader
     def val_dataloader(self):
+        self._internal_setup()
         return DataLoader(self._loaded_dataset['test'], num_workers=num_cpus)
