@@ -41,11 +41,11 @@ def prepare_data_static(**kargs):
         # Load the tokenizer according to either its predefined name or its path
         # (defaults to neox)
         if kargs["tokenizer"] == "neox":
-            tokenizer_file = os.path.join(SRC_DIR, "./tokenizer/20B_tokenizer.json")
+            tokenizer_file = os.path.join(SRC_DIR, "./dataflow/20B_tokenizer.json")
             hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
         elif kargs["tokenizer"] == "world":
-            from .tokenizer.trie_tokenizer import TRIE_TOKENIZER
-            world_tokenizer = TRIE_TOKENIZER(os.path.join(SRC_DIR, "./tokenizer/rwkv_vocab_v20230424.txt"))
+            from .dataflow.trie_tokenizer import TRIE_TOKENIZER
+            world_tokenizer = TRIE_TOKENIZER(os.path.join(SRC_DIR, "./dataflow/rwkv_vocab_v20230424.txt"))
         else:
             # AutoTokenizer
             tokenizerName = kargs["tokenizer"]
