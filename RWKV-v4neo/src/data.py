@@ -8,6 +8,10 @@ from transformers import PreTrainedTokenizerFast
 from multiprocessing import cpu_count
 num_cpus = cpu_count()
 
+# Get the script directory
+import os
+SRC_DIR = os.path.dirname(os.path.realpath(__file__))
+
 # We have to extract out the prepare function to be "outside the class"
 # else it will not be hashed / serialized properly, and will produce the following error:
 #
@@ -38,7 +42,7 @@ def prepare_data_static(**kargs):
         # according to either its predefined name or its path
         # (defaults to neox)
         if kargs["tokenizer"] == "neox":
-            tokenizer_file = "./20B_tokenizer.json"
+            tokenizer_file = os.path.join(SRC_DIR, "../tokenizer.json")
             tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
         elif kargs["tokenizer"] == "world":
             raise NotImplementedError("World tokenizer not implemented yet")
