@@ -1,5 +1,8 @@
 ########################################################################################################
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
+#
+# Original source code for TRIE_TOKENIZER: 
+# https://github.com/BlinkDL/ChatRWKV/blob/1e408fe50d7059bfa4319835f22cbfa88d8ad14e/rwkv_pip_package/src/rwkv/rwkv_tokenizer.py
 ########################################################################################################
 
 class TRIE:

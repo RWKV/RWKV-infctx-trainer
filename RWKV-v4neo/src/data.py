@@ -3,7 +3,7 @@ from lightning import LightningDataModule
 from torch.utils.data import Dataset, DataLoader
 
 import wandb
-from datasets import load_from_disk, load_dataset
+from datasets import load_from_disk, load_dataset, from_generator
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
 num_cpus = cpu_count()
@@ -24,8 +24,43 @@ def prepare_data_static(**kargs):
     if kargs["source"] is not None:
         if kargs["tokenizer"] is None:
             raise ValueError('Tokenizer must be specified if source is specified')
+        
+        # Special handling for binidx
+        #--------------------------------
 
-        # Setup the basic load_dataset params
+        if kargs["tokenizer"] == "binidx":
+            from .dataflow.binidx import MMapIndexedDataset
+
+            # Load the MMapIndexedDataset from the source path
+            mmap_dataset = MMapIndexedDataset(kargs["source"])
+
+            # Torch dataset generator wrapper
+            def gen():
+                for idx in len(mmap_dataset):
+                    tokens = mmap_dataset[idx]
+                    yield {
+                        'input_ids': tokens,
+                        'token_type_ids': [0] * len(tokens),
+                        'attention_mask': [1] * len(tokens)
+                    }
+
+            # Load the huggingface dataset from the generator
+            src_dataset = from_generator(gen)
+
+            # Train/test split
+            src_dataset = src_dataset.train_test_split(
+                test_size=kargs["test_split"],shuffle=kargs["test_split_shuffle"],
+                seed=42 #Fixed seed, to prevent train/test reshuffling between test runs
+            )
+
+            # Save the dataset to disk
+            src_dataset.save_to_disk(kargs["data_path"])
+            # Does nothing else (done)
+            return
+
+        # Reverting back to general purpose HF dataset / tokenizer handling
+        #--------------------------------
+
         load_dataset_params = {
             'path': kargs["source"],
             'num_proc': num_cpus
@@ -324,7 +359,10 @@ def prepare_data_static(**kargs):
         # Check if the dataset does not have a test split
         # and if so, perform the split
         if 'test' not in src_dataset.keys():
-            src_dataset = src_dataset['train'].train_test_split(test_size=kargs["test_split"],shuffle=kargs["test_split_shuffle"])
+            src_dataset = src_dataset['train'].train_test_split(
+                test_size=kargs["test_split"],shuffle=kargs["test_split_shuffle"],
+                seed=42 #Fixed seed, to prevent train/test reshuffling between test runs
+            )
         
         # Save the dataset to disk
         src_dataset.save_to_disk(kargs["data_path"])
