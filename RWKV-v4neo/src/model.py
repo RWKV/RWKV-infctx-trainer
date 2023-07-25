@@ -31,8 +31,9 @@ from torch.utils.cpp_extension import load
 # Currently the features we need for torch compile, is avaliable only in
 # 2.1 nightly build (and is expected to be in 2.1 official release)
 #
-# We only enable torch compile, if we either the user has explicitly
-# set it, or we detect that we are running on a 2.1+ build automatically
+# However because the nightly build torch.compile behaviour has been unstable
+# the versioning code to check for enabling toch compile will not be used, 
+# until we confirm a stable version of torch.compile
 from packaging import version
 def is_torch_version_above(required_version):
     torch_version = version.parse(torch.__version__.split('+')[0])
@@ -41,7 +42,7 @@ IS_TORCH_2_1 = is_torch_version_above("2.0.9999")
 
 # Get the JIT / torch compile option flags from the environment
 RWKV_JIT_ON        = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
-RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", f"{IS_TORCH_2_1}").lower() in ("1", "true", "yes")
+RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
 RWKV_TORCH_RUN_MODE = None
 
 # We enable JITMod*/Function when supporting torch.jit
