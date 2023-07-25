@@ -1,9 +1,9 @@
 from lightning import LightningDataModule
 
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 
 import wandb
-from datasets import load_from_disk, load_dataset, from_generator
+from datasets import load_from_disk, load_dataset, Dataset
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
 num_cpus = cpu_count()
@@ -45,7 +45,7 @@ def prepare_data_static(**kargs):
                     }
 
             # Load the huggingface dataset from the generator
-            src_dataset = from_generator(gen)
+            src_dataset = Dataset.from_generator(gen)
 
             # Train/test split
             src_dataset = src_dataset.train_test_split(
@@ -72,6 +72,10 @@ def prepare_data_static(**kargs):
 
         # Load the dataset
         src_dataset = load_dataset(**load_dataset_params)
+
+        # Tokenizer vars
+        hf_tokenizer = None
+        world_tokenizer = None
 
         # Load the tokenizer according to either its predefined name or its path
         # (defaults to neox)
