@@ -864,7 +864,7 @@ class RWKV(L.LightningModule):
             # We only do this, if we are doing bptt learning on more then 1 segment, and gpu count > 1
             # otherwise we just use the segment count as it is
             if self.trainer.num_devices > 1 and (self.bptt_learning_range > 1 or self.bptt_learning_range <= 0):
-                shared_segment_count = self.trainer.getFabric().all_reduce(segment_count, reduce_op="max").item()
+                shared_segment_count = self.trainer.strategy.reduce(segment_count, reduce_op="max").item()
             else:
                 shared_segment_count = segment_count
 
