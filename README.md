@@ -46,18 +46,20 @@ conda activate rwkv-infctx
 
 # Install pytorch (>=2.0.1)
 conda install -y pytorch==2.0.1 torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+python -m pip install lightning==2.0.4 deepspeed==0.9.5
 
-# Currently for torch.compile + 3.11 to work, for some paltforms, you will need the nightly build
-# if so you may need to try the following instead
+# Currently for torch.compile + 3.11 to work, for some platform, you will need the nightly build
+# if so you may need to try the following instead - this is considered "unstable"
 # ---
 # conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch-nightly -c nvidia
+# python -m pip install lightning==2.0.5 deepspeed==0.10.0
 
 # Verify your pytorch version 
 python -c "import torch; print(torch.__version__)"
 
-# We use python -m pip, instead of pip directly, as it resolve issues with venv not loading the right pip
+# Install all the other various dependencies
+# PS: We use python -m pip, instead of pip directly, as it resolve issues with venv not loading the right pip
 python -m pip install datasets transformers 
-python -m pip install lightning==2.0.4 deepspeed==0.9.5
 python -m pip install ninja numexpr jsonargparse 'jsonargparse[signatures]'
 python -m pip install lm-dataformat ftfy sentencepiece tokenizers wandb
 ```
