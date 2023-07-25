@@ -45,7 +45,7 @@ def prepare_data_static(**kargs):
             hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
         elif kargs["tokenizer"] == "world":
             from .tokenizer.trie_tokenizer import TRIE_TOKENIZER
-            world_tokenizer = TRIE_encodeTokens(os.path.join(SRC_DIR, "./tokenizer/rwkv_vocab_v20230424.txt"))
+            world_tokenizer = TRIE_TOKENIZER(os.path.join(SRC_DIR, "./tokenizer/rwkv_vocab_v20230424.txt"))
         else:
             hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=kargs["tokenizer"])
 
@@ -122,7 +122,7 @@ def prepare_data_static(**kargs):
         # Throws an error, if it failed to process the record
         #
         # This is called for each row record in the dataset
-        def map_encodeTokens(x):
+        def map_tokenizer(x):
             # Custom text column support
             if kargs["custom_text_key"] is not None:
                 if kargs["custom_text_key"] in x:
