@@ -38,17 +38,50 @@ def prepare_data_static(**kargs):
         # Load the dataset
         src_dataset = load_dataset(**load_dataset_params)
 
-        # Load the tokenizer
-        # according to either its predefined name or its path
+        # Load the tokenizer according to either its predefined name or its path
         # (defaults to neox)
         if kargs["tokenizer"] == "neox":
-            tokenizer_file = os.path.join(SRC_DIR, "./20B_tokenizer.json")
-            tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
+            tokenizer_file = os.path.join(SRC_DIR, "./tokenizer/20B_tokenizer.json")
+            hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
         elif kargs["tokenizer"] == "world":
-            raise NotImplementedError("World tokenizer not implemented yet")
+            from .tokenizer.trie_tokenizer import TRIE_TOKENIZER
+            world_tokenizer = TRIE_encodeTokens(os.path.join(SRC_DIR, "./tokenizer/rwkv_vocab_v20230424.txt"))
         else:
-            tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer)
+            hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=kargs["tokenizer"])
 
+        # Function used to tokenize the dataset as per HF tokenizer format
+        # if given the textual data, it will return the tokenized data
+        def encodeTokens(x):
+            if world_tokenizer is not None:
+                # If x is an array of strings, we encode them seperately, and conslidate the result
+                if isinstance(x, list):
+                    id_arr = []
+                    type_arr = []
+                    mask_arr = []
+                    for i in range(len(x)):
+                        enc_str = world_tokenizer.encode(x[i])
+                        id_arr.append(enc_str)
+                        type_arr.append([0] * len(enc_str))
+                        mask_arr.append([1] * len(enc_str))
+
+                    # Consolidate the result
+                    return {
+                        'input_ids': id_arr,
+                        'token_type_ids': type_arr,
+                        'attention_mask': mask_arr
+                    }
+                
+                # Else we encode the string and return it following the HF tokenizer format
+                enc_str = world_tokenizer.encode(x)
+                return {
+                    'input_ids': enc_str,
+                    'token_type_ids': [0] * len(enc_str),
+                    'attention_mask': [1] * len(enc_str)
+                }
+
+            # We use the HF tokenizer as it is, and get the input_ids
+            return hf_tokenizer(x)
+        
         # Multi column merging default values setup
         if kargs["multi_column_keys"] is None:
             multi_column_keys = ['instruction', 'input', 'output']
@@ -73,11 +106,11 @@ def prepare_data_static(**kargs):
                 raise ValueError('Multi column keys, prefix and masking must be the same length')
             # Tokenize the multi column strings
             for i in range(len(multi_column_keys)):
-                multi_column_prefix_encodings.append(tokenizer(multi_column_prefix[i]))
+                multi_column_prefix_encodings.append(encodeTokens(multi_column_prefix[i]))
             # Tokenize the multi column separator
             if multi_column_separator is not None and len(multi_column_separator) > 0:
-                multi_column_separator_encodings = tokenizer(multi_column_separator)
-        
+                multi_column_separator_encodings = encodeTokens(multi_column_separator)
+
         # Maps the dataset record to the tokenized result
         # handles a wide variety of format according to the data configuration
         #
@@ -89,11 +122,11 @@ def prepare_data_static(**kargs):
         # Throws an error, if it failed to process the record
         #
         # This is called for each row record in the dataset
-        def map_tokenizer(x):
+        def map_encodeTokens(x):
             # Custom text column support
             if kargs["custom_text_key"] is not None:
                 if kargs["custom_text_key"] in x:
-                    return tokenizer(x[kargs["custom_text_key"]])
+                    return encodeTokens(x[kargs["custom_text_key"]])
                 
             # Multi column merging support
             if multi_column_enabled:
@@ -129,7 +162,7 @@ def prepare_data_static(**kargs):
                             attention_mask += multi_column_prefix_encodings[i]['attention_mask']
 
                             # Tokenize the column
-                            column_encodings = tokenizer(x[multi_column_keys[i]])
+                            column_encodings = encodeTokens(x[multi_column_keys[i]])
 
                             # Add the column
                             input_ids += column_encodings['input_ids']
@@ -157,8 +190,8 @@ def prepare_data_static(**kargs):
 
                 # Tokenize both prompt and completion
                 # Note that the tokenizer will process and return the input_ids in batches
-                prompt_encodings = tokenizer(x['prompt'])
-                completion_encodings = tokenizer(x['completion'])
+                prompt_encodings = encodeTokens(x['prompt'])
+                completion_encodings = encodeTokens(x['completion'])
 
                 # Join the two input_ids lists
                 input_ids = prompt_encodings['input_ids'] + completion_encodings['input_ids']
@@ -179,7 +212,7 @@ def prepare_data_static(**kargs):
             
             # Fallback to standard text tokenization
             if 'text' in x:
-                return tokenizer(x['text'])
+                return encodeTokens(x['text'])
             
             raise ValueError('Invalid dataset format, must contain either the configured "multi column" or prompt/completion or text')
 
@@ -193,7 +226,7 @@ def prepare_data_static(**kargs):
         src_dataset = src_dataset.remove_columns(list(dataset_features_to_remove.keys()))
         
         # Get the newline token
-        newline_tokenSet = tokenizer(["\n"])
+        newline_tokenSet = encodeTokens(["\n"])
 
         # See if rechunking is needed, this is useful mostly for "text" based datasets
         # where we would need to split them into "digestable" context length sizes 
