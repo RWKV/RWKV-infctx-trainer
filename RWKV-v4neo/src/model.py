@@ -438,13 +438,14 @@ class RWKV(L.LightningModule):
         # Setup the parent class
         super().__init__()
 
-        # Load the model, unless its the special "///init_model///" path
+        # Load the model, unless its the special ".//<#|=@%!$init_model$!%@=|#>//." path
         # which is reserved to be used with the `init_model.py`
+        #
+        # We intentionally used several filesystem illegal characters, to ensure it
+        # is not accidentally used by the user for a real file
         model_weights = None
         model_keys = None
-
-        # Load the model
-        if load_model != ".///init_model///.":
+        if load_model != ".//<#|=@%!$init_model$!%@=|#>//.":
             # Check if the load_model path exists, and is a file
             if not os.path.isfile(load_model):
                 raise ValueError(f"load_model file '{load_model}' does not exist")
