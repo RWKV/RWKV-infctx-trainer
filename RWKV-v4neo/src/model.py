@@ -1148,34 +1148,9 @@ class SimpleRWKV():
             raise NotImplementedError("Only pile tokenizer is supported")
         self.fastTokenizer = tokenizer
 
-        # Load the model, yes i know this is a double load 
-        # but the goal of SimpleRWKV is not to optimize init, but to "just work"
-        _torch_load = torch.load(model_path, map_location="cpu")
-
-        # Get the model params
-        keys = list(_torch_load.keys())
-
-        # Get the maximum block id
-        max_block_id = 0
-        for x in keys:
-            if 'blocks.' in x:
-                block_id = int(x.split('.')[1])
-                max_block_id = max(max_block_id, block_id)
-        
-        # Compute the layer count, embed sizes, and vocab size
-        n_layer = max_block_id + 1
-        n_embd = _torch_load['head.weight'].shape[1]
-        vocab_size = max(_torch_load['head.weight'].shape[0], vocab_size)
-
-        # Lets delete the _torch_load to free up memory
-        del _torch_load
-
         # Prepare the model config with the model path, and custom torch load
         model_config = {}
         model_config["load_model"] = model_path
-        model_config["n_embd"] = n_embd 
-        model_config["n_layer"] = n_layer 
-        model_config["vocab_size"] = vocab_size 
         model_config["ctx_len"] = ctx_len
 
         # This feature depends on deepspeed
