@@ -391,12 +391,15 @@ class L2Wrap(torch.autograd.Function):
 class RWKV(L.LightningModule):
 
     def __init__(self,
-                 ctx_len: int,
-                 n_embd: int,
-                 n_layer: int,
-                 vocab_size: int,
                  # Model file path to load from
-                 load_model: Optional[str] = None,
+                 load_model: str,
+                 # Model size settings, which we either
+                 # "auto detect", or use the user specified settings
+                 n_embd: int = -1,
+                 n_layer: int = -1,
+                 vocab_size: int = -1,
+                 # Context length size for the model
+                 ctx_len: int = 2048,
                  # Context length schedule
                  ctx_len_cutoffs: List[int] = [],
                  ctx_len_warmup_steps: List[int] = [],
@@ -432,9 +435,41 @@ class RWKV(L.LightningModule):
         del self.setup_args["self"]
         del self.setup_args["__class__"]
 
-        # Setup the model
+        # Setup the parent class
         super().__init__()
 
+        # Load the model, unless its the special "///init_model///" path
+        # which is reserved to be used with the `init_model.py`
+        model_weights = None
+        model_keys = None
+
+        # Load the model
+        if load_model != ".///init_model///.":
+            # Check if the load_model path exists, and is a file
+            if not os.path.isfile(load_model):
+                raise ValueError(f"load_model file '{load_model}' does not exist")
+
+            # Load the model weights
+            model_weights = torch.load(load_model, map_location='cpu')
+
+            # Get the model keys
+            model_keys = list(model_weights.keys())
+
+        # Lets compute the model various sizes, if they are not provided
+        if n_layer < 0:
+            max_block_id = 0
+            for x in model_keys:
+                if 'blocks.' in x:
+                    block_id = int(x.split('.')[1])
+                    max_block_id = max(max_block_id, block_id)
+            n_layer = max_block_id + 1
+
+        if n_embd < 0:
+            n_embd = model_weights['head.weight'].shape[1]
+        
+        if vocab_size < 0:
+            vocab_size = model_weights['head.weight'].shape[0]
+        
         # Save the various other params for later
         self.ctx_len = ctx_len
         self.ctx_len_cutoffs = ctx_len_cutoffs
@@ -487,7 +522,11 @@ class RWKV(L.LightningModule):
         self.ln_out = nn.LayerNorm(n_embd)
         self.head = nn.Linear(n_embd, vocab_size, bias=False)
 
-        self.load_state_dict(torch.load(load_model, map_location='cpu'))
+        # load the state, and GC the original cpu copy
+        if model_weights != None:
+            self.load_state_dict(model_weights)
+            del model_weights
+            gc.collect()
 
     def configure_optimizers(self):
         if self.bptt_learning == False:
