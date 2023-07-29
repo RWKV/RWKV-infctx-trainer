@@ -254,7 +254,7 @@ def prepare_data_static(**kargs):
                 # Join the two token_type_ids lists
                 token_type_ids = prompt_encodings['token_type_ids'] + completion_encodings['token_type_ids']
                 # Setup the attention mask, 0 for prompt, 1 for completion, if masking is enabled
-                if kargs["disable_prompt_mask"]:
+                if kargs["disable_prompt_completion_mask"]:
                     attention_mask = ([1] * len(prompt_encodings['input_ids']) + [1] * len(completion_encodings['input_ids']))
                 else:
                     attention_mask = ([0] * len(prompt_encodings['input_ids']) + [1] * len(completion_encodings['input_ids']))
@@ -409,7 +409,7 @@ class RWKVDataModule(LightningDataModule):
         multi_column_train_mask: list = None,
         multi_column_separator: str = None,
         # prompt/completion format masking support
-        disable_prompt_mask: bool = False
+        disable_prompt_completion_mask: bool = False
     ):
         # Capture the init parameters
         self._init_locals = locals()
