@@ -341,7 +341,7 @@ data:
   # If processing prompt/completion jsonl pairs, the prompt is masked by default
   # use this flag to disable this default behaviour
   # ---
-  # disable_prompt_mask: false
+  # disable_prompt_completion_mask: false
 
 # Path to the current checkpoint to continue training from
 ckpt_path: null
