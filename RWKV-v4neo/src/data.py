@@ -38,10 +38,11 @@ def prepare_data_static(**kargs):
 
             # Load the MMapIndexedDataset from the source path
             mmap_dataset = MMapIndexedDataset(kargs["source"])
+            mmap_dataset_len = mmap_dataset.__len__()
 
             # Torch dataset generator wrapper
             def gen():
-                for idx in len(mmap_dataset):
+                for idx in range(mmap_dataset_len):
                     tokens = mmap_dataset[idx]
                     yield {
                         'input_ids': tokens,
@@ -53,13 +54,17 @@ def prepare_data_static(**kargs):
             src_dataset = Dataset.from_generator(gen)
 
             # Train/test split
-            src_dataset = src_dataset.train_test_split(
-                test_size=kargs["test_split"],shuffle=kargs["test_split_shuffle"],
+            test_split = kargs["test_split"]
+            # The minimum test size is 1, if not we will get errors in the trainer?
+            if test_split <= 0 or test_split <= 0.0:
+                test_split = 1
+            split_dataset = src_dataset.train_test_split(
+                test_size=test_split,shuffle=kargs["test_split_shuffle"],
                 seed=42 #Fixed seed, to prevent train/test reshuffling between test runs
             )
 
             # Save the dataset to disk
-            src_dataset.save_to_disk(kargs["data_path"])
+            split_dataset.save_to_disk(kargs["data_path"])
             # Does nothing else (done)
             return
 
@@ -381,8 +386,12 @@ def prepare_data_static(**kargs):
         # Check if the dataset does not have a test split
         # and if so, perform the split
         if 'test' not in src_dataset.keys():
+            test_split = kargs["test_split"]
+            # The minimum test size is 1, if not we will get errors in the trainer?
+            if test_split <= 0 or test_split <= 0.0:
+                test_split = 1
             src_dataset = src_dataset['train'].train_test_split(
-                test_size=kargs["test_split"],shuffle=kargs["test_split_shuffle"],
+                test_size=test_split,shuffle=kargs["test_split_shuffle"],
                 seed=42 #Fixed seed, to prevent train/test reshuffling between test runs
             )
         
