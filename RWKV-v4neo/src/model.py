@@ -1129,7 +1129,7 @@ class SimpleRWKV():
             ctx_len:int = 1024,
             device:str = "cuda",
             dtype:str = "fp32",
-            tokenizer = "pile",
+            tokenizer = "neox",
         ):
 
         # Device type must be cuda, cpu type is not supported (yet?)
@@ -1140,7 +1140,7 @@ class SimpleRWKV():
             print("[SimpleRWKV] Warning: dtype mismatch, only fp32 is supported (for now)")
 
         # Setup the tokenizer
-        if tokenizer == "pile":
+        if tokenizer == "neox":
             tokenizer_file = os.path.join(SCRIPT_PARENT_DIR,"20B_tokenizer.json")
             tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
             vocab_size = 50277
