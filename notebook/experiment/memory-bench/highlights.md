@@ -8,7 +8,7 @@
 |    Raven 14B    |         75         |             150            |              136.0             |   90.666667  |              210              |         157         |       74.761905       |
 | EchoB 1B4 (L96) |         105        |             250            |              232.0             |   92.800000  |              375              |         263         |       70.133333       |
 
-## RWKV WaveNet Channel mix highlihgts
+## RWKV WaveNet Channel mix highlights
 
 |             model            | Largest 100% match | Input of Largest 90% match | Number of tokens for 90% match | 90% match: % | Input for largest match count | Largest match count | Largest match count % |
 |:----------------------------:|:------------------:|:--------------------------:|:------------------------------:|:------------:|:-----------------------------:|:-------------------:|:---------------------:|
