@@ -12,6 +12,11 @@ num_cpus = cpu_count()
 import os
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 
+# World tokenizer
+from .dataflow.trie_tokenizer import TRIE_TOKENIZER
+import concurrent.futures
+import threading
+
 # We have to extract out the prepare function to be "outside the class"
 # else it will not be hashed / serialized properly, and will produce the following error:
 #
@@ -76,6 +81,7 @@ def prepare_data_static(**kargs):
         # Tokenizer vars
         hf_tokenizer = None
         world_tokenizer = None
+        world_encoder = None
 
         # Load the tokenizer according to either its predefined name or its path
         # (defaults to neox)
@@ -83,8 +89,20 @@ def prepare_data_static(**kargs):
             tokenizer_file = os.path.join(SRC_DIR, "./dataflow/20B_tokenizer.json")
             hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
         elif kargs["tokenizer"] == "world":
-            from .dataflow.trie_tokenizer import TRIE_TOKENIZER
+            # Setup the tokenizer
             world_tokenizer = TRIE_TOKENIZER(os.path.join(SRC_DIR, "./dataflow/rwkv_vocab_v20230424.txt"))
+
+            # Simple Encode function
+            def simple_world_encoder(x):
+                return world_tokenizer.encode(x)
+
+            # # Distributed encode function (NOT WORKING)
+            # def distributed_world_encoder(x):
+            #     threadObj = threading.Thread(target=simple_world_encoder, args=(x,))
+            #     threadObj.start()
+            #     threadObj.join()
+
+            world_encoder = simple_world_encoder
         else:
             # AutoTokenizer
             tokenizerName = kargs["tokenizer"]
@@ -115,7 +133,7 @@ def prepare_data_static(**kargs):
                     type_arr = []
                     mask_arr = []
                     for i in range(len(x)):
-                        enc_str = world_tokenizer.encode(x[i])
+                        enc_str = world_encoder(x[i])
                         id_arr.append(enc_str)
                         type_arr.append([0] * len(enc_str))
                         mask_arr.append([1] * len(enc_str))
@@ -128,7 +146,7 @@ def prepare_data_static(**kargs):
                     }
                 
                 # Else we encode the string and return it following the HF tokenizer format
-                enc_str = world_tokenizer.encode(x)
+                enc_str = world_encoder(x)
                 return {
                     'input_ids': enc_str,
                     'token_type_ids': [0] * len(enc_str),

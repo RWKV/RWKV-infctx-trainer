@@ -15,7 +15,7 @@
 trainer:
   max_steps: 10
 model:
-  load_model: ../model/L6-D512-neox-init.pth
+  load_model: ../model/L6-D512-world-init.pth
   ctx_len: 1024
   lr_init: 3e-4
 
@@ -28,7 +28,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/enwiki_10k_1024/
+  data_path: ../datapath/enwiki_10k_world_1024/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -49,16 +49,10 @@ data:
   # # this should be relative to the data_path
   # source_data_dir: null
 
-  # After loading the dataset, split out test data used for validation, 
-  # This process is skipped if the dataset includes a test split
-  # This process is skipped if set to zero
-  test_split: 0.01
-  test_split_shuffle: false
-
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
   # If using a custom tokenizer, provide the tokenizer file path
   # ---
-  tokenizer: neox
+  tokenizer: world
 
   # Minimum / Maximum token size of the dataset to use
   # useful for filtering out small noisy data samples from large datasets
@@ -105,4 +99,10 @@ data:
   # use this flag to disable this default behaviour
   # ---
   # disable_prompt_completion_mask: false
+
+  # After loading the dataset, split out test data used for validation, 
+  # This process is skipped if the dataset includes a test split
+  # This process is skipped if set to zero
+  test_split: 0.01
+  test_split_shuffle: false
 
