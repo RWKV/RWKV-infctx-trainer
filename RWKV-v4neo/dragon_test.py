@@ -16,7 +16,7 @@ if len(sys.argv) < 2:
 # download models: https://huggingface.co/BlinkDL
 MODEL_PATH=sys.argv[1]
 
-# If model strategy is not specified, use 'cpu fp32' as default
+# If model strategy is not specified, use 'cuda' as default
 DEVICE=None
 if len(sys.argv) >= 3:
     DEVICE=sys.argv[2]
