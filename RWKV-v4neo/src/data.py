@@ -14,6 +14,7 @@ SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 
 # World tokenizer
 from .dataflow.trie_tokenizer import TRIE_TOKENIZER
+import numpy as np
 import concurrent.futures
 import threading
 
@@ -43,7 +44,9 @@ def prepare_data_static(**kargs):
             # Torch dataset generator wrapper
             def gen():
                 for idx in range(mmap_dataset_len):
-                    tokens = mmap_dataset[idx]
+                    # cast to supported types, note that np.int32 limit is 2,147,483,647 
+                    # - so unless we have a tokenizer that exceeds this, it should be ok
+                    tokens = np.array(mmap_dataset.get(idx), dtype=np.int32)
                     yield {
                         'input_ids': tokens,
                         'token_type_ids': [0] * len(tokens),
