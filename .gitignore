@@ -160,6 +160,13 @@ node_modules/
 # as they are meant to be read as reference
 !notebook/**/*.log
 
+# Notebooks may include shell scripts as well
+!notebook/**/*.sh
+
 # Ignore generated lightning logs and config files
 */lightning_logs/
 */config.yaml
+
+# Keep the memory experiment word list
+!notebook/experiment/*/memory_dataset/*.txt
+!notebook/experiment/*/memory_script/*.txt
