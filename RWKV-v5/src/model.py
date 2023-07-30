@@ -242,6 +242,9 @@ class RWKV_TimeMix(JITModClass):
     @JITModMethod
     @TCompileMax
     def _forward_kvsr(self, x, last_state: TimeMixState):
+        # Transposing settings
+        B, TT, C = x.size()
+
         # Mix x with the previous timestep to produce xk, xv, xr
         xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
                           dim=1)
@@ -249,11 +252,9 @@ class RWKV_TimeMix(JITModClass):
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
 
-        k = self.key(xk)
-        v = self.value(xv)
-        r = self.receptance(xr)
-
-        sr = torch.sigmoid(r)
+        r = self.receptance(xr).view(B, TT, self.n_head, self.head_size).transpose(1, 2)            # BTC -> BHTS
+        k = self.key(xk).view(B, TT, self.n_head, self.head_size).transpose(1, 2).transpose(-2, -1) # BTC -> BHTS -> BHST
+        v = self.value(xv).view(B, TT, self.n_head, self.head_size).transpose(1, 2)                 # BTC -> BHTS
 
         # Enforce bf16 type for kv, as this can be mis init
         # when being called directly via inference
@@ -262,7 +263,7 @@ class RWKV_TimeMix(JITModClass):
         if v.dtype != torch.bfloat16:
             v = v.to(torch.bfloat16)
 
-        return k, v, sr
+        return r, k, v
 
     @JITModMethod
     @TCompileMax
@@ -272,7 +273,7 @@ class RWKV_TimeMix(JITModClass):
     @JITModMethod
     @TCompileBaseline
     def forward(self, x, last_state: TimeMixState):
-        k, v, sr = self._forward_kvsr(x, last_state)
+        sr, k, v = self._forward_kvsr(x, last_state)
 
         # Enforce bf16 for self.time_first
         # as this can be mis init when being called directly via inference
