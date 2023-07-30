@@ -24,6 +24,11 @@ import numpy as np
 # ```
 def prepare_data_static(**kargs):
 
+    # Check if skip_datapath_setup is enabled
+    # useful for extra large datasets
+    if kargs["skip_datapath_setup"] == True:
+        return
+
     # Source data processing
     if kargs["source"] is not None:
         if kargs["tokenizer"] is None:
@@ -425,7 +430,9 @@ class RWKVDataModule(LightningDataModule):
         multi_column_train_mask: list = None,
         multi_column_separator: str = None,
         # prompt/completion format masking support
-        disable_prompt_completion_mask: bool = False
+        disable_prompt_completion_mask: bool = False,
+        # Skip database setup checks if datapath exists, ignored if using preload_dataset.py
+        skip_datapath_setup: bool = False
     ):
         # Capture the init parameters
         self._init_locals = locals()

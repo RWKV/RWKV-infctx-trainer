@@ -29,6 +29,9 @@ assert 'data' in lightning_config, "Data is not configured in the config file"
 # Get the data object
 data = lightning_config['data']
 
+# Overwrite 'skip_datapath_setup' to False
+data['skip_datapath_setup'] = False
+
 # Run the preload data process
 dataMod = RWKVDataModule(**data)
 dataMod.prepare_data()
