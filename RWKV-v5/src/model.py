@@ -198,6 +198,17 @@ class RWKV_TimeMix(JITModClass):
 
     def __init__(self, layer_id, n_layer, n_embd, dim_att):
         super().__init__()
+        
+        head_size = 64
+        n_head = n_embd // head_size
+        assert n_embd % n_head == 0
+
+        # self.n_layer = n_layer
+        # self.n_embd = n_embd
+        self.n_head = n_head
+        self.head_size = head_size
+        # self.chunk_len = 512
+        # assert ctx_len % self.chunk_len == 0
 
         with torch.no_grad():  # fancy init
             ratio_0_to_1 = layer_id / (n_layer - 1)  # 0 to 1
@@ -207,31 +218,26 @@ class RWKV_TimeMix(JITModClass):
                 ddd[0, 0, i] = i / n_embd
 
             # fancy time_decay
-            decay_speed = torch.ones(dim_att)
-            for h in range(dim_att):
-                decay_speed[h] = -5 + 8 * (h /
-                                           (dim_att - 1))**(0.7 +
-                                                            1.3 * ratio_0_to_1)
+            decay_speed = torch.ones(n_head)
+            for h in range(n_head):
+                decay_speed[h] = -8 + 7 * (h / (n_head - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
             self.time_decay = nn.Parameter(decay_speed)
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
-            # fancy time_first
-            zigzag = torch.tensor([(i + 1) % 3 - 1
-                                   for i in range(dim_att)]) * 0.5
-            self.time_first = nn.Parameter(
-                torch.ones(dim_att) * math.log(0.3) + zigzag)
+            # time_first (no longer fancy)
+            self.time_first = nn.Parameter(torch.ones(n_head) * (-3.0))
 
             # fancy time_mix
             self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-            self.time_mix_v = nn.Parameter(
-                torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
-            self.time_mix_r = nn.Parameter(
-                torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
+            self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
 
-        self.key = nn.Linear(n_embd, dim_att, bias=False)
-        self.value = nn.Linear(n_embd, dim_att, bias=False)
-        self.receptance = nn.Linear(n_embd, dim_att, bias=False)
-        self.output = nn.Linear(dim_att, n_embd, bias=False)
+        self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+        self.receptance = nn.Linear(n_embd, n_embd)
+        self.key = nn.Linear(n_embd, n_embd)
+        self.value = nn.Linear(n_embd, n_embd)
+        self.output = nn.Linear(n_embd, n_embd)
+        self.ln_x = nn.GroupNorm(self.n_head, n_embd)
 
     @JITModMethod
     @TCompileMax
