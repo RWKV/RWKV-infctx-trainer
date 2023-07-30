@@ -3,6 +3,7 @@
 #
 # Original source code for TRIE_TOKENIZER: 
 # https://github.com/BlinkDL/ChatRWKV/blob/1e408fe50d7059bfa4319835f22cbfa88d8ad14e/rwkv_pip_package/src/rwkv/rwkv_tokenizer.py
+# https://github.com/TkskKurumi/ChatRWKV-TRIE-Tokenizer
 ########################################################################################################
 
 class TRIE:
@@ -51,6 +52,7 @@ class TRIE:
 
 class TRIE_TOKENIZER():
     def __init__(self, file_name):
+        self.vocab_size = 65525
         self.idx2token = {}
         sorted = [] # must be already sorted
         with open(file_name, "r", encoding="utf-8") as f:
@@ -90,10 +92,13 @@ class TRIE_TOKENIZER():
         return self.encodeBytes(src.encode("utf-8"))
 
     def decode(self, tokens):
-        try:
-            return self.decodeBytes(tokens).decode('utf-8')
-        except:
-            return '\ufffd' # bad utf-8
+        return self.decodeBytes(tokens).decode('utf-8')
+
+    def get_vocab_size(self):
+        return self.vocab_size
+
+    def get_vocab(self):
+        return self.idx2token
 
     def printTokens(self, tokens):
         for i in tokens:
@@ -104,3 +109,28 @@ class TRIE_TOKENIZER():
                 pass
             print(f'{repr(s)}{i}', end=' ')
         print()
+
+########################################################################################################
+# The following is a MT extension of the trie tokenizer
+########################################################################################################
+
+from multiprocessing.pool import ThreadPool
+from threading import Thread
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import cpu_count
+
+num_cpus = cpu_count()
+shared_executor = ProcessPoolExecutor(max_workers=num_cpus)
+
+class MT_TRIE_TOKENIZER():
+    def __init__(self, filename):
+        # self.trie_tokenizer = None
+        self.trie_tokenizer = TRIE_TOKENIZER(filename)
+    
+    def encode(self, src):
+        return self.trie_tokenizer.encode(src)
+        # return shared_executor.submit(self.trie_tokenizer.encode, src).result()
+        # return [0]
+        # twrv = ThreadWithReturnValue(target=self.trie_tokenizer.encode, args=(src,))
+        # twrv.start()
+        # return twrv.join()
