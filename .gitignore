@@ -142,6 +142,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# Include the RWKV world vocab, and all src files
+!**/rwkv_vocab_*.txt
+!src/**/*.py
 
 # Additional folders used for the experiment
 # and standard hidden files ignore. Including 

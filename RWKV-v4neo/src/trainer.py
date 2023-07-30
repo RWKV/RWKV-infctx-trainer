@@ -89,6 +89,8 @@ class RWKVLightningTrainer(Trainer):
         if target_batch_size_log_msg != "" and self.local_rank == 0:
             print(target_batch_size_log_msg)
 
+    # Fabric instance, useful for coordinating between processes
+    # when `self.trainer.strategy.reduce` is not possible
     def getFabric(self):
         if self._fabric_instance is not None:
             return self._fabric_instance
