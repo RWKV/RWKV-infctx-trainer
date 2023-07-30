@@ -943,12 +943,6 @@ class RWKV(L.LightningModule):
             # (this only applies for segmented learning)
             segment_size = min(math.ceil(T / segment_count), self.ctx_len)
 
-            # We compute when we start the segmented learning process
-            if self.bptt_learning_range > 0:
-                first_learning_segment = segment_count - self.bptt_learning_range;
-            else:
-                first_learning_segment = 0;
-
             # Dummy 2D tenros of shape [1,1], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
             dummy_2d_zero = torch.tensor([[0]], dtype=torch.long, device=cur_device)
 
@@ -970,15 +964,41 @@ class RWKV(L.LightningModule):
             # Combined, this makes this issue very hard to trace and debug, as it will manifest itself as randomly "freezing"
             # when out of sync during `self.manual_backward()` calls. Without the current work around put in place
             #
-            # We only do this, if we are doing bptt learning on more then 1 segment, and gpu count > 1
+            # We only do this, if we are doing bptt learning on all segments (-1), and gpu count > 1
             # otherwise we just use the segment count as it is
-            if self.trainer.num_devices > 1 and (self.bptt_learning_range > 1 or self.bptt_learning_range <= 0):
-                shared_segment_count = self.trainer.strategy.reduce(segment_count, reduce_op="max").item()
+            if self.trainer.num_devices > 1:
+                if self.bptt_learning_range <= 0:
+                    # We perform forward/backward on the shared max segment count across all GPUs
+                    forward_segment_count  = self.trainer.strategy.reduce(segment_count, reduce_op="max").item()
+                    backward_segment_count = forward_segment_count
+                else:
+                    # We perform as many forward pass as we need to be equal or more then bptt_learning_range
+                    # and perform an equal amount of backward pass
+                    forward_segment_count  = math.max(segment_count, self.bptt_learning_range)
+                    backward_segment_count = self.bptt_learning_range
             else:
-                shared_segment_count = segment_count
+                if self.bptt_learning_range <= 0:
+                    # Since we do not need to sync GPUs here, we perform as much forward as we exactly need
+                    forward_segment_count  = segment_count
+                    backward_segment_count = forward_segment_count
+                else:
+                    # We clamp the backward segment count to the forward count, and bptt_learning_range
+                    forward_segment_count  = segment_count
+                    backward_segment_count = math.min(self.bptt_learning_range, segment_count)
 
-            # Lets go through all the segments (including dummy ones)
-            for i in range(shared_segment_count):
+            # We compute when we start the segmented learning process
+            if forward_segment_count != backward_segment_count:
+                start_learning_segment = math.max(segment_count - self.bptt_learning_range, 0);
+            else:
+                start_learning_segment = 0;
+
+            # Segment loss array to track (and reduce later)
+            # of size equal to forward_segment_count
+            segment_loss_arr = [0] * forward_segment_count
+
+            # Lets go through and forward all the segments 
+            # (including dummy ones)
+            for i in range(forward_segment_count):
                 # Apply state truncation, if truncated learning is enabled
                 # this limits the backprop process, reduces loss learning rate, 
                 # but save vram across extreamly large backpropagation steps
@@ -1011,16 +1031,25 @@ class RWKV(L.LightningModule):
                     steps,
                 )
                 states = BlockStateList(new_shift_states, new_wkv_states)
+
+                # Keep the sgment loss
+                segment_loss_arr[i] = segment_loss
                 
+            # Lets backpass the respective segments, from the back
+            # (including dummy ones)
+            for i in range(forward_segment_count-1, -1, -1):
+                # Get the segment loss
+                segment_loss = segment_loss_arr[i]
+
                 # Compute the backward pass for the segment
-                if i >= first_learning_segment:
+                if i >= start_learning_segment and i < start_learning_segment + backward_segment_count:
                     # The learning loss, should be normalized against the accumulation steps
                     # as we are bypassing the pytorch lightning normalization
                     # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
                     learning_loss = segment_loss / gradient_accumulation_steps
 
-                    # Perform the backward pass accordingly
-                    if i < shared_segment_count-1:
+                    # Perform the backward pass accordingly, for valid segments (besides the start_learning_segment)
+                    if i > start_learning_segment:
                         # Undocumented multiple backward pass support
                         # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
                         self.manual_backward(learning_loss, optimizer, retain_graph=True)
@@ -1028,11 +1057,11 @@ class RWKV(L.LightningModule):
                         # Accumulate without gradient, as we already did the backward pass
                         total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
                     else:
-                        # This is the last pass, we let the default pytorch lightning handle the backward pass
+                        # This is the last backward pass, we let the default pytorch lightning handle the backward pass
                         # and return the segment loss as part of the total loss
                         total_loss = total_loss + segment_loss
                 else:
-                    # Even if its not the segments we use for backward pass, we need to accumulate the loss
+                    # Even if its not the segments we use for backward pass, we still need to accumulate the loss
                     total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
 
                 # GC collect unused memory
