@@ -293,7 +293,7 @@ class RWKV_TimeMix(JITModClass):
         return w, wk, wb, ws
 
     @JITModMethod
-    def _forward_state(self, r, k, v, w, wk, wb, ws, x_l, last_state: TimeMixState):
+    def _forward_state_chunk(self, r, k, v, w, wk, wb, ws, x_l, last_state: TimeMixState):
         B, H, TT, S = r.size()
         T = TT
 
@@ -321,16 +321,17 @@ class RWKV_TimeMix(JITModClass):
     def _forward_chunk(self, x, last_state: TimeMixState):
         # Forward sizings (Batch, Time/ContextLength, Tokens)
         B, TT, C = x.size()
+        B = torch.tensor(B, device=x.device, dtype=torch.int32)
+        TT = torch.tensor(TT, device=x.device, dtype=torch.int32)
 
         # Get r, k, v
-        r, k, v = self._forward_rkv(x, B, TT, last_state)
+        r, k, v = self._forward_rkv_chunk(x, B, TT, last_state)
 
         # Get w, wk, wb, ws
-        w, wk, wb, ws = self._forward_wkbs(TT, r, k, v)
+        w, wk, wb, ws = self._forward_wkbs_chunk(TT, r, k, v)
 
         # Does the state forwarding
-        return self._forward_state(r, k, v, w, wk, wb, ws, x[:, -1], last_state)
-
+        return self._forward_state_chunk(r, k, v, w, wk, wb, ws, x[:, -1], last_state)
 
     @JITModMethod
     @TCompileMax
@@ -555,8 +556,6 @@ class RWKV(L.LightningModule):
         self.n_layer = n_layer
         self.layerwise_lr = layerwise_lr
         self.grad_cp = grad_cp
-        self.target_lr_init = target_lr_init
-        self.target_lr_final = target_lr_final
         self.lr_init = lr_init
         self.lr_final = lr_final
         self.lr_period = lr_period
@@ -1247,7 +1246,7 @@ class SimpleRWKV():
 
         # Setup the tokenizer
         if tokenizer == "neox":
-            tokenizer_file = os.path.join(SCRIPT_PARENT_DIR,"20B_tokenizer.json")
+            tokenizer_file = os.path.join(SCRIPT_DIR,"./dataflow/20B_tokenizer.json")
             tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
             vocab_size = 50277
         else:
