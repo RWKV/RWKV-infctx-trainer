@@ -975,7 +975,7 @@ class RWKV(L.LightningModule):
                 else:
                     # We perform as many forward pass as we need to be equal or more then bptt_learning_range
                     # and perform an equal amount of backward pass
-                    forward_segment_count  = math.max(segment_count, self.bptt_learning_range)
+                    forward_segment_count  = max(segment_count, self.bptt_learning_range)
                     backward_segment_count = self.bptt_learning_range
             else:
                 if self.bptt_learning_range <= 0:
@@ -985,11 +985,11 @@ class RWKV(L.LightningModule):
                 else:
                     # We clamp the backward segment count to the forward count, and bptt_learning_range
                     forward_segment_count  = segment_count
-                    backward_segment_count = math.min(self.bptt_learning_range, segment_count)
+                    backward_segment_count = min(self.bptt_learning_range, segment_count)
 
             # We compute when we start the segmented learning process
             if forward_segment_count != backward_segment_count:
-                start_learning_segment = math.max(segment_count - self.bptt_learning_range, 0);
+                start_learning_segment = max(segment_count - self.bptt_learning_range, 0);
             else:
                 start_learning_segment = 0;
 
