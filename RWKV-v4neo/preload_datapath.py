@@ -12,7 +12,7 @@ from src.data import RWKVDataModule
 # Check for argument, else throw error
 if len(sys.argv) < 2:
     print("No arguments supplied")
-    print("Usage: python3 preload_dataset.py <config.yaml>")
+    print("Usage: python3 preload_datapath.py <config.yaml>")
     sys.exit(1)
 
 # Check if the config file exists, else throw error (default assertion)
@@ -28,6 +28,9 @@ assert 'data' in lightning_config, "Data is not configured in the config file"
 
 # Get the data object
 data = lightning_config['data']
+
+# Overwrite 'skip_datapath_setup' to False
+data['skip_datapath_setup'] = False
 
 # Run the preload data process
 dataMod = RWKVDataModule(**data)

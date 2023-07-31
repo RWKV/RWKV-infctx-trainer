@@ -119,6 +119,8 @@ from threading import Thread
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
 
+import torch
+
 num_cpus = cpu_count()
 shared_executor = ProcessPoolExecutor(max_workers=num_cpus)
 
@@ -128,9 +130,45 @@ class MT_TRIE_TOKENIZER():
         self.trie_tokenizer = TRIE_TOKENIZER(filename)
     
     def encode(self, src):
-        return self.trie_tokenizer.encode(src)
-        # return shared_executor.submit(self.trie_tokenizer.encode, src).result()
-        # return [0]
-        # twrv = ThreadWithReturnValue(target=self.trie_tokenizer.encode, args=(src,))
-        # twrv.start()
-        # return twrv.join()
+        # Get the encoded tokens, however because this 
+        # is a mix of int and longs, we need to convert 
+        # to the torch formatting
+        raw_tokens = self.trie_tokenizer.encode(src)
+        tokens_len = len(raw_tokens)
+
+        # lets setup the tensors
+        tokens = torch.zeros(tokens_len, dtype=torch.long)
+
+        # now we need to convert the raw tokens to the torch format
+        for i in range(tokens_len):
+            tokens[i] = raw_tokens[i]
+
+        # Return tokens
+        return tokens
+
+    def decode(self, tokens):
+        # We ensure that the tokens are passed as list of int/long 
+        # and not as a torch tensor/numpy array
+        tokens_len = len(tokens)
+
+        # The clean token array to build
+        clean_tokens = []
+
+        # Now we need to convert the tokens to the raw tokens
+        for i in range(tokens_len):
+            # If torch
+            if isinstance(tokens[i], torch.Tensor):
+                clean_tokens.append(tokens[i].item())
+            # If numpy
+            elif isinstance(tokens[i], np.ndarray):
+                clean_tokens.append(tokens[i].item())
+            # If int/long
+            elif isinstance(tokens[i], int) or isinstance(tokens[i], long):
+                clean_tokens.append(tokens[i])
+            # If unknown
+            else:
+                raise Exception(f"Unknown token type: {type(tokens[i])}")
+
+        # Decode and return
+        return self.trie_tokenizer.decode(clean_tokens)
+        

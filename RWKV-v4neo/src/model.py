@@ -477,6 +477,7 @@ class RWKV(L.LightningModule):
         self.ctx_len_warmup_steps = ctx_len_warmup_steps
         self.n_embd = n_embd
         self.n_layer = n_layer
+        self.vocab_size = vocab_size
         self.layerwise_lr = layerwise_lr
         self.grad_cp = grad_cp
         self.lr_init = lr_init
@@ -545,7 +546,6 @@ class RWKV(L.LightningModule):
         # Get the learning rate used for the optimizer
         lr_init = self.lr_init
         lr_final = self.lr_final
-        
         # If the final learning rate is not specified, use the initial learning rate
         if lr_final < 0:
             lr_final = self.lr_init
@@ -943,12 +943,6 @@ class RWKV(L.LightningModule):
             # (this only applies for segmented learning)
             segment_size = min(math.ceil(T / segment_count), self.ctx_len)
 
-            # We compute when we start the segmented learning process
-            if self.bptt_learning_range > 0:
-                first_learning_segment = segment_count - self.bptt_learning_range;
-            else:
-                first_learning_segment = 0;
-
             # Dummy 2D tenros of shape [1,1], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
             dummy_2d_zero = torch.tensor([[0]], dtype=torch.long, device=cur_device)
 
@@ -970,15 +964,41 @@ class RWKV(L.LightningModule):
             # Combined, this makes this issue very hard to trace and debug, as it will manifest itself as randomly "freezing"
             # when out of sync during `self.manual_backward()` calls. Without the current work around put in place
             #
-            # We only do this, if we are doing bptt learning on more then 1 segment, and gpu count > 1
+            # We only do this, if we are doing bptt learning on all segments (-1), and gpu count > 1
             # otherwise we just use the segment count as it is
-            if self.trainer.num_devices > 1 and (self.bptt_learning_range > 1 or self.bptt_learning_range <= 0):
-                shared_segment_count = self.trainer.strategy.reduce(segment_count, reduce_op="max").item()
+            if self.trainer.num_devices > 1:
+                if self.bptt_learning_range <= 0:
+                    # We perform forward/backward on the shared max segment count across all GPUs
+                    forward_segment_count  = self.trainer.strategy.reduce(segment_count, reduce_op="max").item()
+                    backward_segment_count = forward_segment_count
+                else:
+                    # We perform as many forward pass as we need to be equal or more then bptt_learning_range
+                    # and perform an equal amount of backward pass
+                    forward_segment_count  = max(segment_count, self.bptt_learning_range)
+                    backward_segment_count = self.bptt_learning_range
             else:
-                shared_segment_count = segment_count
+                if self.bptt_learning_range <= 0:
+                    # Since we do not need to sync GPUs here, we perform as much forward as we exactly need
+                    forward_segment_count  = segment_count
+                    backward_segment_count = forward_segment_count
+                else:
+                    # We clamp the backward segment count to the forward count, and bptt_learning_range
+                    forward_segment_count  = segment_count
+                    backward_segment_count = min(self.bptt_learning_range, segment_count)
 
-            # Lets go through all the segments (including dummy ones)
-            for i in range(shared_segment_count):
+            # We compute when we start the segmented learning process
+            if forward_segment_count != backward_segment_count:
+                start_learning_segment = max(segment_count - self.bptt_learning_range, 0);
+            else:
+                start_learning_segment = 0;
+
+            # Segment loss array to track (and reduce later)
+            # of size equal to forward_segment_count
+            segment_loss_arr = [0] * forward_segment_count
+
+            # Lets go through and forward all the segments 
+            # (including dummy ones)
+            for i in range(forward_segment_count):
                 # Apply state truncation, if truncated learning is enabled
                 # this limits the backprop process, reduces loss learning rate, 
                 # but save vram across extreamly large backpropagation steps
@@ -1011,16 +1031,25 @@ class RWKV(L.LightningModule):
                     steps,
                 )
                 states = BlockStateList(new_shift_states, new_wkv_states)
+
+                # Keep the sgment loss
+                segment_loss_arr[i] = segment_loss
                 
+            # Lets backpass the respective segments, from the back
+            # (including dummy ones)
+            for i in range(forward_segment_count-1, -1, -1):
+                # Get the segment loss
+                segment_loss = segment_loss_arr[i]
+
                 # Compute the backward pass for the segment
-                if i >= first_learning_segment:
+                if i >= start_learning_segment and i < start_learning_segment + backward_segment_count:
                     # The learning loss, should be normalized against the accumulation steps
                     # as we are bypassing the pytorch lightning normalization
                     # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
                     learning_loss = segment_loss / gradient_accumulation_steps
 
-                    # Perform the backward pass accordingly
-                    if i < shared_segment_count-1:
+                    # Perform the backward pass accordingly, for valid segments (besides the start_learning_segment)
+                    if i > start_learning_segment:
                         # Undocumented multiple backward pass support
                         # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
                         self.manual_backward(learning_loss, optimizer, retain_graph=True)
@@ -1028,11 +1057,11 @@ class RWKV(L.LightningModule):
                         # Accumulate without gradient, as we already did the backward pass
                         total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
                     else:
-                        # This is the last pass, we let the default pytorch lightning handle the backward pass
+                        # This is the last backward pass, we let the default pytorch lightning handle the backward pass
                         # and return the segment loss as part of the total loss
                         total_loss = total_loss + segment_loss
                 else:
-                    # Even if its not the segments we use for backward pass, we need to accumulate the loss
+                    # Even if its not the segments we use for backward pass, we still need to accumulate the loss
                     total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
 
                 # GC collect unused memory
@@ -1128,8 +1157,7 @@ class SimpleRWKV():
             model_path: str,
             ctx_len:int = 1024,
             device:str = "cuda",
-            dtype:str = "fp32",
-            tokenizer = "neox",
+            dtype:str = "fp32"
         ):
 
         # Device type must be cuda, cpu type is not supported (yet?)
@@ -1138,15 +1166,6 @@ class SimpleRWKV():
         # Log the mismatch dtype
         if dtype != "fp32":
             print("[SimpleRWKV] Warning: dtype mismatch, only fp32 is supported (for now)")
-
-        # Setup the tokenizer
-        if tokenizer == "neox":
-            tokenizer_file = os.path.join(SCRIPT_PARENT_DIR,"20B_tokenizer.json")
-            tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
-            vocab_size = 50277
-        else:
-            raise NotImplementedError("Only pile tokenizer is supported")
-        self.fastTokenizer = tokenizer
 
         # Prepare the model config with the model path, and custom torch load
         model_config = {}
@@ -1169,17 +1188,42 @@ class SimpleRWKV():
         self.model.to(device)
         self.model.eval()
 
+        # Get the model detected vocab size
+        vocab_size = self.model.vocab_size
+
+        # The tokenizer object values
+        self.fastTokenizer = None
+        self.worldTokenizer = None
+
+        # Setup the tokenizer
+        if vocab_size == 50277:
+            # Use the neox tokenizer
+            tokenizer_file = os.path.join(SCRIPT_DIR,"./dataflow/20B_tokenizer.json")
+            tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
+            self.fastTokenizer = tokenizer
+        elif vocab_size == 65529 or vocab_size == 65536:
+            # Use the world tokenizer
+            from .dataflow.trie_tokenizer import MT_TRIE_TOKENIZER
+            world_tokenizer = MT_TRIE_TOKENIZER(os.path.join(SCRIPT_DIR, "./dataflow/rwkv_vocab_v20230424.txt"))
+            self.worldTokenizer = world_tokenizer
+        else:
+            raise NotImplementedError(f"Unsupported vocab size ({vocab_size}) - custom tokenizer not supported")
+
     # Encoding strings
     def encode(self, text: str):
+        if self.worldTokenizer != None:
+            return self.worldTokenizer.encode(text)
         return self.fastTokenizer.encode(text)
 
     # Decoding strings
     def decode(self, tokens: list):
+        if self.worldTokenizer != None:
+            return self.worldTokenizer.decode(tokens)
         return self.fastTokenizer.decode(tokens)
 
     # Forwarding logic, withoout torch._no_grad() context
     def _forward(
-            self, tokens:list, 
+            self, tokens, 
             stateObj = None
         ):
 
@@ -1196,13 +1240,12 @@ class SimpleRWKV():
         
         # For each token, process the state, in batches up to ctx_len
         for i in range(0, token_len, self.ctx_len):
-            # Get the tokens for this batch
+            # Check if tokens are already tensors
             batch_tokens = torch.tensor(
-                [tokens[i:i+self.ctx_len]], 
-                dtype=torch.long, 
-                device=self.device
-            )
-
+                tokens[i:i+self.ctx_len], 
+                dtype=torch.long, device=self.device
+            ).unsqueeze(0)
+            
             # Compute the logits and state
             logits_arr, shift_states, wkv_states = self.model.forward(
                 batch_tokens, shift_states, wkv_states
@@ -1226,9 +1269,20 @@ class SimpleRWKV():
             temperature=1.0, top_p=0.9,
             token_ban: list = []
             ):
+        # Copy to CPU first
+        logits = logits.cpu()
+
+        # Max negative float
+        max_neg = -torch.finfo(torch.float).max
+
         # Apply token ban
         for x in token_ban:
-            logits[x] = -float("Inf")
+            logits[x] = max_neg
+        
+        # Remove NaNs from logits
+        for x in range(len(logits)):
+            if torch.isnan(logits[x]):
+                logits[x] = max_neg
 
         # Handle sampling with temperature
         if temperature > 0.0:
@@ -1277,18 +1331,18 @@ class SimpleRWKV():
         # torch.cuda.empty_cache()
 
         # Generate each token
-        full_tokens = enc.copy()
         out_tokens = []
         for i in range(max_tokens):
             ttt = self.sample_logits(
-                logits, prv_tokens=full_tokens,
+                logits, 
+                # prv_tokens=full_tokens,
                 temperature=temperature, top_p=top_p,
                 token_ban=token_ban
             )
             
             # Append the token
             out_tokens.append(ttt)
-            full_tokens.append(ttt)
+            # full_tokens.append(ttt)
             if stream_to_stdout:
                 print(self.decode([ttt]), end="", flush=True)
 
