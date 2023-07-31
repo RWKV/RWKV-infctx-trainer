@@ -10,7 +10,7 @@ import os
 # Check for argument, else throw error
 if len(sys.argv) < 2:
     print("No arguments supplied")
-    print("Usage: python3 dragon_test.py <model-path> [device] [tokenizer]")
+    print("Usage: python3 dragon_test.py <model-path> [device]") # [tokenizer]")
     sys.exit(1)
 
 # download models: https://huggingface.co/BlinkDL
@@ -29,14 +29,14 @@ if DEVICE.find('cuda') != -1:
 else:
     DEVICE = 'cpu'
 
-# Tokenizer settings
-TOKENIZER="neox"
-if len(sys.argv) >= 4:
-    TOKENIZER=sys.argv[3]
+# # Tokenizer settings
+# TOKENIZER="neox"
+# if len(sys.argv) >= 4:
+#     TOKENIZER=sys.argv[3]
 
 # Setup the model
 from src.model import SimpleRWKV
-model = SimpleRWKV(MODEL_PATH, device=DEVICE, tokenizer=TOKENIZER)
+model = SimpleRWKV(MODEL_PATH, device=DEVICE)
 
 # And perform the dragon prompt
 prompt = "\nIn a shocking finding, scientist discovered a herd of dragons living in a remote, previously unexplored valley, in Tibet. Even more surprising to the researchers was the fact that the dragons spoke perfect Chinese."
