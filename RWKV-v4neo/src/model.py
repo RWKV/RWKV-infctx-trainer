@@ -477,6 +477,7 @@ class RWKV(L.LightningModule):
         self.ctx_len_warmup_steps = ctx_len_warmup_steps
         self.n_embd = n_embd
         self.n_layer = n_layer
+        self.vocab_size = vocab_size
         self.layerwise_lr = layerwise_lr
         self.grad_cp = grad_cp
         self.lr_init = lr_init
@@ -1156,8 +1157,7 @@ class SimpleRWKV():
             model_path: str,
             ctx_len:int = 1024,
             device:str = "cuda",
-            dtype:str = "fp32",
-            tokenizer = "neox",
+            dtype:str = "fp32"
         ):
 
         # Device type must be cuda, cpu type is not supported (yet?)
@@ -1166,20 +1166,6 @@ class SimpleRWKV():
         # Log the mismatch dtype
         if dtype != "fp32":
             print("[SimpleRWKV] Warning: dtype mismatch, only fp32 is supported (for now)")
-
-        # The tokenizer object values
-        self.fastTokenizer = None
-        self.worldTokenizer = None
-
-        # Setup the tokenizer
-        if tokenizer == "neox":
-            tokenizer_file = os.path.join(SCRIPT_DIR,"./dataflow/20B_tokenizer.json")
-            tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
-            self.fastTokenizer = tokenizer
-        else:
-            from .dataflow.trie_tokenizer import TRIE_TOKENIZER
-            world_tokenizer = TRIE_TOKENIZER(os.path.join(SCRIPT_DIR, "./dataflow/rwkv_vocab_v20230424.txt"))
-            self.worldTokenizer = world_tokenizer
 
         # Prepare the model config with the model path, and custom torch load
         model_config = {}
@@ -1202,6 +1188,27 @@ class SimpleRWKV():
         self.model.to(device)
         self.model.eval()
 
+        # Get the model detected vocab size
+        vocab_size = self.model.vocab_size
+
+        # The tokenizer object values
+        self.fastTokenizer = None
+        self.worldTokenizer = None
+
+        # Setup the tokenizer
+        if vocab_size == 50277:
+            # Use the neox tokenizer
+            tokenizer_file = os.path.join(SCRIPT_DIR,"./dataflow/20B_tokenizer.json")
+            tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
+            self.fastTokenizer = tokenizer
+        elif vocab_size == 65529 or vocab_size == 65536:
+            # Use the world tokenizer
+            from .dataflow.trie_tokenizer import MT_TRIE_TOKENIZER
+            world_tokenizer = MT_TRIE_TOKENIZER(os.path.join(SCRIPT_DIR, "./dataflow/rwkv_vocab_v20230424.txt"))
+            self.worldTokenizer = world_tokenizer
+        else:
+            raise NotImplementedError(f"Unsupported vocab size ({vocab_size}) - custom tokenizer not supported")
+
     # Encoding strings
     def encode(self, text: str):
         if self.worldTokenizer != None:
@@ -1216,7 +1223,7 @@ class SimpleRWKV():
 
     # Forwarding logic, withoout torch._no_grad() context
     def _forward(
-            self, tokens:list, 
+            self, tokens, 
             stateObj = None
         ):
 
@@ -1235,10 +1242,9 @@ class SimpleRWKV():
         for i in range(0, token_len, self.ctx_len):
             # Get the tokens for this batch
             batch_tokens = torch.tensor(
-                [tokens[i:i+self.ctx_len]], 
-                dtype=torch.long, 
-                device=self.device
-            )
+                tokens[i:i+self.ctx_len], 
+                dtype=torch.long, device=self.device
+            ).unsqueeze(0)
 
             # Compute the logits and state
             logits_arr, shift_states, wkv_states = self.model.forward(
@@ -1263,9 +1269,17 @@ class SimpleRWKV():
             temperature=1.0, top_p=0.9,
             token_ban: list = []
             ):
+        # Copy to CPU first
+        logits = logits.cpu()
+
         # Apply token ban
         for x in token_ban:
-            logits[x] = -float("Inf")
+            logits[x] = -9999999999
+        
+        # Remove NaNs from logits
+        for x in range(len(logits)):
+            if torch.isnan(logits[x]):
+                logits[x] = -9999999999
 
         # Handle sampling with temperature
         if temperature > 0.0:
@@ -1314,18 +1328,18 @@ class SimpleRWKV():
         # torch.cuda.empty_cache()
 
         # Generate each token
-        full_tokens = enc.copy()
         out_tokens = []
         for i in range(max_tokens):
             ttt = self.sample_logits(
-                logits, prv_tokens=full_tokens,
+                logits, 
+                # prv_tokens=full_tokens,
                 temperature=temperature, top_p=top_p,
                 token_ban=token_ban
             )
             
             # Append the token
             out_tokens.append(ttt)
-            full_tokens.append(ttt)
+            # full_tokens.append(ttt)
             if stream_to_stdout:
                 print(self.decode([ttt]), end="", flush=True)
 
