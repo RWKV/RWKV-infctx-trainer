@@ -479,8 +479,6 @@ class RWKV(L.LightningModule):
         self.n_layer = n_layer
         self.layerwise_lr = layerwise_lr
         self.grad_cp = grad_cp
-        self.target_lr_init = target_lr_init
-        self.target_lr_final = target_lr_final
         self.lr_init = lr_init
         self.lr_final = lr_final
         self.lr_period = lr_period
@@ -1171,7 +1169,7 @@ class SimpleRWKV():
 
         # Setup the tokenizer
         if tokenizer == "neox":
-            tokenizer_file = os.path.join(SCRIPT_PARENT_DIR,"20B_tokenizer.json")
+            tokenizer_file = os.path.join(SCRIPT_DIR,"./dataflow/20B_tokenizer.json")
             tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
             vocab_size = 50277
         else:
