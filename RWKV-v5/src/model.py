@@ -293,7 +293,7 @@ class RWKV_TimeMix(JITModClass):
         return w, wk, wb, ws
 
     @JITModMethod
-    def _forward_state(self, r, k, v, w, wk, wb, ws, last_state: TimeMixState):
+    def _forward_state(self, r, k, v, w, wk, wb, ws, x_l, last_state: TimeMixState):
         B, H, TT, S = r.size()
         T = TT
 
@@ -314,8 +314,8 @@ class RWKV_TimeMix(JITModClass):
         x = x.transpose(1, 2).contiguous().view(B * TT, H*S) # BHTS -> BTHS -> BTC
         x = self.ln_x(x).view(B, TT, H*S)
 
-        # Err... how do i rebuild this state ???
-        return self.output(x), TimeMixState(s[:, :, -1, :], s[:, :, -1, :])
+        # Return with logits outputs, and new timemix state
+        return self.output(x), TimeMixState(x_l, s[:, :, -1, :])
 
     @JITModMethod
     def _forward_chunk(self, x, last_state: TimeMixState):
@@ -329,7 +329,7 @@ class RWKV_TimeMix(JITModClass):
         w, wk, wb, ws = self._forward_wkbs(TT, r, k, v)
 
         # Does the state forwarding
-        return self._forward_state(r, k, v, w, wk, wb, ws, last_state)
+        return self._forward_state(r, k, v, w, wk, wb, ws, x[:, -1], last_state)
 
 
     @JITModMethod
