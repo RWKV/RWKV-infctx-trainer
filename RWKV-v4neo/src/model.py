@@ -1167,14 +1167,19 @@ class SimpleRWKV():
         if dtype != "fp32":
             print("[SimpleRWKV] Warning: dtype mismatch, only fp32 is supported (for now)")
 
+        # The tokenizer object values
+        self.fastTokenizer = None
+        self.worldTokenizer = None
+
         # Setup the tokenizer
         if tokenizer == "neox":
             tokenizer_file = os.path.join(SCRIPT_DIR,"./dataflow/20B_tokenizer.json")
             tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
-            vocab_size = 50277
+            self.fastTokenizer = tokenizer
         else:
-            raise NotImplementedError("Only pile tokenizer is supported")
-        self.fastTokenizer = tokenizer
+            from .dataflow.trie_tokenizer import TRIE_TOKENIZER
+            world_tokenizer = TRIE_TOKENIZER(os.path.join(SCRIPT_DIR, "./dataflow/rwkv_vocab_v20230424.txt"))
+            self.worldTokenizer = world_tokenizer
 
         # Prepare the model config with the model path, and custom torch load
         model_config = {}
@@ -1199,10 +1204,14 @@ class SimpleRWKV():
 
     # Encoding strings
     def encode(self, text: str):
+        if self.worldTokenizer != None:
+            return self.worldTokenizer.encode(text)
         return self.fastTokenizer.encode(text)
 
     # Decoding strings
     def decode(self, tokens: list):
+        if self.worldTokenizer != None:
+            return self.worldTokenizer.decode(tokens)
         return self.fastTokenizer.decode(tokens)
 
     # Forwarding logic, withoout torch._no_grad() context
