@@ -12,7 +12,7 @@ from src.data import RWKVDataModule
 # Check for argument, else throw error
 if len(sys.argv) < 2:
     print("No arguments supplied")
-    print("Usage: python3 preload_dataset.py <config.yaml>")
+    print("Usage: python3 preload_datapath.py <config.yaml>")
     sys.exit(1)
 
 # Check if the config file exists, else throw error (default assertion)

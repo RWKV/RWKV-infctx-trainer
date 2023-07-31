@@ -431,7 +431,7 @@ class RWKVDataModule(LightningDataModule):
         multi_column_separator: str = None,
         # prompt/completion format masking support
         disable_prompt_completion_mask: bool = False,
-        # Skip database setup checks if datapath exists, ignored if using preload_dataset.py
+        # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
         skip_datapath_setup: bool = False
     ):
         # Capture the init parameters
