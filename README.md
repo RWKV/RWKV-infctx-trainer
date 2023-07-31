@@ -10,7 +10,7 @@ The training code is by the way tremendously refactored into using PyTorch 2.0, 
 To use this repo, go into `RWKV-v4neo` directory and do
 
 ```sh
-python3 new_train.py fit -c {your_config}.yaml
+python3 lightning_trainer.py fit -c {your_config}.yaml
 ```
 
 Remember to modify the configuration for your own need. 
@@ -70,8 +70,8 @@ Due to issues with [deepspeed on windows](https://github.com/microsoft/DeepSpeed
 
 - Either init a new model (todo script), or download an existing model
 - Setup the [config.yaml](./RWKV-v4neo/config-example.yaml) file, customized for your foundation model / finetune use case
-- Preload the dataset using the `python3 preload_dataset.py {you-config}.yaml`
-- Start the training process `python3 new_train.py fit -c {your_config}.yaml`
+- Preload the dataset using the `python3 preload_datapath.py {you-config}.yaml`
+- Start the training process `python3 lightning_trainer.py fit -c {your_config}.yaml`
 - Export the checkpoint after training is complete with `python3 export_checkpoint.py ../path/to/checkpoint`
 - From the checkpoint folder, you should find the fp32 model named `rwkv_model.pth`
 - You should probably convert this to an fp16 model (todo script)

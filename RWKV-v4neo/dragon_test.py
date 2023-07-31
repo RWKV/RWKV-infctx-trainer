@@ -10,7 +10,7 @@ import os
 # Check for argument, else throw error
 if len(sys.argv) < 2:
     print("No arguments supplied")
-    print("Usage: python3 dragon_test.py <model-path> [device]")
+    print("Usage: python3 dragon_test.py <model-path> [device]") # [tokenizer]")
     sys.exit(1)
 
 # download models: https://huggingface.co/BlinkDL
@@ -28,6 +28,11 @@ if DEVICE.find('cuda') != -1:
     DEVICE = 'cuda'
 else:
     DEVICE = 'cpu'
+
+# # Tokenizer settings
+# TOKENIZER="neox"
+# if len(sys.argv) >= 4:
+#     TOKENIZER=sys.argv[3]
 
 # Setup the model
 from src.model import SimpleRWKV
