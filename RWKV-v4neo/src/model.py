@@ -545,7 +545,6 @@ class RWKV(L.LightningModule):
         # Get the learning rate used for the optimizer
         lr_init = self.lr_init
         lr_final = self.lr_final
-        
         # If the final learning rate is not specified, use the initial learning rate
         if lr_final < 0:
             lr_final = self.lr_init
@@ -1170,7 +1169,7 @@ class SimpleRWKV():
 
         # Setup the tokenizer
         if tokenizer == "neox":
-            tokenizer_file = os.path.join(SCRIPT_PARENT_DIR,"20B_tokenizer.json")
+            tokenizer_file = os.path.join(SCRIPT_DIR,"./dataflow/20B_tokenizer.json")
             tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
             vocab_size = 50277
         else:
