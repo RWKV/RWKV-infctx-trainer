@@ -1240,12 +1240,12 @@ class SimpleRWKV():
         
         # For each token, process the state, in batches up to ctx_len
         for i in range(0, token_len, self.ctx_len):
-            # Get the tokens for this batch
+            # Check if tokens are already tensors
             batch_tokens = torch.tensor(
                 tokens[i:i+self.ctx_len], 
                 dtype=torch.long, device=self.device
             ).unsqueeze(0)
-
+            
             # Compute the logits and state
             logits_arr, shift_states, wkv_states = self.model.forward(
                 batch_tokens, shift_states, wkv_states
@@ -1272,14 +1272,17 @@ class SimpleRWKV():
         # Copy to CPU first
         logits = logits.cpu()
 
+        # Max negative float
+        max_neg = -torch.finfo(torch.float).max
+
         # Apply token ban
         for x in token_ban:
-            logits[x] = -9999999999
+            logits[x] = max_neg
         
         # Remove NaNs from logits
         for x in range(len(logits)):
             if torch.isnan(logits[x]):
-                logits[x] = -9999999999
+                logits[x] = max_neg
 
         # Handle sampling with temperature
         if temperature > 0.0:
