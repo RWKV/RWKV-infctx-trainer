@@ -45,7 +45,7 @@ def disable_jit_if_deepspeed_3():
     # Finally lets check if the assumed_deepspeed_strategy contains the text "deepspeed_stage_3"
     # And disable JIT, as its not supported by deepspeed_stage_3
     if "deepspeed_stage_3" in assumed_deepspeed_strategy:
-        print(f"[RWKV.new_train.py] Detected {assumed_deepspeed_strategy}, disabling JIT using RWKV_JIT_ON=0")
+        print(f"[RWKV.lightning_trainer.py] Detected {assumed_deepspeed_strategy}, disabling JIT using RWKV_JIT_ON=0")
         os.environ["RWKV_JIT_ON"] = "0"
 
 # Perform the check

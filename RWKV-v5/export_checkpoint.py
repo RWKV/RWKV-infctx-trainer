@@ -2,7 +2,7 @@
 import sys
 
 # ----
-# This script is used to export the deepspeed checkpoint into ab RWKV model
+# This script is used to export the deepspeed checkpoint into an RWKV model
 #
 # This includes the workaround for a known format issue with the default deepspeed checkpoint exporter
 # 
@@ -611,14 +611,14 @@ if __name__ == "__main__":
         "output_file",
         type=str,
         default="",
-        help="path to the pytorch fp32 state_dict output file (e.g. path/model.pth), if blank defautls to 'rwkv_model.pth' within the checkpoint dir")
+        help="path to the pytorch fp32 state_dict output file (e.g. path/model.pth), if blank defaults to 'rwkv_model.pth' within the checkpoint dir")
     parser.add_argument("-d", "--debug", action='store_true', help="enable debug")
     args = parser.parse_args()
 
     debug = args.debug
 
     output_file = args.output_file
-    if output_file == "":
+    if output_file == "" or output_file is None:
         output_file = os.path.join(args.checkpoint_dir, "rwkv_model.pth")
     convert_zero_checkpoint_to_fp32_state_dict(args.checkpoint_dir, output_file)
     ### RWKV modified code ###
