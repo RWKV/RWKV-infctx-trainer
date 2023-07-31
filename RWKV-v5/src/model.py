@@ -207,7 +207,9 @@ class RWKV_TimeMix(JITModClass):
         # self.n_embd = n_embd
         self.n_head = n_head
         self.head_size = head_size
-        # self.chunk_len = 512
+
+        # Optimized chunk length is fixed for now
+        self.chunk_len = 512
         # assert ctx_len % self.chunk_len == 0
 
         with torch.no_grad():  # fancy init
@@ -240,11 +242,7 @@ class RWKV_TimeMix(JITModClass):
         self.ln_x = nn.GroupNorm(self.n_head, n_embd)
 
     @JITModMethod
-    @TCompileMax
-    def _forward_kvsr(self, x, last_state: TimeMixState):
-        # Transposing settings
-        B, TT, C = x.size()
-
+    def _forward_rkv_chunk(self, x, B, TT, last_state: TimeMixState):
         # Mix x with the previous timestep to produce xk, xv, xr
         xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
                           dim=1)
@@ -258,6 +256,8 @@ class RWKV_TimeMix(JITModClass):
 
         # Enforce bf16 type for kv, as this can be mis init
         # when being called directly via inference
+        if r.dtype != torch.bfloat16:
+            r = r.to(torch.bfloat16)
         if k.dtype != torch.bfloat16:
             k = k.to(torch.bfloat16)
         if v.dtype != torch.bfloat16:
@@ -266,24 +266,93 @@ class RWKV_TimeMix(JITModClass):
         return r, k, v
 
     @JITModMethod
-    @TCompileMax
-    def _forward_out(self, sr, y, x_l, new_wkv_state):
-        return self.output(sr * y), TimeMixState(x_l, new_wkv_state)
+    def _forward_wkbs_chunk(self, T, r, k, v):
+        H = self.n_head
+
+        w = torch.exp(-torch.exp(self.time_decay.float())).unsqueeze(-1)
+        u = torch.exp(self.time_first.float()).unsqueeze(-1)
+
+        ws = w.pow(T).reshape(1, H, 1, 1)
+        ind = torch.arange(T-1, -1, -1, device=r.device).unsqueeze(0).repeat(H, 1)
+        w = w.repeat(1, T).pow(ind)
+
+        wk = w.reshape(1, H, 1, T)
+        wb = wk.transpose(-2, -1).flip(2)
+
+        w = torch.cat([w[:, 1:], u], dim=1)
+        w = F.pad(w, (0, T))
+        w = torch.tile(w, [T])
+        w = w[:, :-T].reshape(-1, T, 2 * T - 1)
+        w = w[:, :, T-1:].reshape(1, H, T, T)
+
+        w = w.to(dtype=r.dtype)
+        wk = wk.to(dtype=r.dtype)
+        wb = wb.to(dtype=r.dtype)
+        ws = ws.to(dtype=r.dtype)
+
+        return w, wk, wb, ws
 
     @JITModMethod
-    @TCompileBaseline
+    def _forward_state(self, r, k, v, w, wk, wb, ws, last_state: TimeMixState):
+        B, H, TT, S = r.size()
+        T = TT
+
+        s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
+        x = torch.zeros(B, H, TT, S, device=r.device, dtype=r.dtype) # output
+
+        ########################################################################
+        for i in range(TT // T):
+            rr = r[:, :, i*T:i*T+T, :]
+            kk = k[:, :, :, i*T:i*T+T]
+            vv = v[:, :, i*T:i*T+T, :]
+
+            x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv  +  (rr @ s) * wb
+
+            s = ws * s + (kk * wk) @ vv
+        ########################################################################
+        
+        x = x.transpose(1, 2).contiguous().view(B * TT, H*S) # BHTS -> BTHS -> BTC
+        x = self.ln_x(x).view(B, TT, H*S)
+
+        # Err... how do i rebuild this state ???
+        return self.output(x), TimeMixState(s[:, :, -1, :], s[:, :, -1, :])
+
+    @JITModMethod
+    def _forward_chunk(self, x, last_state: TimeMixState):
+        # Forward sizings (Batch, Time/ContextLength, Tokens)
+        B, TT, C = x.size()
+
+        # Get r, k, v
+        r, k, v = self._forward_rkv(x, B, TT, last_state)
+
+        # Get w, wk, wb, ws
+        w, wk, wb, ws = self._forward_wkbs(TT, r, k, v)
+
+        # Does the state forwarding
+        return self._forward_state(r, k, v, w, wk, wb, ws, last_state)
+
+
+    @JITModMethod
+    @TCompileMax
     def forward(self, x, last_state: TimeMixState):
-        sr, k, v = self._forward_kvsr(x, last_state)
+        # Get the x sizing
+        B, TT, C = x.size()
 
-        # Enforce bf16 for self.time_first
-        # as this can be mis init when being called directly via inference
-        if self.time_first.dtype != torch.bfloat16:
-            self.time_first = self.time_first.to(torch.bfloat16)
+        # Chunk length to split by, 
+        # we probably can reoptimize this at some point
+        chunk_len = self.chunk_len
 
-        # Perform the WKV op via cuda code
-        y, new_wkv_state = wkv_op(self.time_decay, self.time_first,
-                                  k, v, last_state.wkv_state)
-        return self._forward_out(sr, y, x[:, -1], new_wkv_state)
+        # Logits to return
+        x_logits = torch.zeros(B, TT, C, device=x.device, dtype=x.dtype)
+
+        # Split the input by TT chunks
+        for i in range(0, TT, chunk_len):
+            x_chunk = x[:, i:i+chunk_len, :]
+            chunk_logits, last_state = self._forward_chunk(x_chunk, last_state)
+            x_logits[:, i:i+chunk_len, :] = chunk_logits
+
+        # Return the logits and the state
+        return x_logits, last_state
 
 
 ########################################################################################################
@@ -982,7 +1051,7 @@ class RWKV(L.LightningModule):
                 else:
                     # We perform as many forward pass as we need to be equal or more then bptt_learning_range
                     # and perform an equal amount of backward pass
-                    forward_segment_count  = math.max(segment_count, self.bptt_learning_range)
+                    forward_segment_count  = max(segment_count, self.bptt_learning_range)
                     backward_segment_count = self.bptt_learning_range
             else:
                 if self.bptt_learning_range <= 0:
@@ -992,11 +1061,11 @@ class RWKV(L.LightningModule):
                 else:
                     # We clamp the backward segment count to the forward count, and bptt_learning_range
                     forward_segment_count  = segment_count
-                    backward_segment_count = math.min(self.bptt_learning_range, segment_count)
+                    backward_segment_count = min(self.bptt_learning_range, segment_count)
 
             # We compute when we start the segmented learning process
             if forward_segment_count != backward_segment_count:
-                start_learning_segment = math.max(segment_count - self.bptt_learning_range, 0);
+                start_learning_segment = max(segment_count - self.bptt_learning_range, 0);
             else:
                 start_learning_segment = 0;
 
