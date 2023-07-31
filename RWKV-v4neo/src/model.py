@@ -988,7 +988,7 @@ class RWKV(L.LightningModule):
 
             # We compute when we start the segmented learning process
             if forward_segment_count != backward_segment_count:
-                start_learning_segment = math.max(segment_count - self.bptt_learning_range, 0);
+                start_learning_segment = max(segment_count - self.bptt_learning_range, 0);
             else:
                 start_learning_segment = 0;
 
