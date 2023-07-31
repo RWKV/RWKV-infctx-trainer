@@ -1,0 +1,43 @@
+###############################################
+##
+## Trainer settings are kept minimal
+## with checkpoint / model saving disabled,
+## as this tutorial focuses only on datasets
+## 
+## It only runs 10 steps, enough to prove that
+## the dataset configs are valid
+##
+## See the full `config-example.yaml` for more
+## detailes on the trainer/model configs
+##
+###############################################
+
+trainer:
+  max_steps: 5
+model:
+  load_model: ../model/L6-D512-neox-init.pth
+  ctx_len: 1024
+  lr_init: 3e-4
+
+########################################
+## Training model settings
+########################################
+data:
+  # Directory where the fomratted HF dataset will be saved in
+  data_path: ../datapath/example-binidx/
+
+  # Source here points to the binidx file to use (withing the .bin / .idx suffix)
+  source: ../dataset/dataset-config/sample_data_text_document
+
+  # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer, 
+  # or 'binidx' for the old binidx formats
+  # If using a custom tokenizer, provide the tokenizer file path
+  # ---
+  tokenizer: binidx
+
+  # After loading the dataset, split out test data used for validation, 
+  # This process is skipped if the dataset includes a test split
+  # Test split normalizes to 1 datasample, if set to 0
+  test_split: 0
+  test_split_shuffle: false
+

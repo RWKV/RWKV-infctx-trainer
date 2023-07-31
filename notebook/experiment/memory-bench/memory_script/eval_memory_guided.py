@@ -82,6 +82,12 @@ with open(os.path.join(script_dir,'./eval_word_list.txt'), 'r') as f:
 
 # Open the CSV file, to write into
 if csv_file_path != None:
+    # Ensure parent dir is in place
+    csv_file_dir = os.path.dirname(csv_file_path)
+    if not os.path.exists(csv_file_dir):
+        os.makedirs(csv_file_dir)
+
+    # Open the CSV file
     import csv
     csv_file_handle = open(csv_file_path, 'w', newline='')
     csv_writer = csv.writer(csv_file_handle)

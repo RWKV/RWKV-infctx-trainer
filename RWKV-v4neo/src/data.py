@@ -1,12 +1,20 @@
 from lightning import LightningDataModule
 
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 
 import wandb
-from datasets import load_from_disk, load_dataset
-from transformers import PreTrainedTokenizerFast
+from datasets import load_from_disk, load_dataset, Dataset
+from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
 num_cpus = cpu_count()
+
+# Get the script directory
+import os
+SRC_DIR = os.path.dirname(os.path.realpath(__file__))
+
+# World tokenizer
+from .dataflow.trie_tokenizer import MT_TRIE_TOKENIZER
+import numpy as np
 
 # We have to extract out the prepare function to be "outside the class"
 # else it will not be hashed / serialized properly, and will produce the following error:
@@ -20,8 +28,50 @@ def prepare_data_static(**kargs):
     if kargs["source"] is not None:
         if kargs["tokenizer"] is None:
             raise ValueError('Tokenizer must be specified if source is specified')
+        
+        # Special handling for binidx
+        #--------------------------------
 
-        # Setup the basic load_dataset params
+        if kargs["tokenizer"] == "binidx":
+            from .dataflow.binidx import MMapIndexedDataset
+
+            # Load the MMapIndexedDataset from the source path
+            mmap_dataset = MMapIndexedDataset(kargs["source"])
+            mmap_dataset_len = mmap_dataset.__len__()
+
+            # Torch dataset generator wrapper
+            def gen():
+                for idx in range(mmap_dataset_len):
+                    # cast to supported types, note that np.int32 limit is 2,147,483,647 
+                    # - so unless we have a tokenizer that exceeds this, it should be ok
+                    tokens = np.array(mmap_dataset.get(idx), dtype=np.int32)
+                    yield {
+                        'input_ids': tokens,
+                        'token_type_ids': [0] * len(tokens),
+                        'attention_mask': [1] * len(tokens)
+                    }
+
+            # Load the huggingface dataset from the generator
+            src_dataset = Dataset.from_generator(gen)
+
+            # Train/test split
+            test_split = kargs["test_split"]
+            # The minimum test size is 1, if not we will get errors in the trainer?
+            if test_split <= 0 or test_split <= 0.0:
+                test_split = 1
+            split_dataset = src_dataset.train_test_split(
+                test_size=test_split,shuffle=kargs["test_split_shuffle"],
+                seed=42 #Fixed seed, to prevent train/test reshuffling between test runs
+            )
+
+            # Save the dataset to disk
+            split_dataset.save_to_disk(kargs["data_path"])
+            # Does nothing else (done)
+            return
+
+        # Reverting back to general purpose HF dataset / tokenizer handling
+        #--------------------------------
+
         load_dataset_params = {
             'path': kargs["source"],
             'num_proc': num_cpus
@@ -34,27 +84,82 @@ def prepare_data_static(**kargs):
         # Load the dataset
         src_dataset = load_dataset(**load_dataset_params)
 
-        # Load the tokenizer
-        # according to either its predefined name or its path
+        # Tokenizer vars
+        hf_tokenizer = None
+        world_tokenizer = None
+        world_encoder = None
+
+        # Load the tokenizer according to either its predefined name or its path
         # (defaults to neox)
         if kargs["tokenizer"] == "neox":
-            tokenizer_file = "./20B_tokenizer.json"
-            tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
+            tokenizer_file = os.path.join(SRC_DIR, "./dataflow/20B_tokenizer.json")
+            hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
         elif kargs["tokenizer"] == "world":
-            raise NotImplementedError("World tokenizer not implemented yet")
+            # Setup the tokenizer
+            world_tokenizer = MT_TRIE_TOKENIZER(os.path.join(SRC_DIR, "./dataflow/rwkv_vocab_v20230424.txt"))
         else:
-            tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer)
+            # AutoTokenizer
+            tokenizerName = kargs["tokenizer"]
 
+            # with custom args and props
+            tokenizerKWArgs = {}
+            tokenizerProps = {}
+            if kargs["autoTokenizer"] is not None:
+                if kargs["autoTokenizer"]["kwargs"] is not None:
+                    tokenizerKWArgs = kargs["autoTokenizer"]["kwargs"]
+                if kargs["autoTokenizer"]["props"] is not None:
+                    tokenizerProps  = kargs["autoTokenizer"]["props"]
+
+            # Intialize the tokenizer, with kwargs
+            hf_tokenizer = AutoTokenizer.from_pretrained(tokenizerName, **tokenizerKWArgs)
+
+            # Configure the tokenizer properties
+            for k, v in tokenizerProps.items():
+                setattr(hf_tokenizer, k, v)
+
+        # Function used to tokenize the dataset as per HF tokenizer format
+        # if given the textual data, it will return the tokenized data
+        def encodeTokens(x):
+            if world_tokenizer is not None:
+                # If x is an array of strings, we encode them seperately, and conslidate the result
+                if isinstance(x, list):
+                    id_arr = []
+                    type_arr = []
+                    mask_arr = []
+                    for i in range(len(x)):
+                        enc_str = world_tokenizer.encode(x[i])
+                        id_arr.append(enc_str)
+                        type_arr.append([0] * len(enc_str))
+                        mask_arr.append([1] * len(enc_str))
+
+                    # Consolidate the result
+                    return {
+                        'input_ids': id_arr,
+                        'token_type_ids': type_arr,
+                        'attention_mask': mask_arr
+                    }
+                
+                # Else we encode the string and return it following the HF tokenizer format
+                enc_str = world_tokenizer.encode(x)
+                return {
+                    'input_ids': enc_str,
+                    'token_type_ids': [0] * len(enc_str),
+                    'attention_mask': [1] * len(enc_str)
+                }
+
+            # We use the HF tokenizer as it is, and get the input_ids
+            return hf_tokenizer(x)
+        
         # Multi column merging default values setup
         if kargs["multi_column_keys"] is None:
             multi_column_keys = ['instruction', 'input', 'output']
             multi_column_prefix = ['Instruction:\n', 'Input:\n', 'Output:\n']
-            multi_column_masking = [True, True, False]
+            multi_column_train_mask = [True, False, True]
             multi_column_separator = '\n\n'
         else:
             multi_column_keys = kargs["multi_column_keys"]
             multi_column_prefix = kargs["multi_column_prefix"]
-            multi_column_masking = kargs["multi_column_masking"]
+            multi_column_train_mask = kargs["multi_column_train_mask"]
             multi_column_separator = kargs["multi_column_separator"]
         
         # Tokenized encodings for multi column keys
@@ -65,15 +170,15 @@ def prepare_data_static(**kargs):
         # Process the multi column settings
         if multi_column_enabled:
             # Check if the multi column keys lengths are valid (only if it is enabled)
-            if len(multi_column_keys) != len(multi_column_prefix) or len(multi_column_keys) != len(multi_column_masking):
+            if len(multi_column_keys) != len(multi_column_prefix) or len(multi_column_keys) != len(multi_column_train_mask):
                 raise ValueError('Multi column keys, prefix and masking must be the same length')
             # Tokenize the multi column strings
             for i in range(len(multi_column_keys)):
-                multi_column_prefix_encodings.append(tokenizer(multi_column_prefix[i]))
+                multi_column_prefix_encodings.append(encodeTokens(multi_column_prefix[i]))
             # Tokenize the multi column separator
             if multi_column_separator is not None and len(multi_column_separator) > 0:
-                multi_column_separator_encodings = tokenizer(multi_column_separator)
-        
+                multi_column_separator_encodings = encodeTokens(multi_column_separator)
+
         # Maps the dataset record to the tokenized result
         # handles a wide variety of format according to the data configuration
         #
@@ -89,7 +194,7 @@ def prepare_data_static(**kargs):
             # Custom text column support
             if kargs["custom_text_key"] is not None:
                 if kargs["custom_text_key"] in x:
-                    return tokenizer(x[kargs["custom_text_key"]])
+                    return encodeTokens(x[kargs["custom_text_key"]])
                 
             # Multi column merging support
             if multi_column_enabled:
@@ -125,17 +230,17 @@ def prepare_data_static(**kargs):
                             attention_mask += multi_column_prefix_encodings[i]['attention_mask']
 
                             # Tokenize the column
-                            column_encodings = tokenizer(x[multi_column_keys[i]])
+                            column_encodings = encodeTokens(x[multi_column_keys[i]])
 
                             # Add the column
                             input_ids += column_encodings['input_ids']
                             token_type_ids += column_encodings['token_type_ids']
 
                             # Override the attention mask if masking is enabled
-                            if multi_column_masking[i]:
+                            if multi_column_train_mask[i]:
                                 attention_mask += ([1] * len(column_encodings['input_ids']))
                             else:
-                                attention_mask += column_encodings['attention_mask']
+                                attention_mask += ([0] * len(column_encodings['input_ids']))
                     
                     # Return the merged columns
                     return {
@@ -153,15 +258,15 @@ def prepare_data_static(**kargs):
 
                 # Tokenize both prompt and completion
                 # Note that the tokenizer will process and return the input_ids in batches
-                prompt_encodings = tokenizer(x['prompt'])
-                completion_encodings = tokenizer(x['completion'])
+                prompt_encodings = encodeTokens(x['prompt'])
+                completion_encodings = encodeTokens(x['completion'])
 
                 # Join the two input_ids lists
                 input_ids = prompt_encodings['input_ids'] + completion_encodings['input_ids']
                 # Join the two token_type_ids lists
                 token_type_ids = prompt_encodings['token_type_ids'] + completion_encodings['token_type_ids']
                 # Setup the attention mask, 0 for prompt, 1 for completion, if masking is enabled
-                if kargs["disable_prompt_mask"]:
+                if kargs["disable_prompt_completion_mask"]:
                     attention_mask = ([1] * len(prompt_encodings['input_ids']) + [1] * len(completion_encodings['input_ids']))
                 else:
                     attention_mask = ([0] * len(prompt_encodings['input_ids']) + [1] * len(completion_encodings['input_ids']))
@@ -175,7 +280,7 @@ def prepare_data_static(**kargs):
             
             # Fallback to standard text tokenization
             if 'text' in x:
-                return tokenizer(x['text'])
+                return encodeTokens(x['text'])
             
             raise ValueError('Invalid dataset format, must contain either the configured "multi column" or prompt/completion or text')
 
@@ -189,7 +294,7 @@ def prepare_data_static(**kargs):
         src_dataset = src_dataset.remove_columns(list(dataset_features_to_remove.keys()))
         
         # Get the newline token
-        newline_tokenSet = tokenizer(["\n"])
+        newline_tokenSet = encodeTokens(["\n"])
 
         # See if rechunking is needed, this is useful mostly for "text" based datasets
         # where we would need to split them into "digestable" context length sizes 
@@ -270,7 +375,14 @@ def prepare_data_static(**kargs):
         # Check if the dataset does not have a test split
         # and if so, perform the split
         if 'test' not in src_dataset.keys():
-            src_dataset = src_dataset['train'].train_test_split(test_size=kargs["test_split"],shuffle=kargs["test_split_shuffle"])
+            test_split = kargs["test_split"]
+            # The minimum test size is 1, if not we will get errors in the trainer?
+            if test_split <= 0 or test_split <= 0.0:
+                test_split = 1
+            src_dataset = src_dataset['train'].train_test_split(
+                test_size=test_split,shuffle=kargs["test_split_shuffle"],
+                seed=42 #Fixed seed, to prevent train/test reshuffling between test runs
+            )
         
         # Save the dataset to disk
         src_dataset.save_to_disk(kargs["data_path"])
@@ -288,11 +400,14 @@ class RWKVDataModule(LightningDataModule):
         # Test split of source data, if it was not already done
         test_split: float = 0.1,
         test_split_shuffle: bool = False,
-        # Custom tokenizer settings
-        tokenizer: str = "neox",
         # Text rechunking size
         text_rechunk_size: int = 4096,
         text_rechunk_force: bool = False,
+        # ---
+        # Tokenizer settings
+        # ---
+        tokenizer: str = "neox",
+        autoTokenizer = None,
         # ---
         # HF dataset conversion helpers
         # ---
@@ -307,10 +422,10 @@ class RWKVDataModule(LightningDataModule):
         # and need to be merged
         multi_column_keys: list = None,
         multi_column_prefix: list = None,
-        multi_column_masking: list = None,
+        multi_column_train_mask: list = None,
         multi_column_separator: str = None,
         # prompt/completion format masking support
-        disable_prompt_mask: bool = False
+        disable_prompt_completion_mask: bool = False
     ):
         # Capture the init parameters
         self._init_locals = locals()

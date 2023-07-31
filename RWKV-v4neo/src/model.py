@@ -24,15 +24,9 @@ import wandb
 
 from torch.utils.cpp_extension import load
 
-########################################################################################################
-# Enable / Disable lightning module code, we use the model directly as an nn.Module, for inference
-########################################################################################################
-
-RWKV_USE_NN_MODULE = os.getenv("RWKV_USE_NN_MODULE", "0").lower() in ("1", "true", "yes")
-if RWKV_USE_NN_MODULE:
-    RWKV_MAIN_MODULE=nn.Module
-else:
-    RWKV_MAIN_MODULE=L.LightningModule
+# Script dir for various files
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+CUDA_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../cuda"))
 
 ########################################################################################################
 # JIT / torch compile special handling
@@ -41,8 +35,9 @@ else:
 # Currently the features we need for torch compile, is avaliable only in
 # 2.1 nightly build (and is expected to be in 2.1 official release)
 #
-# We only enable torch compile, if we either the user has explicitly
-# set it, or we detect that we are running on a 2.1+ build automatically
+# However because the nightly build torch.compile behaviour has been unstable
+# the versioning code to check for enabling toch compile will not be used, 
+# until we confirm a stable version of torch.compile
 from packaging import version
 def is_torch_version_above(required_version):
     torch_version = version.parse(torch.__version__.split('+')[0])
@@ -51,7 +46,7 @@ IS_TORCH_2_1 = is_torch_version_above("2.0.9999")
 
 # Get the JIT / torch compile option flags from the environment
 RWKV_JIT_ON        = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
-RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", f"{IS_TORCH_2_1}").lower() in ("1", "true", "yes")
+RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
 RWKV_TORCH_RUN_MODE = None
 
 # We enable JITMod*/Function when supporting torch.jit
@@ -254,6 +249,13 @@ class RWKV_TimeMix(JITModClass):
 
         sr = torch.sigmoid(r)
 
+        # Enforce bf16 type for kv, as this can be mis init
+        # when being called directly via inference
+        if k.dtype != torch.bfloat16:
+            k = k.to(torch.bfloat16)
+        if v.dtype != torch.bfloat16:
+            v = v.to(torch.bfloat16)
+
         return k, v, sr
 
     @JITModMethod
@@ -265,6 +267,13 @@ class RWKV_TimeMix(JITModClass):
     @TCompileBaseline
     def forward(self, x, last_state: TimeMixState):
         k, v, sr = self._forward_kvsr(x, last_state)
+
+        # Enforce bf16 for self.time_first
+        # as this can be mis init when being called directly via inference
+        if self.time_first.dtype != torch.bfloat16:
+            self.time_first = self.time_first.to(torch.bfloat16)
+
+        # Perform the WKV op via cuda code
         y, new_wkv_state = wkv_op(self.time_decay, self.time_first,
                                   k, v, last_state.wkv_state)
         return self._forward_out(sr, y, x[:, -1], new_wkv_state)
@@ -379,23 +388,21 @@ class L2Wrap(torch.autograd.Function):
 ########################################################################################################
 # Core RWKV module
 ########################################################################################################
-class RWKV(RWKV_MAIN_MODULE):
+class RWKV(L.LightningModule):
 
     def __init__(self,
-                 ctx_len: int,
-                 n_embd: int,
-                 n_layer: int,
-                 vocab_size: int,
                  # Model file path to load from
-                 load_model: Optional[str] = None,
+                 load_model: str,
+                 # Model size settings, which we either
+                 # "auto detect", or use the user specified settings
+                 n_embd: int = -1,
+                 n_layer: int = -1,
+                 vocab_size: int = -1,
+                 # Context length size for the model
+                 ctx_len: int = 2048,
                  # Context length schedule
                  ctx_len_cutoffs: List[int] = [],
                  ctx_len_warmup_steps: List[int] = [],
-                 # Alternative to lr_init / lr_final
-                 # that is multiplied by the gradient_accumulation_steps
-                 # to get the actual learning rate
-                 target_lr_init: float = -1.0,
-                 target_lr_final: float = -1.0,
                  # Learning rate schedule
                  # use only target_lr_init / lr_init
                  # to configure a constant learning rate
@@ -428,9 +435,42 @@ class RWKV(RWKV_MAIN_MODULE):
         del self.setup_args["self"]
         del self.setup_args["__class__"]
 
-        # Setup the model
+        # Setup the parent class
         super().__init__()
 
+        # Load the model, unless its the special ".//<#|=@%!$init_model$!%@=|#>//." path
+        # which is reserved to be used with the `init_model.py`
+        #
+        # We intentionally used several filesystem illegal characters, to ensure it
+        # is not accidentally used by the user for a real file
+        model_weights = None
+        model_keys = None
+        if load_model != ".//<#|=@%!$init_model$!%@=|#>//.":
+            # Check if the load_model path exists, and is a file
+            if not os.path.isfile(load_model):
+                raise ValueError(f"load_model file '{load_model}' does not exist")
+
+            # Load the model weights
+            model_weights = torch.load(load_model, map_location='cpu')
+
+            # Get the model keys
+            model_keys = list(model_weights.keys())
+
+        # Lets compute the model various sizes, if they are not provided
+        if n_layer < 0:
+            max_block_id = 0
+            for x in model_keys:
+                if 'blocks.' in x:
+                    block_id = int(x.split('.')[1])
+                    max_block_id = max(max_block_id, block_id)
+            n_layer = max_block_id + 1
+
+        if n_embd < 0:
+            n_embd = model_weights['head.weight'].shape[1]
+        
+        if vocab_size < 0:
+            vocab_size = model_weights['head.weight'].shape[0]
+        
         # Save the various other params for later
         self.ctx_len = ctx_len
         self.ctx_len_cutoffs = ctx_len_cutoffs
@@ -439,8 +479,6 @@ class RWKV(RWKV_MAIN_MODULE):
         self.n_layer = n_layer
         self.layerwise_lr = layerwise_lr
         self.grad_cp = grad_cp
-        self.target_lr_init = target_lr_init
-        self.target_lr_final = target_lr_final
         self.lr_init = lr_init
         self.lr_final = lr_final
         self.lr_period = lr_period
@@ -465,7 +503,10 @@ class RWKV(RWKV_MAIN_MODULE):
         self.emb = nn.Embedding(vocab_size, n_embd)
 
         load(name=f"wkv_{self.ctx_len}_bf16",
-             sources=["cuda/wkv_op_bf16.cpp", "cuda/wkv_cuda_bf16.cu"],
+             sources=[
+                os.path.join(CUDA_DIR, "wkv_op_bf16.cpp"),
+                os.path.join(CUDA_DIR, "wkv_cuda_bf16.cu")
+            ],
              verbose=True,
              extra_cflags=["-std=c++17", "-O3", f"-DTmax={self.ctx_len}"],
              extra_cuda_cflags=[
@@ -482,7 +523,11 @@ class RWKV(RWKV_MAIN_MODULE):
         self.ln_out = nn.LayerNorm(n_embd)
         self.head = nn.Linear(n_embd, vocab_size, bias=False)
 
-        self.load_state_dict(torch.load(load_model, map_location='cpu'))
+        # load the state, and GC the original cpu copy
+        if model_weights != None:
+            self.load_state_dict(model_weights)
+            del model_weights
+            gc.collect()
 
     def configure_optimizers(self):
         if self.bptt_learning == False:
@@ -500,29 +545,16 @@ class RWKV(RWKV_MAIN_MODULE):
         # Get the learning rate used for the optimizer
         lr_init = self.lr_init
         lr_final = self.lr_final
-        target_lr_init = self.target_lr_init
-        target_lr_final = self.target_lr_final
-
-        assert not (target_lr_init <= 0.0 and lr_init <= 0.0), f"Either 'target_lr_init' ({target_lr_init})  or 'lr_init' ({lr_init}) must be specified"
-        assert not (target_lr_init > 0.0 and lr_init >= 0.0), f"Use either 'target_lr_init'  ({target_lr_init}) or 'lr_init' ({lr_init})"
-        
-        if target_lr_init > 0.0:
-            assert self.trainer.target_batch_size > 0, "'target_batch_size' must be specified in the trainer, when using 'target_lr_init'"
-            lr_init = target_lr_init * self.trainer.accumulate_grad_batches / self.trainer.target_batch_size
-        if target_lr_final > 0.0:
-            assert self.trainer.target_batch_size > 0, "'target_batch_size' must be specified in the trainer, when using 'target_lr_final'"
-            lr_final = target_lr_final * self.trainer.accumulate_grad_batches / self.trainer.target_batch_size
-
         # If the final learning rate is not specified, use the initial learning rate
         if lr_final < 0:
             lr_final = self.lr_init
 
         # Log the learning rate, and various other parameters
         if self.trainer.local_rank == 0:
-            start_lr_e = "{:.3e}".format(lr_init)
+            lr_init_e = "{:.3e}".format(lr_init)
             lr_final_e = "{:.3e}".format(lr_final)
             print(f"\n[RWKV.model] Configuring optimizer with\n"+
-                  f"    - lr_init:  {start_lr_e} ({lr_init})\n"+
+                  f"    - lr_init:  {lr_init_e} ({lr_init})\n"+
                   f"    - lr_final: {lr_final_e} ({lr_final})\n")
 
             # Get the setup args
@@ -723,6 +755,7 @@ class RWKV(RWKV_MAIN_MODULE):
         new_states = BlockStateList.empty(self.n_layer, B, self.n_embd,
                                           x.device, x.dtype)
         
+        # last_shift_states can be None, when we are performing direct inference
         if last_shift_states is None:
             cur_bs_list = BlockStateList.empty(
                 self.n_layer, B,
@@ -909,12 +942,6 @@ class RWKV(RWKV_MAIN_MODULE):
             # (this only applies for segmented learning)
             segment_size = min(math.ceil(T / segment_count), self.ctx_len)
 
-            # We compute when we start the segmented learning process
-            if self.bptt_learning_range > 0:
-                first_learning_segment = segment_count - self.bptt_learning_range;
-            else:
-                first_learning_segment = 0;
-
             # Dummy 2D tenros of shape [1,1], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
             dummy_2d_zero = torch.tensor([[0]], dtype=torch.long, device=cur_device)
 
@@ -936,15 +963,41 @@ class RWKV(RWKV_MAIN_MODULE):
             # Combined, this makes this issue very hard to trace and debug, as it will manifest itself as randomly "freezing"
             # when out of sync during `self.manual_backward()` calls. Without the current work around put in place
             #
-            # We only do this, if we are doing bptt learning on more then 1 segment, and gpu count > 1
+            # We only do this, if we are doing bptt learning on all segments (-1), and gpu count > 1
             # otherwise we just use the segment count as it is
-            if self.trainer.num_devices > 1 and (self.bptt_learning_range > 1 or self.bptt_learning_range <= 0):
-                shared_segment_count = self.trainer.getFabric().all_reduce(segment_count, reduce_op="max").item()
+            if self.trainer.num_devices > 1:
+                if self.bptt_learning_range <= 0:
+                    # We perform forward/backward on the shared max segment count across all GPUs
+                    forward_segment_count  = self.trainer.strategy.reduce(segment_count, reduce_op="max").item()
+                    backward_segment_count = forward_segment_count
+                else:
+                    # We perform as many forward pass as we need to be equal or more then bptt_learning_range
+                    # and perform an equal amount of backward pass
+                    forward_segment_count  = max(segment_count, self.bptt_learning_range)
+                    backward_segment_count = self.bptt_learning_range
             else:
-                shared_segment_count = segment_count
+                if self.bptt_learning_range <= 0:
+                    # Since we do not need to sync GPUs here, we perform as much forward as we exactly need
+                    forward_segment_count  = segment_count
+                    backward_segment_count = forward_segment_count
+                else:
+                    # We clamp the backward segment count to the forward count, and bptt_learning_range
+                    forward_segment_count  = segment_count
+                    backward_segment_count = min(self.bptt_learning_range, segment_count)
 
-            # Lets go through all the segments (including dummy ones)
-            for i in range(shared_segment_count):
+            # We compute when we start the segmented learning process
+            if forward_segment_count != backward_segment_count:
+                start_learning_segment = max(segment_count - self.bptt_learning_range, 0);
+            else:
+                start_learning_segment = 0;
+
+            # Segment loss array to track (and reduce later)
+            # of size equal to forward_segment_count
+            segment_loss_arr = [0] * forward_segment_count
+
+            # Lets go through and forward all the segments 
+            # (including dummy ones)
+            for i in range(forward_segment_count):
                 # Apply state truncation, if truncated learning is enabled
                 # this limits the backprop process, reduces loss learning rate, 
                 # but save vram across extreamly large backpropagation steps
@@ -977,16 +1030,25 @@ class RWKV(RWKV_MAIN_MODULE):
                     steps,
                 )
                 states = BlockStateList(new_shift_states, new_wkv_states)
+
+                # Keep the sgment loss
+                segment_loss_arr[i] = segment_loss
                 
+            # Lets backpass the respective segments, from the back
+            # (including dummy ones)
+            for i in range(forward_segment_count-1, -1, -1):
+                # Get the segment loss
+                segment_loss = segment_loss_arr[i]
+
                 # Compute the backward pass for the segment
-                if i >= first_learning_segment:
+                if i >= start_learning_segment and i < start_learning_segment + backward_segment_count:
                     # The learning loss, should be normalized against the accumulation steps
                     # as we are bypassing the pytorch lightning normalization
                     # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
                     learning_loss = segment_loss / gradient_accumulation_steps
 
-                    # Perform the backward pass accordingly
-                    if i < shared_segment_count-1:
+                    # Perform the backward pass accordingly, for valid segments (besides the start_learning_segment)
+                    if i > start_learning_segment:
                         # Undocumented multiple backward pass support
                         # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
                         self.manual_backward(learning_loss, optimizer, retain_graph=True)
@@ -994,11 +1056,11 @@ class RWKV(RWKV_MAIN_MODULE):
                         # Accumulate without gradient, as we already did the backward pass
                         total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
                     else:
-                        # This is the last pass, we let the default pytorch lightning handle the backward pass
+                        # This is the last backward pass, we let the default pytorch lightning handle the backward pass
                         # and return the segment loss as part of the total loss
                         total_loss = total_loss + segment_loss
                 else:
-                    # Even if its not the segments we use for backward pass, we need to accumulate the loss
+                    # Even if its not the segments we use for backward pass, we still need to accumulate the loss
                     total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
 
                 # GC collect unused memory
@@ -1071,3 +1133,202 @@ class RWKV(RWKV_MAIN_MODULE):
         total_loss = self.compute_loss(batch, batch_idx, False)
         self.log('validation/loss', total_loss, prog_bar=True, sync_dist=True)
         return total_loss
+
+########################################################################################################
+# SimpleRWKV, a wrapper for RWKV that allows for simple usage of the model
+########################################################################################################
+
+# SimpleRWKV specific imports
+from transformers import PreTrainedTokenizerFast
+
+# Current script dir
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+SCRIPT_PARENT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '../'))
+
+# SimpleRWKV is a wrapper for RWKV that allows for simple usage of the model
+#
+# it is not meant to be highly performant, but rather a simple minimal way to run the RWKV trainer module
+# in inference mode, and can be used to validate the model trainer code / its changes
+class SimpleRWKV():
+
+    def __init__(
+            self,
+            model_path: str,
+            ctx_len:int = 1024,
+            device:str = "cuda",
+            dtype:str = "fp32",
+            tokenizer = "neox",
+        ):
+
+        # Device type must be cuda, cpu type is not supported (yet?)
+        if device != "cuda":
+            raise NotImplementedError("Only cuda device is supported (for now)")
+        # Log the mismatch dtype
+        if dtype != "fp32":
+            print("[SimpleRWKV] Warning: dtype mismatch, only fp32 is supported (for now)")
+
+        # Setup the tokenizer
+        if tokenizer == "neox":
+            tokenizer_file = os.path.join(SCRIPT_DIR,"./dataflow/20B_tokenizer.json")
+            tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
+            vocab_size = 50277
+        else:
+            raise NotImplementedError("Only pile tokenizer is supported")
+        self.fastTokenizer = tokenizer
+
+        # Prepare the model config with the model path, and custom torch load
+        model_config = {}
+        model_config["load_model"] = model_path
+        model_config["ctx_len"] = ctx_len
+
+        # This feature depends on deepspeed
+        model_config["grad_cp"] = False
+        # model_config["_torch_load_state"] = loaded_state
+
+        # Save the config settings
+        self.ctx_len = ctx_len
+        self.device = device
+
+        # Lets actually load the model
+        self.model = RWKV(**model_config)
+
+        # Lets map it over to the respective device type
+        # and set it to run as eval/inference mode
+        self.model.to(device)
+        self.model.eval()
+
+    # Encoding strings
+    def encode(self, text: str):
+        return self.fastTokenizer.encode(text)
+
+    # Decoding strings
+    def decode(self, tokens: list):
+        return self.fastTokenizer.decode(tokens)
+
+    # Forwarding logic, withoout torch._no_grad() context
+    def _forward(
+            self, tokens:list, 
+            stateObj = None
+        ):
+
+        logits_arr = None
+        token_len = len(tokens)
+
+        # Get the shift/wkv state
+        if stateObj is None:
+            shift_states = None
+            wkv_states = None
+        else:
+            shift_states = stateObj["shift_states"]
+            wkv_states = stateObj["wkv_states"]
+        
+        # For each token, process the state, in batches up to ctx_len
+        for i in range(0, token_len, self.ctx_len):
+            # Get the tokens for this batch
+            batch_tokens = torch.tensor(
+                [tokens[i:i+self.ctx_len]], 
+                dtype=torch.long, 
+                device=self.device
+            )
+
+            # Compute the logits and state
+            logits_arr, shift_states, wkv_states = self.model.forward(
+                batch_tokens, shift_states, wkv_states
+            )
+
+        # Return the logits and state
+        return logits_arr[0][-1], { "shift_states": shift_states, "wkv_states": wkv_states }
+    
+    # Forwarding logic, with torch._no_grad() context
+    def forward(
+            self, tokens:list, 
+            stateObj = None
+        ):
+        with torch.no_grad():
+            return self._forward(tokens, stateObj)
+
+    # Sampling logits
+    def sample_logits(
+            self, logits, 
+            prv_tokens=[0], 
+            temperature=1.0, top_p=0.9,
+            token_ban: list = []
+            ):
+        # Apply token ban
+        for x in token_ban:
+            logits[x] = -float("Inf")
+
+        # Handle sampling with temperature
+        if temperature > 0.0:
+            probs = F.softmax(logits, dim=-1)
+            sorted_probs = torch.sort(probs, descending=True)[0]
+            cumulative_probs = torch.cumsum(sorted_probs, dim=-1).cpu().numpy()
+            cutoff = float(sorted_probs[np.argmax(cumulative_probs > top_p)])
+            probs[probs < cutoff] = 0
+            if temperature != 1.0:
+                probs = probs.pow(1.0 / temperature)
+            out = torch.multinomial(probs, num_samples=1)[0]
+            return out
+        else: 
+            # Since the tokenizer sample does not support temp==0
+            # we handle this case ourself, by fining the top token
+            return torch.argmax(logits, dim=-1).item()
+
+    # Completion API
+    def completion(self, 
+            prompt, 
+            max_tokens: int = 32,
+            temperature: float = 1.0,
+            top_p: float = 0.9,
+            token_ban: list = [],
+            start_state = None,
+            stream_to_stdout: bool = False,
+        ):
+        # Encode the context, if its a string
+        if isinstance(prompt, str):
+            enc = self.encode(prompt)
+        # Check if the prompt is a list of tokens
+        elif isinstance(prompt, list):
+            enc = prompt
+        else:
+            raise ValueError("Prompt must be a string or a list of tokens")
+
+        # Keep track of the logits and state
+        logits = None
+        stateObj = start_state
+
+        # For each token, process the state
+        logits, stateObj = self.forward(enc, stateObj)
+
+        # # Garbage collect
+        # gc.collect()
+        # torch.cuda.empty_cache()
+
+        # Generate each token
+        full_tokens = enc.copy()
+        out_tokens = []
+        for i in range(max_tokens):
+            ttt = self.sample_logits(
+                logits, prv_tokens=full_tokens,
+                temperature=temperature, top_p=top_p,
+                token_ban=token_ban
+            )
+            
+            # Append the token
+            out_tokens.append(ttt)
+            full_tokens.append(ttt)
+            if stream_to_stdout:
+                print(self.decode([ttt]), end="", flush=True)
+
+            # Perform the forward pass
+            logits, stateObj = self.forward([ttt], stateObj)
+
+        # Decode the tokens
+        out_str = self.decode(out_tokens)
+
+        # # Garbage collect
+        # gc.collect()
+        # torch.cuda.empty_cache()
+
+        # Return the output string, and state
+        return out_str, stateObj
