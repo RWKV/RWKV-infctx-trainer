@@ -530,7 +530,7 @@ class RWKV(L.LightningModule):
         # load the state, and GC the original cpu copy
         if model_weights != None:
             # Print the loading event
-            print(f"[RWKV.model]: Loading model weights")
+            print(f"[RWKV.model]: Loading model weights ( L{self.n_layer}-D{self.n_embd}-V{self.vocab_size} )")
 
             self.load_state_dict(model_weights)
             del model_weights
