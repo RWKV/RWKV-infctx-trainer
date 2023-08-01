@@ -438,6 +438,9 @@ class RWKV(L.LightningModule):
         # Setup the parent class
         super().__init__()
 
+        # Get the global rank
+        global_rank = self.global_rank
+
         # Load the model, unless its the special ".//<#|=@%!$init_model$!%@=|#>//." path
         # which is reserved to be used with the `init_model.py`
         #
@@ -446,6 +449,9 @@ class RWKV(L.LightningModule):
         model_weights = None
         model_keys = None
         if load_model != ".//<#|=@%!$init_model$!%@=|#>//.":
+            # Print the loading event
+            print(f"[RWKV.model][Rank {global_rank}]: Preloading model from '{load_model}'")
+
             # Check if the load_model path exists, and is a file
             if not os.path.isfile(load_model):
                 raise ValueError(f"load_model file '{load_model}' does not exist")
@@ -526,9 +532,14 @@ class RWKV(L.LightningModule):
 
         # load the state, and GC the original cpu copy
         if model_weights != None:
+            # Print the loading event
+            print(f"[RWKV.model][Rank {global_rank}]: Loading model weights")
+
             self.load_state_dict(model_weights)
             del model_weights
             gc.collect()
+
+        print(f"[RWKV.model][Rank {global_rank}]: Finished initial model load")
 
     def configure_optimizers(self):
         if self.bptt_learning == False:
