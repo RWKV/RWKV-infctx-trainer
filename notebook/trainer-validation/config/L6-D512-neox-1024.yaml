@@ -35,7 +35,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'infctx-validation-baseline (train-ctx=1024, data-ctx=1024, bs=10)'
+      name: 'L6-D512-neox (train-ctx=1024, data-ctx=1024, bs=10)'
       project: 'RWKV-infctx-validation'
       tags: ['RWKV', 'infctx']
       id: null

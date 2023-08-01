@@ -1,0 +1,31 @@
+###############################################
+##
+## Minimal config, to start the training process
+## on a single model, for 10 steps (on enwiki)
+##
+###############################################
+
+trainer:
+  max_steps: 10
+model:
+  load_model: ../model/L6-D512-world-init.pth
+  ctx_len: 512
+  lr_init: 3e-4
+
+########################################
+## Training data settings
+########################################
+data:
+
+  data_path: ../datapath/enwiki_10k_neox_1024/
+  source: "teven/enwiki_10k"
+  tokenizer: neox
+
+  min_token_size: 64
+  max_token_size: -1
+
+  text_rechunk_force: true
+  text_rechunk_size: 1024
+
+  test_split: 0.01
+  test_split_shuffle: false
