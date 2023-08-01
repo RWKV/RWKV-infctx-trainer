@@ -13,7 +13,7 @@ def cli_main():
         # Overwrite several trainer default configs
         trainer_defaults={
             "accelerator": "gpu",
-            "precision": "bf16",
+            "precision": "bf16-mixed",
             "strategy": "deepspeed_stage_2_offload",
         },
         seed_everything_default=True
