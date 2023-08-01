@@ -438,9 +438,6 @@ class RWKV(L.LightningModule):
         # Setup the parent class
         super().__init__()
 
-        # Get the global rank
-        global_rank = self.global_rank
-
         # Load the model, unless its the special ".//<#|=@%!$init_model$!%@=|#>//." path
         # which is reserved to be used with the `init_model.py`
         #
@@ -450,7 +447,7 @@ class RWKV(L.LightningModule):
         model_keys = None
         if load_model != ".//<#|=@%!$init_model$!%@=|#>//.":
             # Print the loading event
-            print(f"[RWKV.model][Rank {global_rank}]: Preloading model from '{load_model}'")
+            print(f"[RWKV.model]: Preloading model from '{load_model}'")
 
             # Check if the load_model path exists, and is a file
             if not os.path.isfile(load_model):
@@ -533,13 +530,13 @@ class RWKV(L.LightningModule):
         # load the state, and GC the original cpu copy
         if model_weights != None:
             # Print the loading event
-            print(f"[RWKV.model][Rank {global_rank}]: Loading model weights")
+            print(f"[RWKV.model]: Loading model weights")
 
             self.load_state_dict(model_weights)
             del model_weights
             gc.collect()
 
-        print(f"[RWKV.model][Rank {global_rank}]: Finished initial model load")
+        print(f"[RWKV.model]: Finished initial model load")
 
     def configure_optimizers(self):
         if self.bptt_learning == False:
@@ -554,6 +551,8 @@ class RWKV(L.LightningModule):
                     # (lazy to support this right now, since i have no idea if anyone has a use for it)
                     raise NotImplementedError("bptt_learning_range > 1 is not supported yet")
         
+        print(f"[RWKV.model][rank={self.trainer.local_rank}] Configuring optimizer ...")
+
         # Get the learning rate used for the optimizer
         lr_init = self.lr_init
         lr_final = self.lr_final
@@ -657,6 +656,7 @@ class RWKV(L.LightningModule):
                 warmup_num_steps=self.warmup_steps,
                 warmup_type='linear')
 
+            print(f"[RWKV.model][rank={self.trainer.local_rank}] Loaded optimizer (with warmup steps) ...")
             return {
                 'optimizer': optimizer,
                 'lr_scheduler': lr_scheduler,
@@ -699,6 +699,7 @@ class RWKV(L.LightningModule):
                 total_iters=lr_total_step
             )
 
+            print(f"[RWKV.model][rank={self.trainer.local_rank}] Loaded optimizer (linear schedule) ...")
             return {
                 'optimizer': optimizer,
                 'lr_scheduler': {
