@@ -1,5 +1,18 @@
-from lightning.pytorch.cli import LightningCLI
 import sys, os, yaml
+
+# Lets configure PYTORCH_CUDA_ALLOC_CONF to use `backend:cudaMallocAsync` 
+# unless backend is already configured, to optimize memory allocations.
+#
+# This has to be done before any torch related modules are imported
+#
+# See: https://pytorch.org/docs/stable/notes/cuda.html#environment-variables
+# ---
+PYTORCH_CUDA_ALLOC_CONF = os.environ.get('PYTORCH_CUDA_ALLOC_CONF', "")
+if len(PYTORCH_CUDA_ALLOC_CONF) > 0 and PYTORCH_CUDA_ALLOC_CONF.find("backend") == -1:
+    PYTORCH_CUDA_ALLOC_CONF = "backend:cudaMallocAsync," + PYTORCH_CUDA_ALLOC_CONF
+elif len(PYTORCH_CUDA_ALLOC_CONF) == 0:
+    PYTORCH_CUDA_ALLOC_CONF = "backend:cudaMallocAsync"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = PYTORCH_CUDA_ALLOC_CONF
 
 # We need to detect if deepspeed 3 is being used, either as defined
 # by the config file, or by the command line arguments. 
@@ -51,6 +64,9 @@ def disable_jit_if_deepspeed_3():
 # Perform the check
 disable_jit_if_deepspeed_3()
 
+# ---
+
+from lightning.pytorch.cli import LightningCLI
 from src.model import RWKV
 from src.data import RWKVDataModule
 from src.trainer import RWKVLightningTrainer
