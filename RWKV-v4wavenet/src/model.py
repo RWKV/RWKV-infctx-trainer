@@ -1259,9 +1259,9 @@ class SimpleRWKV():
 
         # Get the shift/wkv state
         if stateObj is None:
-            shift_states = None
             att_shift_states = None
             ffn_shift_states = None
+            wkv_states = None
         else:
             att_shift_states = stateObj["att_shift_states"]
             ffn_shift_states = stateObj["ffn_shift_states"]
