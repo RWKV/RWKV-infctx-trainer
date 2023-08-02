@@ -30,6 +30,8 @@ The following features are not yet supported (that may exist in [blinks original
 
 ## Environment setup
 
+> Note: There is a known issue with CUDA 12.0 and multi-gpu at this point of writing. Upgrade to CUDA 12.1 or 12.2 atleast Or downgrade to 11.8
+
 The following venv setup using conda, modify for your use case respectively
 ```bash
 # ninja-build is required for the new trainer
