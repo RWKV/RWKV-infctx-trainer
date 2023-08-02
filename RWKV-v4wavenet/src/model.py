@@ -1017,9 +1017,9 @@ class RWKV(L.LightningModule):
             else:
                 start_learning_segment = 0;
 
-            # Segment loss array to track (and reduce later)
-            # of size equal to forward_segment_count
-            segment_loss_arr = [0] * forward_segment_count
+            # # Segment loss array to track (and reduce later)
+            # # of size equal to forward_segment_count
+            # segment_loss_arr = [0] * forward_segment_count
 
             # Lets go through and forward all the segments 
             # (including dummy ones)
