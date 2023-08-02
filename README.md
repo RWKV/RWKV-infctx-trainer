@@ -1,3 +1,9 @@
+# RWKV-X-PLAYGROUND
+
+This is the infctx playground branch, for various highly experimental ideas for RWKV.
+
+IN NOT WAY IS THIS STABLE, OR MEANT TO BE USED DIRECTLY / SERIOUSLY. I CAN AND WILL BREAK THIS BRANCH AT WILL FOR AN EXPERIMENT.
+
 # RWKV Implementation for Infinite Context
 
 This branch contains my experimental attempts to achieve infinite context training in RWKV.
