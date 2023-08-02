@@ -64,8 +64,13 @@ def cli_main():
         # Overwrite several trainer default configs
         trainer_defaults={
             "accelerator": "gpu",
-            "precision": "bf16",
-            "strategy": "deepspeed_stage_2_offload",
+            "precision": "bf16-mixed",
+            "strategy": "deepspeed_stage_2_offload"
+
+            # num_sanity_val_steps is disabled, as they seem
+            # to hang during initial sanity check for unknown reasons
+            # for larger model sizes randomly on multi-gpus
+            "num_sanity_val_steps": 0
         },
         seed_everything_default=True
     )
