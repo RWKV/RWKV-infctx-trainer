@@ -24,8 +24,11 @@ def init_model(
     
     # Setup the RWKV model, with the special init_model str
     # this disable the loading of the init model file
-    model = RWKV(n_layer=layers, n_embd=embedding_size, vocab_size=vocab_size, 
-                 load_model=".//<#|=@%!$init_model$!%@=|#>//.")
+    model = RWKV(n_layer=layers, 
+                 n_embd=embedding_size, vocab_size=vocab_size, 
+                 load_model=".//<#|=@%!$init_model$!%@=|#>//.",
+                 ctx_len=1,
+                 )
     
     # Modified init code, from the original init code
     m = {}
