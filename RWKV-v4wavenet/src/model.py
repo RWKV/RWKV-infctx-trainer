@@ -158,9 +158,10 @@ class BlockState:
 
 class BlockStateList:
 
-    def __init__(self, shift_states, wkv_states):
+    def __init__(self, att_shift_states, ffn_shift_states, wkv_states):
         self.wkv_states = wkv_states
-        self.shift_states = shift_states
+        self.att_shift_states = att_shift_states
+        self.ffn_shift_states = ffn_shift_states
 
     # @ TCompileMax (no difference)
     @staticmethod
@@ -168,7 +169,8 @@ class BlockStateList:
         result = BlockStateList.empty(N, B, C, device, dtype)
         result.wkv_states[:] = 0
         result.wkv_states[:, :, :, -1] = -1e38
-        result.shift_states[:] = 0
+        result.att_shift_states[:] = 0
+        result.ffn_shift_states[:] = 0
         return result
 
     # @ TCompileMax (no difference)
@@ -177,18 +179,22 @@ class BlockStateList:
         wkv_states = torch.empty((N, B, C, 3),
                                  device=device,
                                  dtype=torch.float)
-        shift_states = torch.empty((N, 2, B, C), device=device, dtype=dtype)
-        return BlockStateList(shift_states, wkv_states)
+        
+        # @TODO : Make the state storage layer, configurable (instead of hard code 12 now)
+        att_shift_states = torch.empty((N, B, 2**12, C), device=device, dtype=dtype)
+        ffn_shift_states = torch.empty((N, B, 1, C), device=device, dtype=dtype)
+        return BlockStateList(att_shift_states, ffn_shift_states, wkv_states)
 
     def __getitem__(self, layer: int):
         return BlockState(
-            TimeMixState(self.shift_states[layer, 0], self.wkv_states[layer]),
-            ChannelMixState(self.shift_states[layer, 1]))
+            TimeMixState(self.att_shift_states[layer], self.wkv_states[layer]),
+            ChannelMixState(self.ffn_shift_states[layer]))
 
     def __setitem__(self, layer: int, state: BlockState):
-        self.shift_states[layer, 0] = state.time_mix_state.shift_state
+        # @TODO : Make the state storage layer, configurable (instead of hard code 12 now)
+        self.att_shift_states[layer] = state.time_mix_state.shift_state[:,-(2**12):,:]
         self.wkv_states[layer] = state.time_mix_state.wkv_state
-        self.shift_states[layer, 1] = state.channel_mix_state.shift_state
+        self.ffn_shift_states[layer] = state.channel_mix_state.shift_state
 
 ########################################################################################################
 # RWKV: RWKV Time-mix + RWKV Channel-mix
@@ -233,12 +239,17 @@ class RWKV_TimeMix(JITModClass):
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
 
+        shiftamount = pow(2,layer_id)
+        self.time_shift = nn.ZeroPad2d((0, 0, shiftamount, -shiftamount))
+
     @JITModMethod
     @TCompileMax
     def _forward_kvsr(self, x, last_state: TimeMixState):
         # Mix x with the previous timestep to produce xk, xv, xr
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
-                          dim=1)
+        xxx = torch.concat((last_state.shift_state, x), dim=1)
+        xxxx = self.time_shift(xxx)
+        xx = xxxx[:, -x.shape[1]:, :]
+
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
@@ -256,7 +267,7 @@ class RWKV_TimeMix(JITModClass):
         if v.dtype != torch.bfloat16:
             v = v.to(torch.bfloat16)
 
-        return k, v, sr
+        return k, v, sr, xxx
 
     @JITModMethod
     @TCompileMax
@@ -266,7 +277,7 @@ class RWKV_TimeMix(JITModClass):
     @JITModMethod
     @TCompileBaseline
     def forward(self, x, last_state: TimeMixState):
-        k, v, sr = self._forward_kvsr(x, last_state)
+        k, v, sr, xxx = self._forward_kvsr(x, last_state)
 
         # Enforce bf16 for self.time_first
         # as this can be mis init when being called directly via inference
@@ -276,7 +287,7 @@ class RWKV_TimeMix(JITModClass):
         # Perform the WKV op via cuda code
         y, new_wkv_state = wkv_op(self.time_decay, self.time_first,
                                   k, v, last_state.wkv_state)
-        return self._forward_out(sr, y, x[:, -1], new_wkv_state)
+        return self._forward_out(sr, y, xxx, new_wkv_state)
 
 
 ########################################################################################################
@@ -302,7 +313,7 @@ class RWKV_ChannelMix(JITModClass):
     @JITModMethod
     @TCompileMax
     def forward(self, x, last_state: ChannelMixState):
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
+        xx = torch.concat((last_state.shift_state, x[:, :-1]),
                           dim=1)
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
@@ -758,8 +769,8 @@ class RWKV(L.LightningModule):
         return -1
 
     @TCompileBaseline
-    def forward(self, idx: torch.Tensor, last_shift_states: torch.Tensor = None,
-                last_wkv_states: torch.Tensor = None):
+    def forward(self, idx: torch.Tensor, last_att_shift_states: torch.Tensor, 
+                last_ffn_shift_states: torch.Tensor, last_wkv_states: torch.Tensor):
         B, T = idx.size()
         assert T <= self.ctx_len, "Cannot forward, model ctx_len is exhausted."
 
@@ -769,14 +780,14 @@ class RWKV(L.LightningModule):
                                           x.device, x.dtype)
         
         # last_shift_states can be None, when we are performing direct inference
-        if last_shift_states is None:
+        if last_att_shift_states is None:
             cur_bs_list = BlockStateList.empty(
                 self.n_layer, B,
                 self.n_embd,
                 x.device, x.dtype
             )
         else:
-            cur_bs_list = BlockStateList(last_shift_states, last_wkv_states)
+            cur_bs_list = BlockStateList(last_att_shift_states, last_ffn_shift_states, last_wkv_states)
 
         # Avoid using the zip operation, as torch.compile throws an exception on it
         # with `zip not reconized as a valid function`
@@ -799,7 +810,7 @@ class RWKV(L.LightningModule):
 
         x = self.head(x)
 
-        return x, new_states.shift_states, new_states.wkv_states
+        return x, new_states.att_shift_states, new_states.ffn_shift_states, new_states.wkv_states
 
     #
     # Custom overwrite of manual_backwards operation, to skip the "manual_backwards"
@@ -893,10 +904,10 @@ class RWKV(L.LightningModule):
         if total_mask_sum == 0:
             return 0
         
-        def checkpointed_step(idx, targets, mask, prev_loss, last_shift_states,
+        def checkpointed_step(idx, targets, mask, prev_loss, last_att_shift_states, last_ffn_shift_states,
                               last_wkv_states, prev_steps):
-            logits, new_shift_states, new_wkv_states = self(
-                idx, last_shift_states, last_wkv_states)
+            logits, new_att_shift_states, new_ffn_shift_states, new_wkv_states = self(
+                idx, last_att_shift_states, last_ffn_shift_states, last_wkv_states)
             
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
                                     targets.view(-1),
@@ -909,7 +920,7 @@ class RWKV(L.LightningModule):
             loss = L2Wrap.apply(loss, logits, total_mask_sum, submask)
             new_steps = prev_steps + submask_sum
             new_loss = prev_loss + loss
-            return new_loss, new_shift_states, new_wkv_states, new_steps
+            return new_loss, new_att_shift_states, new_ffn_shift_states, new_wkv_states, new_steps
 
         total_loss = torch.tensor(
             0, dtype=self.emb.weight.dtype).requires_grad_()
@@ -1015,10 +1026,12 @@ class RWKV(L.LightningModule):
                 # this limits the backprop process, reduces loss learning rate, 
                 # but save vram across extreamly large backpropagation steps
                 if self.bptt_truncated_learning:
-                    prv_shift_states = states.shift_states.clone().detach().requires_grad_(False)
+                    prv_att_shift_states = states.att_shift_states.clone().detach().requires_grad_(False)
+                    prv_ffn_shift_states = states.ffn_shift_states.clone().detach().requires_grad_(False)
                     prv_wkv_states = states.wkv_states.clone().detach().requires_grad_(False)
                 else:
-                    prv_shift_states = states.shift_states
+                    prv_att_shift_states = states.att_shift_states
+                    prv_ffn_shift_states = states.ffn_shift_states
                     prv_wkv_states = states.wkv_states
                 
                 # We use a dummy masked token 0, to do additional dummy checkpoint/forward/backprop when needed
@@ -1033,16 +1046,17 @@ class RWKV(L.LightningModule):
                     cur_msk = dummy_2d_zero
 
                 # Segmented learning, applies the forward/pass over each chunk seperately
-                segment_loss, new_shift_states, new_wkv_states, steps = checkpointed_step(
+                segment_loss, new_att_shift_states, new_ffn_shift_states, new_wkv_states, steps = checkpointed_step(
                     cur_idx,
                     cur_tar,
                     cur_msk,
                     torch.tensor(0, dtype=self.emb.weight.dtype, device=cur_device).requires_grad_(True),
-                    prv_shift_states,
+                    prv_att_shift_states,
+                    prv_ffn_shift_states,
                     prv_wkv_states,
                     steps,
                 )
-                states = BlockStateList(new_shift_states, new_wkv_states)
+                states = BlockStateList(new_att_shift_states, new_ffn_shift_states, new_wkv_states)
 
                 # Keep the sgment loss
                 segment_loss_arr[i] = segment_loss
@@ -1085,28 +1099,29 @@ class RWKV(L.LightningModule):
             segment_size = self.ctx_len
             for i in range(segment_count):
                 if i < segment_count-1 and is_training_run:
-                    total_loss, new_shift_states, new_wkv_states, steps = deepspeed_checkpoint(
+                    total_loss, new_att_shift_states, new_ffn_shift_states, new_wkv_states, steps = deepspeed_checkpoint(
                         checkpointed_step,
                         idx[:, i * segment_size:(i + 1) * segment_size],
                         targets[:, i * segment_size:(i + 1) * segment_size],
                         seq_mask[:, i * segment_size:(i + 1) * segment_size],
                         total_loss,
-                        states.shift_states,
-                        states.wkv_states,
+                        states.att_shift_states,
+                        states.ffn_shift_states,
                         steps,
                     )
                 else:
-                    total_loss, new_shift_states, new_wkv_states, steps = checkpointed_step(
+                    total_loss, new_att_shift_states, new_ffn_shift_states, new_wkv_states, steps = checkpointed_step(
                         idx[:, i * segment_size:(i + 1) * segment_size],
                         targets[:, i * segment_size:(i + 1) * segment_size],
                         seq_mask[:, i * segment_size:(i + 1) * segment_size],
                         total_loss,
-                        states.shift_states,
+                        states.att_shift_states,
+                        states.ffn_shift_states,
                         states.wkv_states,
                         steps,
                     )
 
-                states = BlockStateList(new_shift_states, new_wkv_states)
+                states = BlockStateList(new_att_shift_states, new_ffn_shift_states, new_wkv_states)
                 gc.collect()
                 # torch.cuda.empty_cache()
 
@@ -1245,9 +1260,11 @@ class SimpleRWKV():
         # Get the shift/wkv state
         if stateObj is None:
             shift_states = None
-            wkv_states = None
+            att_shift_states = None
+            ffn_shift_states = None
         else:
-            shift_states = stateObj["shift_states"]
+            att_shift_states = stateObj["att_shift_states"]
+            ffn_shift_states = stateObj["ffn_shift_states"]
             wkv_states = stateObj["wkv_states"]
         
         # For each token, process the state, in batches up to ctx_len
@@ -1259,12 +1276,12 @@ class SimpleRWKV():
             ).unsqueeze(0)
             
             # Compute the logits and state
-            logits_arr, shift_states, wkv_states = self.model.forward(
-                batch_tokens, shift_states, wkv_states
+            logits_arr, att_shift_states, ffn_shift_states, wkv_states = self.model.forward(
+                batch_tokens, att_shift_states, ffn_shift_states, wkv_states
             )
 
         # Return the logits and state
-        return logits_arr[0][-1], { "shift_states": shift_states, "wkv_states": wkv_states }
+        return logits_arr[0][-1], { "att_shift_states": att_shift_states, "ffn_shift_states": ffn_shift_states, "wkv_states": wkv_states }
     
     # Forwarding logic, with torch._no_grad() context
     def forward(
