@@ -3,6 +3,7 @@
 This is the infctx playground branch, for various highly experimental ideas for RWKV.
 
 THIS BRANCH IS NOT STABLE, AND IS NOT MEANT TO BE USED DIRECTLY / SERIOUSLY. 
+
 I CAN AND WILL BREAK THIS BRANCH AT WILL FOR AN EXPERIMENT.
 
 For the official infctx branch, find it here : https://github.com/Blealtan/RWKV-LM-LoRA/tree/dev-infctx
