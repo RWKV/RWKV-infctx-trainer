@@ -8,6 +8,8 @@ I CAN AND WILL BREAK THIS BRANCH AT WILL FOR AN EXPERIMENT.
 
 For the official infctx branch, find it here : https://github.com/Blealtan/RWKV-LM-LoRA/tree/dev-infctx
 
+If you want the bleeding edge infctx branch from picocreator, find it here : https://github.com/PicoCreator/RWKV-LM-LoRA/tree/picocreator-dev-infctx
+
 ---
 
 # RWKV Implementation for Infinite Context
