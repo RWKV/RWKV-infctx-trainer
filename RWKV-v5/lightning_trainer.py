@@ -1,5 +1,19 @@
-from lightning.pytorch.cli import LightningCLI
 import sys, os, yaml
+
+# Lets configure PYTORCH_CUDA_ALLOC_CONF to use `backend:cudaMallocAsync` 
+# unless backend is already configured, to optimize memory allocations.
+#
+# This has to be done before any torch related modules are imported
+#
+# See: https://pytorch.org/docs/stable/notes/cuda.html#environment-variables
+# ---
+PYTORCH_CUDA_ALLOC_CONF = os.environ.get('PYTORCH_CUDA_ALLOC_CONF', "")
+if len(PYTORCH_CUDA_ALLOC_CONF) > 0 and PYTORCH_CUDA_ALLOC_CONF.find("backend") == -1:
+    PYTORCH_CUDA_ALLOC_CONF = "backend:cudaMallocAsync," + PYTORCH_CUDA_ALLOC_CONF
+elif len(PYTORCH_CUDA_ALLOC_CONF) == 0:
+    PYTORCH_CUDA_ALLOC_CONF = "backend:cudaMallocAsync"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = PYTORCH_CUDA_ALLOC_CONF
+print(f"[RWKV.lightning_trainer.py]: Running with PYTORCH_CUDA_ALLOC_CONF={PYTORCH_CUDA_ALLOC_CONF}")
 
 # We need to detect if deepspeed 3 is being used, either as defined
 # by the config file, or by the command line arguments. 
@@ -53,7 +67,7 @@ disable_jit_if_deepspeed_3()
 
 # ---
 
-# Load the respective RWKV module
+from lightning.pytorch.cli import LightningCLI
 from src.model import RWKV
 from src.data import RWKVDataModule
 from src.trainer import RWKVLightningTrainer
@@ -67,8 +81,13 @@ def cli_main():
         # Overwrite several trainer default configs
         trainer_defaults={
             "accelerator": "gpu",
-            "precision": "bf16",
+            "precision": "bf16-mixed",
             "strategy": "deepspeed_stage_2_offload",
+
+            # num_sanity_val_steps is disabled, as they seem
+            # to hang during initial sanity check for unknown reasons
+            # for larger model sizes randomly on multi-gpus
+            "num_sanity_val_steps": 0
         },
         seed_everything_default=True
     )
