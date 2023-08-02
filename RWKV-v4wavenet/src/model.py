@@ -1063,7 +1063,9 @@ class RWKV(L.LightningModule):
                 # # Keep the segment loss (for backpassing in reverse)
                 # segment_loss_arr[i] = segment_loss
 
-                # Perform the backward pass accordingly, for valid segments (besides the start_learning_segment)
+                # Perform the backward pass accordingly, for valid segments (besides the last segment)
+                # In this version, we do backward passes together the forward passes in the main segment loop
+                # Instead of after all segment losses are computed
                 if i >= start_learning_segment and i < start_learning_segment + backward_segment_count:
                     # The learning loss, should be normalized against the accumulation steps
                     # as we are bypassing the pytorch lightning normalization
@@ -1102,7 +1104,7 @@ class RWKV(L.LightningModule):
             #         # as we are bypassing the pytorch lightning normalization
             #         # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
             #         learning_loss = segment_loss / gradient_accumulation_steps
-
+            #
             #         # Perform the backward pass accordingly, for valid segments (besides the start_learning_segment)
             #         if i > start_learning_segment:
             #             # Undocumented multiple backward pass support
@@ -1118,10 +1120,10 @@ class RWKV(L.LightningModule):
             #     else:
             #         # Even if its not the segments we use for backward pass, we still need to accumulate the loss
             #         total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
-
-                # GC collect unused memory
-                gc.collect()
-                # torch.cuda.empty_cache()
+            #
+            #    # GC collect unused memory
+            #    gc.collect()
+            #    # torch.cuda.empty_cache()
         else:
 
             # Normal operations without BPTT
