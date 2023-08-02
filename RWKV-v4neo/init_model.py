@@ -27,8 +27,7 @@ def init_model(
     model = RWKV(n_layer=layers, 
                  n_embd=embedding_size, vocab_size=vocab_size, 
                  load_model=".//<#|=@%!$init_model$!%@=|#>//.",
-                 ctx_len=1,
-                 )
+                 ctx_len=1)
     
     # Modified init code, from the original init code
     m = {}
