@@ -66,6 +66,11 @@ def cli_main():
             "accelerator": "gpu",
             "precision": "bf16-mixed",
             "strategy": "deepspeed_stage_2_offload"
+
+            # num_sanity_val_steps is disabled, as they seem
+            # to hang during initial sanity check for unknown reasons
+            # for larger model sizes randomly on multi-gpus
+            "num_sanity_val_steps": 0
         },
         seed_everything_default=True
     )
