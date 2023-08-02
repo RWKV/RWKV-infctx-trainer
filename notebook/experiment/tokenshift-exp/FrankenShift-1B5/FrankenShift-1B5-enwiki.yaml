@@ -28,14 +28,14 @@ trainer:
 
   # Floating point precision for the model, because RWKV is built FOR bf16
   # you should pretty much never change this setting
-  precision: bf16
+  # precision: bf16
 
   # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
   # ---
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'FrankenShift-1B5 enwiki_100k foundation (train-ctx=4096)'
+      name: 'FrankenShift-1B5 enwiki_100k foundation (train-ctx=2048)'
       project: 'RWKV-5X-Experiments'
       tags: ['RWKV', 'RWKV-5X']
       id: null
@@ -185,7 +185,7 @@ model:
   # This allows the training of extreamly large context length (eg. 100k),
   # without eating up too much vram by keeping the training context length
   # to a resonable number sutible to the current GPU setup
-  ctx_len: 4096
+  ctx_len: 2048
 
   # Data samples would be cut down to the respective max ctx_len_cutoffs
   # values if its larger then ctx_len. If the data sample is larger then
