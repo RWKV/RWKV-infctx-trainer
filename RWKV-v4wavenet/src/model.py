@@ -193,8 +193,8 @@ class BlockStateList:
     def __setitem__(self, layer: int, state: BlockState):
         # @TODO : Make the state storage layer, configurable (instead of hard code 12 now)
         self.att_shift_states[layer] = state.time_mix_state.shift_state[:,-(2**12):,:]
-        self.wkv_states[layer] = state.time_mix_state.wkv_state
         self.ffn_shift_states[layer] = state.channel_mix_state.shift_state
+        self.wkv_states[layer] = state.time_mix_state.wkv_state
 
 ########################################################################################################
 # RWKV: RWKV Time-mix + RWKV Channel-mix
@@ -240,6 +240,8 @@ class RWKV_TimeMix(JITModClass):
         self.output = nn.Linear(dim_att, n_embd, bias=False)
 
         shiftamount = pow(2,layer_id)
+        if(shiftamount > 2048):
+            shiftamount = 1
         self.time_shift = nn.ZeroPad2d((0, 0, shiftamount, -shiftamount))
 
     @JITModMethod
