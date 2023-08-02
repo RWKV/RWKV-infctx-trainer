@@ -235,7 +235,7 @@ model:
   # (by skipping some syncronization code). Additionally, as bptt learning should not be triggering 
   # anyway as the data sample should be within ctx size 99% of the time
   bptt_learning: true
-  bptt_learning_range: 1
+  bptt_learning_range: -1
 
   # various other settings you probably should leave alone
   grad_cp: true
@@ -287,7 +287,7 @@ data:
   #
   # This is ignored, if set to -1
   min_token_size: -1
-  max_token_size: 4096
+  max_token_size: -1
 
   # Rechunking of text dataset, this is done only when source is set as 'text'
   # and will merge the various sentencees, into larger chunks up to the target size
