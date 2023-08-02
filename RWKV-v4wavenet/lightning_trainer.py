@@ -13,6 +13,7 @@ if len(PYTORCH_CUDA_ALLOC_CONF) > 0 and PYTORCH_CUDA_ALLOC_CONF.find("backend") 
 elif len(PYTORCH_CUDA_ALLOC_CONF) == 0:
     PYTORCH_CUDA_ALLOC_CONF = "backend:cudaMallocAsync"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = PYTORCH_CUDA_ALLOC_CONF
+print(f"[RWKV.lightning_trainer.py]: Running with PYTORCH_CUDA_ALLOC_CONF={PYTORCH_CUDA_ALLOC_CONF}")
 
 # We need to detect if deepspeed 3 is being used, either as defined
 # by the config file, or by the command line arguments. 
