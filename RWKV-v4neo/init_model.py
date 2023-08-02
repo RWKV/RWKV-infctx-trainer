@@ -5,7 +5,7 @@ from src.model import RWKV
 
 def init_model(
         layers, embedding_size, output_model_path, 
-        vocab_size=None, 
+        vocab_size=None, skip_if_exists=False
         # existing_model_path=None
         ):
     # Insert your own function behavior here
@@ -16,6 +16,11 @@ def init_model(
     print(f'Vocab size: {vocab_size}')
     # print(f'Existing model path: {existing_model_path}')
     print(f"---- ----- ----")
+
+    # Check if the model exists
+    if skip_if_exists and os.path.exists(output_model_path):
+        print(f"Model exists, skipping init_model")
+        return
 
     # Ensure the parent dir exists
     parent_dir = os.path.dirname(output_model_path)
@@ -83,6 +88,7 @@ def main():
     parser.add_argument('--n_layer', type=int, help='Number of layers')
     parser.add_argument('--n_embd',  type=int, help='Embedding size')
     parser.add_argument('--vocab_size', type=str, help="Vocab size for the model as an int, alternativey use 'neox' or 'world' if using their respective tokenizer", default="neox")
+    parser.add_argument('--skip-if-exists', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Skip the init if the model already exists')
 
     # (todo) implement in the future, to support model resizing
     # parser.add_argument('--existing_model_path', type=str, help='Existing model path', default=None)
@@ -101,7 +107,7 @@ def main():
         vocab_size = int(vocab_size)
 
     init_model(args.n_layer, args.n_embd, args.output_model_path, 
-              vocab_size) #, args.existing_model_path
+              vocab_size, args.skip_if_exists) #, args.existing_model_path
 
 if __name__ == "__main__":
     main()
