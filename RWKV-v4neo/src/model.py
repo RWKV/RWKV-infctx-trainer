@@ -546,10 +546,6 @@ class RWKV(L.LightningModule):
             if self.trainer.num_devices > 1:
                 if self.bptt_learning_range <= 0:
                     print("[WARNING]: unlimited bptt_learning_range across multiple GPU's has a performance penalty with datasets of mixed sizes due to its constant need to keep all GPU's in sync (consider using bptt_learning_range=1 instead)")
-                if self.bptt_learning_range > 1:
-                    # Temporary error, till better sync logic is done for mixed document sizes
-                    # (lazy to support this right now, since i have no idea if anyone has a use for it)
-                    raise NotImplementedError("bptt_learning_range > 1 is not supported yet")
         
         print(f"[RWKV.model][rank={self.trainer.local_rank}] Configuring optimizer ...")
 
