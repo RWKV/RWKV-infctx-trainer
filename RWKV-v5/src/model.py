@@ -168,8 +168,8 @@ class BlockStateList:
 
     # @ TCompileMax (no difference)
     @staticmethod
-    def create(N, B, C, device, dtype):
-        result = BlockStateList.empty(N, B, C, device, dtype)
+    def create(N, B, C, S, device, dtype):
+        result = BlockStateList.empty(N, B, C, S, device, dtype)
         result.wkv_states[:] = 0
         result.wkv_states[:, :, :, -1] = -1e38
         result.shift_states[:] = 0
@@ -177,8 +177,9 @@ class BlockStateList:
 
     # @ TCompileMax (no difference)
     @staticmethod
-    def empty(N, B, C, device, dtype):
-        wkv_states = torch.empty((N, B, C, 3),
+    def empty(N, B, C, S, device, dtype):
+        # HEAD nad HEADSIZE
+        wkv_states = torch.empty((N, B, 12, S, S),
                                  device=device,
                                  dtype=torch.float)
         shift_states = torch.empty((N, 2, B, C), device=device, dtype=dtype)
@@ -252,8 +253,8 @@ class RWKV_TimeMix(JITModClass):
     @JITModMethod
     def _forward_rkv_chunk(self, x, B, TT, last_state: TimeMixState):
         # Mix x with the previous timestep to produce xk, xv, xr
-        # xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
-        xx = self.time_shift(x)
+        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
+        # xx = self.time_shift(x)
 
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
@@ -306,14 +307,14 @@ class RWKV_TimeMix(JITModClass):
         B, H, TT, S = r.size()
         T = TT
 
-        s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
-        # s = last_state.wkv_state[:, :, :]
+        # s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
+        s = last_state.wkv_state
 
-        print("")
-        print("B,H,TT,S", B, H, TT, S)
-        print("S-zero", torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype).shape)
-        print("wkv", last_state.wkv_state[:, :, :].shape)
-        print("")
+        # print("")
+        # print("B,H,TT,S", B, H, TT, S)
+        # print("S-zero", torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype).shape)
+        # print("wkv", last_state.wkv_state[:, :, :].shape)
+        # print("")
         
         x = torch.zeros(B, H, TT, S, device=r.device, dtype=r.dtype) # output
 
@@ -331,8 +332,12 @@ class RWKV_TimeMix(JITModClass):
         x = x.transpose(1, 2).contiguous().view(B * TT, H*S) # BHTS -> BTHS -> BTC
         x = self.ln_x(x).view(B, TT, H*S)
 
-        # Return with logits outputs, and new timemix state
-        return self.output(x), TimeMixState(x_l, s[:, :, -1, :])
+        # # Return with logits outputs, and new timemix state
+        # print("")
+        # print("S-right", s.shape)
+        # print("n_layer, n_embd, layer_id", self.n_layer, self.n_embd, self.layer_id)
+        # print("")
+        return self.output(x), TimeMixState(x_l, s)
 
     @JITModMethod
     def _forward_chunk(self, x, last_state: TimeMixState):
@@ -843,14 +848,14 @@ class RWKV(L.LightningModule):
 
         x = self.emb(idx)
 
-        new_states = BlockStateList.empty(self.n_layer, B, self.n_embd,
+        new_states = BlockStateList.empty(self.n_layer, B, self.n_embd, 64,
                                           x.device, x.dtype)
         
         # last_shift_states can be None, when we are performing direct inference
         if last_shift_states is None:
             cur_bs_list = BlockStateList.empty(
                 self.n_layer, B,
-                self.n_embd,
+                self.n_embd, 64,
                 x.device, x.dtype
             )
         else:
@@ -992,7 +997,7 @@ class RWKV(L.LightningModule):
         total_loss = torch.tensor(
             0, dtype=self.emb.weight.dtype).requires_grad_()
         steps = 0
-        states = BlockStateList.create(self.n_layer, B, C, seq.device,
+        states = BlockStateList.create(self.n_layer, B, C, 64, seq.device,
                                        self.emb.weight.dtype)
         segment_count = math.ceil(T / self.ctx_len)
 
