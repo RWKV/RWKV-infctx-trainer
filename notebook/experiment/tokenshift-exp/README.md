@@ -35,7 +35,6 @@ This has the same layout as the existing RWKV 1B5 models
 
 **TokenShift-D**
 
-(NOT YET STARTED)
 Meant to be a replication of the L96-D1024 experiment, with the new 12 layer wavenet. This is used to measure the, difference in performance of layer vs dimensions with the new wavenet structure
 
 - 12 wavenet layers
