@@ -59,7 +59,7 @@ trainer:
       config_include_keys: null
       mode: null
       allow_val_change: null
-      resume: null
+      resume: True
       force: null
       tensorboard: null
       sync_tensorboard: null
