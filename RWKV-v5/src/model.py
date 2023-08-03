@@ -252,8 +252,8 @@ class RWKV_TimeMix(JITModClass):
     @JITModMethod
     def _forward_rkv_chunk(self, x, B, TT, last_state: TimeMixState):
         # Mix x with the previous timestep to produce xk, xv, xr
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
-        # xx = self.time_shift(x)
+        # xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
+        xx = self.time_shift(x)
 
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
@@ -306,8 +306,8 @@ class RWKV_TimeMix(JITModClass):
         B, H, TT, S = r.size()
         T = TT
 
-        # s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
-        s = last_state.wkv_state[:, :, :]
+        s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
+        # s = last_state.wkv_state[:, :, :]
 
         print("")
         print("B,H,TT,S", B, H, TT, S)
