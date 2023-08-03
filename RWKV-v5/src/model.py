@@ -98,9 +98,13 @@ if RWKV_TORCH_COMPILE:
 
 elif RWKV_JIT_ON:
     RWKV_TORCH_RUN_MODE = "torch-jit"
-    JITModClass  = torch.jit.ScriptModule
-    JITModMethod = torch.jit.script_method
-    JITFunction  = torch.jit.script
+    # JITModClass  = torch.jit.ScriptModule
+    # JITModMethod = torch.jit.script_method
+    # JITFunction  = torch.jit.script
+
+    JITModClass  = nn.Module
+    JITModMethod = lambda x: x
+    JITFunction  = lambda x: x
 
     TCompileMax        = lambda x: x
     TCompileBaseline   = lambda x: x
@@ -199,12 +203,14 @@ class RWKV_TimeMix(JITModClass):
     def __init__(self, layer_id, n_layer, n_embd, dim_att):
         super().__init__()
         
+        self.dim_att = dim_att
+        self.n_layer = n_layer
+        self.n_embd = n_embd
+        self.layer_id = layer_id
+
         head_size = 64
         n_head = n_embd // head_size
         assert n_embd % n_head == 0
-
-        # self.n_layer = n_layer
-        # self.n_embd = n_embd
         self.n_head = n_head
         self.head_size = head_size
 
@@ -219,6 +225,11 @@ class RWKV_TimeMix(JITModClass):
             for i in range(n_embd):
                 ddd[0, 0, i] = i / n_embd
 
+            # fancy time_mix
+            self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+            self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
+            self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+
             # fancy time_decay
             decay_speed = torch.ones(n_head)
             for h in range(n_head):
@@ -229,23 +240,21 @@ class RWKV_TimeMix(JITModClass):
             # time_first (no longer fancy)
             self.time_first = nn.Parameter(torch.ones(n_head) * (-3.0))
 
-            # fancy time_mix
-            self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-            self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
-            self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-        self.receptance = nn.Linear(n_embd, n_embd)
-        self.key = nn.Linear(n_embd, n_embd)
-        self.value = nn.Linear(n_embd, n_embd)
-        self.output = nn.Linear(n_embd, n_embd)
-        self.ln_x = nn.GroupNorm(self.n_head, n_embd)
+        self.receptance = nn.Linear(n_embd, dim_att, bias=False)
+        self.key = nn.Linear(n_embd, dim_att, bias=False)
+        self.value = nn.Linear(n_embd, dim_att, bias=False)
+        self.output = nn.Linear(dim_att, n_embd, bias=False)
 
+        self.ln_x = nn.GroupNorm(n_head, n_embd)
+
+    # this is based on jit_func(self,x)
     @JITModMethod
     def _forward_rkv_chunk(self, x, B, TT, last_state: TimeMixState):
         # Mix x with the previous timestep to produce xk, xv, xr
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
-                          dim=1)
+        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
+        # xx = self.time_shift(x)
+
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
@@ -254,14 +263,14 @@ class RWKV_TimeMix(JITModClass):
         k = self.key(xk).view(B, TT, self.n_head, self.head_size).transpose(1, 2).transpose(-2, -1) # BTC -> BHTS -> BHST
         v = self.value(xv).view(B, TT, self.n_head, self.head_size).transpose(1, 2)                 # BTC -> BHTS
 
-        # Enforce bf16 type for kv, as this can be mis init
-        # when being called directly via inference
-        if r.dtype != torch.bfloat16:
-            r = r.to(torch.bfloat16)
-        if k.dtype != torch.bfloat16:
-            k = k.to(torch.bfloat16)
-        if v.dtype != torch.bfloat16:
-            v = v.to(torch.bfloat16)
+        # # Enforce bf16 type for kv, as this can be mis init
+        # # when being called directly via inference
+        # if r.dtype != torch.bfloat16:
+        #     r = r.to(torch.bfloat16)
+        # if k.dtype != torch.bfloat16:
+        #     k = k.to(torch.bfloat16)
+        # if v.dtype != torch.bfloat16:
+        #     v = v.to(torch.bfloat16)
 
         return r, k, v
 
@@ -297,7 +306,15 @@ class RWKV_TimeMix(JITModClass):
         B, H, TT, S = r.size()
         T = TT
 
-        s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
+        # s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
+        s = last_state.wkv_state[:, :, :]
+
+        print("")
+        print("B,H,TT,S", B, H, TT, S)
+        print("S-zero", torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype).shape)
+        print("wkv", last_state.wkv_state[:, :, :].shape)
+        print("")
+        
         x = torch.zeros(B, H, TT, S, device=r.device, dtype=r.dtype) # output
 
         ########################################################################
@@ -324,10 +341,10 @@ class RWKV_TimeMix(JITModClass):
         B = torch.tensor(B, device=x.device, dtype=torch.int32)
         TT = torch.tensor(TT, device=x.device, dtype=torch.int32)
 
-        # Get r, k, v
+        # Get r, k, v (self.jit_func(x))
         r, k, v = self._forward_rkv_chunk(x, B, TT, last_state)
 
-        # Get w, wk, wb, ws
+        # Get w, wk, wb, ws (self.jit_func_2)
         w, wk, wb, ws = self._forward_wkbs_chunk(TT, r, k, v)
 
         # Does the state forwarding
@@ -580,19 +597,19 @@ class RWKV(L.LightningModule):
 
         self.emb = nn.Embedding(vocab_size, n_embd)
 
-        load(name=f"wkv_{self.ctx_len}_bf16",
-             sources=[
-                os.path.join(CUDA_DIR, "wkv_op_bf16.cpp"),
-                os.path.join(CUDA_DIR, "wkv_cuda_bf16.cu")
-            ],
-             verbose=True,
-             extra_cflags=["-std=c++17", "-O3", f"-DTmax={self.ctx_len}"],
-             extra_cuda_cflags=[
-                 "-t 4", "-std=c++17", "-res-usage", "--maxrregcount 60",
-                 "--use_fast_math", "-O3", "-Xptxas -O3",
-                 "--extra-device-vectorization", f"-DTmax={self.ctx_len}"
-             ],
-             is_python_module=False)
+        # load(name=f"wkv_{self.ctx_len}_bf16",
+        #      sources=[
+        #         os.path.join(CUDA_DIR, "wkv_op_bf16.cpp"),
+        #         os.path.join(CUDA_DIR, "wkv_cuda_bf16.cu")
+        #     ],
+        #      verbose=True,
+        #      extra_cflags=["-std=c++17", "-O3", f"-DTmax={self.ctx_len}"],
+        #      extra_cuda_cflags=[
+        #          "-t 4", "-std=c++17", "-res-usage", "--maxrregcount 60",
+        #          "--use_fast_math", "-O3", "-Xptxas -O3",
+        #          "--extra-device-vectorization", f"-DTmax={self.ctx_len}"
+        #      ],
+        #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
             Block(i, n_layer, n_embd, dim_att, dim_ffn) for i in range(n_layer)
