@@ -13,7 +13,7 @@ if len(PYTORCH_CUDA_ALLOC_CONF) > 0 and PYTORCH_CUDA_ALLOC_CONF.find("backend") 
 elif len(PYTORCH_CUDA_ALLOC_CONF) == 0:
     PYTORCH_CUDA_ALLOC_CONF = "backend:cudaMallocAsync"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = PYTORCH_CUDA_ALLOC_CONF
-print(f"[RWKV.lightning_trainer.py]: Running with PYTORCH_CUDA_ALLOC_CONF={PYTORCH_CUDA_ALLOC_CONF}")
+print(f"[RWKV.lightning_trainer.py] Running with PYTORCH_CUDA_ALLOC_CONF={PYTORCH_CUDA_ALLOC_CONF}")
 
 # Parse the global args, we have to do this manually
 # because argparse do not support --trainer.strategy
@@ -78,10 +78,11 @@ disable_jit_if_deepspeed_3()
 #
 # ---
 #
-# ckpt-mode, "2nd-last" compares the newest non "last.ckpt" checkpoint, against the "last.ckpt".
-# this is used to mitigate potential checkpoint file corruption issues that occur when the training
-# is forcefully interupted while saving the checkpoint. The following are the 3 major scenerios
+# ckpt-mode, "2nd-last" uses the 2nd last checkpoint, instead of the truely latest checkpoint. 
+# And is meant to be used with the checkpoint ooption `save_last: true`
 #
+# this is used to mitigate potential checkpoint file corruption issues that occur when the training
+# is forcefully interupted while actively saving the checkpoint. The following are the 3 major scenerios
 #
 # 1. Training interrupted, between 2 checkpoint. Since last.ckpt, and the latest non "last.ckpt" checkpoint are saved correctly.
 #    Training resumes correctly from the checkpoint
@@ -184,11 +185,16 @@ def process_auto_resume_ckpt():
     print(f"[RWKV.lightning_trainer.py] Found {checkpoint_count} checkpoints in '{auto_resume_ckpt_dir}', using '{checkpoint_to_use}'")
 
     # Lets append the --checkpoint argument to the PYTORCH_CLI_ARGV
-    PYTORCH_CLI_ARGV.append("--checkpoint")
+    PYTORCH_CLI_ARGV.append("--ckpt_path")
     PYTORCH_CLI_ARGV.append(os.path.join(auto_resume_ckpt_dir, checkpoint_to_use))
 
 # Process the args
 process_auto_resume_ckpt()
+
+# Add a quick warning that pytorch lightning timing estimates are COMPLETELY INACCURATE
+# when resuming from a checkpoint
+if "--ckpt_path" in PYTORCH_CLI_ARGV:
+    print("[RWKV.lightning_trainer.py][warning] Pytorch Lightning timing estimates can be very inaccurate when resuming from a checkpoint, due to the way it calculates the time left. See: https://github.com/Lightning-AI/lightning/issues/18220")
 
 # Utility for remove an argument from the PYTORCH_CLI_ARGV list
 def remove_arg(argList, argCommand):
