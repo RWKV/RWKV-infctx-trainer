@@ -210,24 +210,11 @@ model:
   # Learning rate of the training process
   # ---
 
-  # Learing rate normalized to the target_batch_size
-  #
-  # If number of nodes & gpus is 1, this is the actual learning rate
-  # as the accumulate_grad_batches == target_batch_size
-  #
-  # Otherwise this is normalized using the following formula
-  # lr = lr / target_batch_size * accumulate_grad_batches
-  #
-  # This reduces the need to readjust the learning rate when changing
-  # the number of nodes & gpus used for training.
-  target_lr_init:  0.001
-  target_lr_final: 0.0001
-
-  # # Initia learning rate of the process
-  # lr_init: 6e-4
-  # # Final learning rate after the learning rate period
-  # # learning rate will stay at final value from then onwards
-  # lr_final: 4e-4
+  # Initia learning rate of the process
+  lr_init: 6e-4
+  # Final learning rate after the learning rate period
+  # learning rate will stay at final value from then onwards
+  lr_final: 4e-4
 
   # Number of epoch to reduce the learning rate from lr_init to lr_final
   #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
@@ -255,7 +242,7 @@ model:
   # This is not 1:1 equivalent to the same training process with required vram
   # as the training process is split into multiple segments, part by part.
   # with limited learnings from the previous segment.
-  bptt_learning: false
+  bptt_learning: true
 
   # Segmented range to performing backprop learning on
   # 1 means to apply only for the last segment
