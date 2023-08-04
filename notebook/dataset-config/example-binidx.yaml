@@ -13,9 +13,11 @@
 ###############################################
 
 trainer:
-  max_steps: 5
+  max_steps: 10
+  # Resonable batch size, for a more realistic it/s rate
+  target_batch_size: 32
 model:
-  load_model: ../model/L6-D512-neox-init.pth
+  load_model: ../model/L6-D512-world-init.pth
   ctx_len: 1024
   lr_init: 3e-4
 
@@ -24,10 +26,10 @@ model:
 ########################################
 data:
   # Directory where the fomratted HF dataset will be saved in
-  data_path: ../datapath/example-binidx/
+  data_path: ../datapath/world/wiki40b/
 
-  # Source here points to the binidx file to use (withing the .bin / .idx suffix)
-  source: ../dataset/dataset-config/sample_data_text_document
+  # Source here points to the binidx file to use (without the .bin / .idx suffix)
+  source: ../dataset/dataset-config/wiki40b_world_text_document
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer, 
   # or 'binidx' for the old binidx formats
@@ -40,4 +42,3 @@ data:
   # Test split normalizes to 1 datasample, if set to 0
   test_split: 0
   test_split_shuffle: false
-
