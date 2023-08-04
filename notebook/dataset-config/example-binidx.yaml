@@ -26,7 +26,7 @@ model:
 ########################################
 data:
   # Directory where the fomratted HF dataset will be saved in
-  data_path: ../datapath/example-binidx/
+  data_path: ../datapath/world/wiki40b/
 
   # Source here points to the binidx file to use (without the .bin / .idx suffix)
   source: ../dataset/dataset-config/wiki40b_world_text_document
