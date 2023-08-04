@@ -168,18 +168,18 @@ class BlockStateList:
 
     # @ TCompileMax (no difference)
     @staticmethod
-    def create(N, B, C, S, device, dtype):
-        result = BlockStateList.empty(N, B, C, S, device, dtype)
+    def create(N, B, C, n_head, head_size, device, dtype):
+        result = BlockStateList.empty(N, B, C, n_head, head_size, device, dtype)
         result.wkv_states[:] = 0
-        result.wkv_states[:, :, :, -1] = -1e38
+        # result.wkv_states[:, :, :, -1] = -1e38
         result.shift_states[:] = 0
         return result
 
     # @ TCompileMax (no difference)
     @staticmethod
-    def empty(N, B, C, S, device, dtype):
+    def empty(N, B, C, n_head, head_size, device, dtype):
         # HEAD nad HEADSIZE
-        wkv_states = torch.empty((N, B, 12, S, S),
+        wkv_states = torch.empty((N, B, n_head, head_size, head_size),
                                  device=device,
                                  dtype=torch.float)
         shift_states = torch.empty((N, 2, B, C), device=device, dtype=dtype)
@@ -241,7 +241,7 @@ class RWKV_TimeMix(JITModClass):
             # time_first (no longer fancy)
             self.time_first = nn.Parameter(torch.ones(n_head) * (-3.0))
 
-        self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
+        # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
         self.key = nn.Linear(n_embd, dim_att, bias=False)
         self.value = nn.Linear(n_embd, dim_att, bias=False)
@@ -418,7 +418,7 @@ class RWKV_ChannelMix(JITModClass):
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, dim_att, dim_ffn):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, dim_ffn):
         super().__init__()
         self.layer_id = layer_id
 
@@ -569,7 +569,7 @@ class RWKV(L.LightningModule):
         
         if vocab_size < 0:
             vocab_size = model_weights['head.weight'].shape[0]
-        
+
         # Save the various other params for later
         self.ctx_len = ctx_len
         self.ctx_len_cutoffs = ctx_len_cutoffs
@@ -596,7 +596,17 @@ class RWKV(L.LightningModule):
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or n_embd * 4
+        self.dim_att = dim_att
+        self.dim_ffn = dim_ffn
 
+        # Compute the RWKV-v5 n_head / headsize
+        head_size = 64
+        n_head = n_embd // head_size
+        assert n_embd % n_head == 0 ,  f"n_embd must be divisible by head_size ({self.head_size})"
+        self.n_head = n_head
+        self.head_size = head_size
+        
+        # Matmu precision check
         if torch_set_float32_matmul_precision is not None:
             torch.set_float32_matmul_precision(torch_set_float32_matmul_precision)
 
@@ -617,7 +627,7 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, dim_att, dim_ffn) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dim_att, dim_ffn) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)
@@ -848,14 +858,15 @@ class RWKV(L.LightningModule):
 
         x = self.emb(idx)
 
-        new_states = BlockStateList.empty(self.n_layer, B, self.n_embd, 64,
+        new_states = BlockStateList.empty(self.n_layer, B, self.n_embd, 
+                                          self.n_head, self.head_size,
                                           x.device, x.dtype)
         
         # last_shift_states can be None, when we are performing direct inference
         if last_shift_states is None:
-            cur_bs_list = BlockStateList.empty(
-                self.n_layer, B,
-                self.n_embd, 64,
+            cur_bs_list = BlockStateList.create(
+                self.n_layer, B, self.n_embd, 
+                self.n_head, self.head_size,
                 x.device, x.dtype
             )
         else:
@@ -997,8 +1008,9 @@ class RWKV(L.LightningModule):
         total_loss = torch.tensor(
             0, dtype=self.emb.weight.dtype).requires_grad_()
         steps = 0
-        states = BlockStateList.create(self.n_layer, B, C, 64, seq.device,
-                                       self.emb.weight.dtype)
+        states = BlockStateList.create(self.n_layer, B, C, 
+                                       self.n_head, self.head_size,
+                                       seq.device, self.emb.weight.dtype)
         segment_count = math.ceil(T / self.ctx_len)
 
         #
