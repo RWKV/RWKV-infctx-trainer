@@ -1,19 +1,21 @@
 import sys, os, yaml
 
-# Lets configure PYTORCH_CUDA_ALLOC_CONF to use `backend:cudaMallocAsync` 
-# unless backend is already configured, to optimize memory allocations.
-#
-# This has to be done before any torch related modules are imported
-#
-# See: https://pytorch.org/docs/stable/notes/cuda.html#environment-variables
-# ---
-PYTORCH_CUDA_ALLOC_CONF = os.environ.get('PYTORCH_CUDA_ALLOC_CONF', "")
-if len(PYTORCH_CUDA_ALLOC_CONF) > 0 and PYTORCH_CUDA_ALLOC_CONF.find("backend") == -1:
-    PYTORCH_CUDA_ALLOC_CONF = "backend:cudaMallocAsync," + PYTORCH_CUDA_ALLOC_CONF
-elif len(PYTORCH_CUDA_ALLOC_CONF) == 0:
-    PYTORCH_CUDA_ALLOC_CONF = "backend:cudaMallocAsync"
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = PYTORCH_CUDA_ALLOC_CONF
-print(f"[RWKV.lightning_trainer.py] Running with PYTORCH_CUDA_ALLOC_CONF={PYTORCH_CUDA_ALLOC_CONF}")
+# # Lets configure PYTORCH_CUDA_ALLOC_CONF to use `backend:cudaMallocAsync` 
+# # unless backend is already configured, to optimize memory allocations.
+# #
+# # This has to be done before any torch related modules are imported
+# #
+# # See: https://pytorch.org/docs/stable/notes/cuda.html#environment-variables
+# #
+# # UPDATE: This is found to have issues with deepspeed 3, and is disabled for now (Aug 2023)
+# # ---
+# PYTORCH_CUDA_ALLOC_CONF = os.environ.get('PYTORCH_CUDA_ALLOC_CONF', "")
+# if len(PYTORCH_CUDA_ALLOC_CONF) > 0 and PYTORCH_CUDA_ALLOC_CONF.find("backend") == -1:
+#     PYTORCH_CUDA_ALLOC_CONF = "backend:cudaMallocAsync," + PYTORCH_CUDA_ALLOC_CONF
+# elif len(PYTORCH_CUDA_ALLOC_CONF) == 0:
+#     PYTORCH_CUDA_ALLOC_CONF = "backend:cudaMallocAsync"
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = PYTORCH_CUDA_ALLOC_CONF
+# print(f"[RWKV.lightning_trainer.py] Running with PYTORCH_CUDA_ALLOC_CONF={PYTORCH_CUDA_ALLOC_CONF}")
 
 # Parse the global args, we have to do this manually
 # because argparse do not support --trainer.strategy
