@@ -286,6 +286,10 @@ data:
   # source: text                 # Text dir, used with source_data_dir
   # source: /home/ubuntu/RWKV-LM-LoRA/dataset-text/enwik8.txt
 
+  # # Additional source dataset params, used to grab subsets of the dataset
+  # source_dataset_params:
+  #   language: en
+
   # Use data_dir, if you are using source=text/json/etc
   # this should be relative to the data_path
   source_data_dir: ../dataset-text/
