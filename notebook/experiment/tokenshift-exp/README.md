@@ -57,3 +57,16 @@ Replication of tokenshift-B with reduced dataset size. The goal was initially to
 It instead open more questions in the process.
 
 This may need additional experimentation varients.
+
+**FrankenSHift-1B5**
+
+A short experiment in using an exisitng raven 1B5 model weight, and training it on enwiki, to see if it will auto adapt to the new model.
+TLDR, it was able to fix the timemix changes, but does not seem to fix the channelmix, and hence did not perform well in memory recall
+
+**CodeShift**
+
+Experiments, mostly around the Model C series, on doe training
+
+**BaseV5-C**
+
+Baseline C using V5 code
