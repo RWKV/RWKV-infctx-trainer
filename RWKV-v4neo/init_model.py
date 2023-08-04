@@ -4,8 +4,8 @@ import torch
 from src.model import RWKV 
 
 def init_model(
-        layers, embedding_size, output_model_path, 
-        vocab_size=None, 
+        layers, embedding_size, vocab_size, output_model_path, 
+        skip_if_exists=False, safe_init=False
         # existing_model_path=None
         ):
     # Insert your own function behavior here
@@ -16,6 +16,15 @@ def init_model(
     print(f'Vocab size: {vocab_size}')
     # print(f'Existing model path: {existing_model_path}')
     print(f"---- ----- ----")
+
+    # Check if the model exists
+    if skip_if_exists and os.path.exists(output_model_path):
+        print(f"Model exists, skipping init_model")
+        return
+
+    # Enforce safe_init if skip_if_exists is set
+    if skip_if_exists:
+        safe_init = True
 
     # Ensure the parent dir exists
     parent_dir = os.path.dirname(output_model_path)
@@ -76,13 +85,21 @@ def init_model(
         m[n] = m[n].bfloat16()
     
     # Save the model
-    torch.save(m, output_model_path)
+    if safe_init:
+        # Save as tmp file, then move to the output path
+        torch.save(m, output_model_path+".tmp")
+        os.rename(output_model_path+".tmp", output_model_path)
+    else:
+        # Save directly
+        torch.save(m, output_model_path)
 
 def main():
     parser = argparse.ArgumentParser(description='CLI tool for model handling')
     parser.add_argument('--n_layer', type=int, help='Number of layers')
     parser.add_argument('--n_embd',  type=int, help='Embedding size')
     parser.add_argument('--vocab_size', type=str, help="Vocab size for the model as an int, alternativey use 'neox' or 'world' if using their respective tokenizer", default="neox")
+    parser.add_argument('--skip-if-exists', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Skip the init if the model already exists, enables --safe-init if set')
+    parser.add_argument('--safe-init', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Init in safe mode, where the model is first init as a tmp file, before overwritting/moving to the output path')
 
     # (todo) implement in the future, to support model resizing
     # parser.add_argument('--existing_model_path', type=str, help='Existing model path', default=None)
@@ -100,8 +117,10 @@ def main():
     else:
         vocab_size = int(vocab_size)
 
-    init_model(args.n_layer, args.n_embd, args.output_model_path, 
-              vocab_size) #, args.existing_model_path
+    init_model(
+        args.n_layer, args.n_embd, vocab_size, args.output_model_path, 
+        skip_if_exists=args.skip_if_exists, safe_init=args.safe_init
+    ) #, args.existing_model_path
 
 if __name__ == "__main__":
     main()

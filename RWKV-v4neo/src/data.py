@@ -85,6 +85,10 @@ def prepare_data_static(**kargs):
         # Handle advance params (if set)
         if kargs["source_data_dir"] is not None:
             load_dataset_params['data_dir'] = kargs["source_data_dir"]
+        if kargs["source_dataset_params"] is not None:
+            source_dataset_params = kargs["source_dataset_params"]
+            for k, v in source_dataset_params.items():
+                load_dataset_params[k] = v
 
         # Load the dataset
         src_dataset = load_dataset(**load_dataset_params)
@@ -402,8 +406,10 @@ class RWKVDataModule(LightningDataModule):
         source: str = None,
         # load_dataset(data_dir) param
         source_data_dir: str = None,
+        # Additional dataset params
+        source_dataset_params: dict = None,
         # Test split of source data, if it was not already done
-        test_split: float = 0.1,
+        test_split: float = 0.01,
         test_split_shuffle: bool = False,
         # Text rechunking size
         text_rechunk_size: int = 4096,

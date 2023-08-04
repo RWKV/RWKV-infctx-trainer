@@ -546,10 +546,6 @@ class RWKV(L.LightningModule):
             if self.trainer.num_devices > 1:
                 if self.bptt_learning_range <= 0:
                     print("[WARNING]: unlimited bptt_learning_range across multiple GPU's has a performance penalty with datasets of mixed sizes due to its constant need to keep all GPU's in sync (consider using bptt_learning_range=1 instead)")
-                if self.bptt_learning_range > 1:
-                    # Temporary error, till better sync logic is done for mixed document sizes
-                    # (lazy to support this right now, since i have no idea if anyone has a use for it)
-                    raise NotImplementedError("bptt_learning_range > 1 is not supported yet")
         
         print(f"[RWKV.model][rank={self.trainer.local_rank}] Configuring optimizer ...")
 
@@ -1004,9 +1000,9 @@ class RWKV(L.LightningModule):
             else:
                 start_learning_segment = 0;
 
-            # Segment loss array to track (and reduce later)
-            # of size equal to forward_segment_count
-            segment_loss_arr = [0] * forward_segment_count
+            # # Segment loss array to track (and reduce later)
+            # # of size equal to forward_segment_count
+            # segment_loss_arr = [0] * forward_segment_count
 
             # Lets go through and forward all the segments 
             # (including dummy ones)
@@ -1044,71 +1040,70 @@ class RWKV(L.LightningModule):
                 )
                 states = BlockStateList(new_shift_states, new_wkv_states)
 
-                # Keep the sgment loss
-                segment_loss_arr[i] = segment_loss
-                
-            # Lets backpass the respective segments, from the back
-            # (including dummy ones)
-            for i in range(forward_segment_count-1, -1, -1):
-                # Get the segment loss
-                segment_loss = segment_loss_arr[i]
+                # # Keep the segment loss (for backpassing in reverse)
+                # segment_loss_arr[i] = segment_loss
 
-                # Compute the backward pass for the segment
+                # Perform the backward pass accordingly, for valid segments (besides the last segment)
+                # In this version, we do backward passes together the forward passes in the main segment loop
+                # Instead of after all segment losses are computed
                 if i >= start_learning_segment and i < start_learning_segment + backward_segment_count:
                     # The learning loss, should be normalized against the accumulation steps
                     # as we are bypassing the pytorch lightning normalization
                     # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
                     learning_loss = segment_loss / gradient_accumulation_steps
 
-                    # Perform the backward pass accordingly, for valid segments (besides the start_learning_segment)
-                    if i > start_learning_segment:
-                        # Undocumented multiple backward pass support
-                        # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
-                        self.manual_backward(learning_loss, optimizer, retain_graph=True)
-
-                        # Accumulate without gradient, as we already did the backward pass
-                        total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
-                    else:
+                    # Perform the backward pass accordingly, for valid segments (besides the last segment)
+                    if i == start_learning_segment + backward_segment_count - 1:
                         # This is the last backward pass, we let the default pytorch lightning handle the backward pass
                         # and return the segment loss as part of the total loss
                         total_loss = total_loss + segment_loss
+                    else:
+                        # Undocumented multiple backward pass support
+                        # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
+                        self.manual_backward(learning_loss, optimizer, retain_graph=True)
+            
+                        # Accumulate without gradient, as we already did the backward pass
+                        total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
                 else:
                     # Even if its not the segments we use for backward pass, we still need to accumulate the loss
                     total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
-
+                
                 # GC collect unused memory
-                gc.collect()
+                # gc.collect()
                 # torch.cuda.empty_cache()
-        else:
 
-            # Normal operations without BPTT
-            segment_size = self.ctx_len
-            for i in range(segment_count):
-                if i < segment_count-1 and is_training_run:
-                    total_loss, new_shift_states, new_wkv_states, steps = deepspeed_checkpoint(
-                        checkpointed_step,
-                        idx[:, i * segment_size:(i + 1) * segment_size],
-                        targets[:, i * segment_size:(i + 1) * segment_size],
-                        seq_mask[:, i * segment_size:(i + 1) * segment_size],
-                        total_loss,
-                        states.shift_states,
-                        states.wkv_states,
-                        steps,
-                    )
-                else:
-                    total_loss, new_shift_states, new_wkv_states, steps = checkpointed_step(
-                        idx[:, i * segment_size:(i + 1) * segment_size],
-                        targets[:, i * segment_size:(i + 1) * segment_size],
-                        seq_mask[:, i * segment_size:(i + 1) * segment_size],
-                        total_loss,
-                        states.shift_states,
-                        states.wkv_states,
-                        steps,
-                    )
-
-                states = BlockStateList(new_shift_states, new_wkv_states)
-                gc.collect()
-                # torch.cuda.empty_cache()
+            # # Lets backpass the respective segments, in reverse
+            # # (including dummy backpass)
+            # for i in range(forward_segment_count-1, -1, -1):
+            #     # Get the segment loss
+            #     segment_loss = segment_loss_arr[i]
+            #
+            #     # Compute the backward pass for the segment
+            #     if i >= start_learning_segment and i < start_learning_segment + backward_segment_count:
+            #         # The learning loss, should be normalized against the accumulation steps
+            #         # as we are bypassing the pytorch lightning normalization
+            #         # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
+            #         learning_loss = segment_loss / gradient_accumulation_steps
+            #
+            #         # Perform the backward pass accordingly, for valid segments (besides the start_learning_segment)
+            #         if i > start_learning_segment:
+            #             # Undocumented multiple backward pass support
+            #             # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
+            #             self.manual_backward(learning_loss, optimizer, retain_graph=True)
+            #
+            #             # Accumulate without gradient, as we already did the backward pass
+            #             total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
+            #         else:
+            #             # This is the last backward pass, we let the default pytorch lightning handle the backward pass
+            #             # and return the segment loss as part of the total loss
+            #             total_loss = total_loss + segment_loss
+            #     else:
+            #         # Even if its not the segments we use for backward pass, we still need to accumulate the loss
+            #         total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
+            #
+            #    # GC collect unused memory
+            #    gc.collect()
+            #    # torch.cuda.empty_cache()
 
         # Wandb logging only, if an active run exists
         if wandb.run is not None:
