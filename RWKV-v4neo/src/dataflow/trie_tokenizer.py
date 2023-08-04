@@ -120,6 +120,7 @@ from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
 
 import torch
+import numpy as np
 
 num_cpus = cpu_count()
 shared_executor = ProcessPoolExecutor(max_workers=num_cpus)
