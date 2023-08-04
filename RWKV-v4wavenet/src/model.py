@@ -779,7 +779,7 @@ class RWKV(L.LightningModule):
         
         # last_shift_states can be None, when we are performing direct inference
         if last_att_shift_states is None:
-            cur_bs_list = BlockStateList.empty(
+            cur_bs_list = BlockStateList.create(
                 self.n_layer, B,
                 self.n_embd,
                 x.device, x.dtype
