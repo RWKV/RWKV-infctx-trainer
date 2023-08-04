@@ -38,6 +38,9 @@ else:
 from src.model import SimpleRWKV
 model = SimpleRWKV(MODEL_PATH, device=DEVICE)
 
+# Dummy forward, used to trigger any warning / optimizations / etc
+model.completion("\n", max_tokens=1, temperature=1.0, top_p=0.7)
+
 # And perform the dragon prompt
 prompt = "\nIn a shocking finding, scientist discovered a herd of dragons living in a remote, previously unexplored valley, in Tibet. Even more surprising to the researchers was the fact that the dragons spoke perfect Chinese."
 print(f"--- DRAGON PROMPT ---{prompt}", end='')
