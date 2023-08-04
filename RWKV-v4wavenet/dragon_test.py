@@ -16,10 +16,14 @@ if len(sys.argv) < 2:
 # download models: https://huggingface.co/BlinkDL
 MODEL_PATH=sys.argv[1]
 
-# If model strategy is not specified, use 'cuda' as default
+# If model device is not specified, use 'cuda' as default
 DEVICE=None
 if len(sys.argv) >= 3:
     DEVICE=sys.argv[2]
+IS_REF_RUN = False
+if DEVICE == "ref":
+    IS_REF_RUN = True
+
 if DEVICE is None:
     DEVICE = 'cuda'
 
@@ -28,6 +32,10 @@ if DEVICE.find('cuda') != -1:
     DEVICE = 'cuda'
 else:
     DEVICE = 'cpu'
+
+# REF run overwrite
+if IS_REF_RUN:
+    DEVICE = "cuda"
 
 # # Tokenizer settings
 # TOKENIZER="neox"
@@ -43,5 +51,12 @@ model.completion("\n", max_tokens=1, temperature=1.0, top_p=0.7)
 
 # And perform the dragon prompt
 prompt = "\nIn a shocking finding, scientist discovered a herd of dragons living in a remote, previously unexplored valley, in Tibet. Even more surprising to the researchers was the fact that the dragons spoke perfect Chinese."
-print(f"--- DRAGON PROMPT ---{prompt}", end='')
-model.completion(prompt, stream_to_stdout=True, max_tokens=200, temperature=1.0, top_p=0.7)
+if IS_REF_RUN:
+    print(f"--- DRAGON PROMPT (REF RUN) ---{prompt}", end='')
+    model.completion(prompt, stream_to_stdout=True, max_tokens=200, temperature=0.0)
+else:
+    print(f"--- DRAGON PROMPT ---{prompt}", end='')
+    model.completion(prompt, stream_to_stdout=True, max_tokens=200, temperature=1.0, top_p=0.7)
+
+# Empty new line, to make the CLI formatting better
+print("")

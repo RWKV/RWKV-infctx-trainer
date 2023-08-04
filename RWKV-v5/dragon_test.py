@@ -35,7 +35,7 @@ else:
 
 # REF run overwrite
 if IS_REF_RUN:
-    DEVICE = "cuda"
+    DEVICE = "cpu"
 
 # # Tokenizer settings
 # TOKENIZER="neox"
@@ -57,3 +57,6 @@ if IS_REF_RUN:
 else:
     print(f"--- DRAGON PROMPT ---{prompt}", end='')
     model.completion(prompt, stream_to_stdout=True, max_tokens=200, temperature=1.0, top_p=0.7)
+
+# Empty new line, to make the CLI formatting better
+print("")
