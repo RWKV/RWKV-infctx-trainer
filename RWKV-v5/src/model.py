@@ -1296,9 +1296,6 @@ class SimpleRWKV():
             dtype:str = "fp32"
         ):
 
-        # Device type must be cuda, cpu type is not supported (yet?)
-        if device != "cuda":
-            raise NotImplementedError("Only cuda device is supported (for now)")
         # Log the mismatch dtype
         if dtype != "fp32":
             print("[SimpleRWKV] Warning: dtype mismatch, only fp32 is supported (for now)")
