@@ -409,7 +409,7 @@ class RWKVDataModule(LightningDataModule):
         # Additional dataset params
         source_dataset_params: dict = None,
         # Test split of source data, if it was not already done
-        test_split: float = 0.1,
+        test_split: float = 0.01,
         test_split_shuffle: bool = False,
         # Text rechunking size
         text_rechunk_size: int = 4096,
