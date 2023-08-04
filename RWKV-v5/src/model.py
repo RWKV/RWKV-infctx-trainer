@@ -98,13 +98,13 @@ if RWKV_TORCH_COMPILE:
 
 elif RWKV_JIT_ON:
     RWKV_TORCH_RUN_MODE = "torch-jit"
-    # JITModClass  = torch.jit.ScriptModule
-    # JITModMethod = torch.jit.script_method
-    # JITFunction  = torch.jit.script
+    JITModClass  = torch.jit.ScriptModule
+    JITModMethod = torch.jit.script_method
+    JITFunction  = torch.jit.script
 
-    JITModClass  = nn.Module
-    JITModMethod = lambda x: x
-    JITFunction  = lambda x: x
+    # JITModClass  = nn.Module
+    # JITModMethod = lambda x: x
+    # JITFunction  = lambda x: x
 
     TCompileMax        = lambda x: x
     TCompileBaseline   = lambda x: x
@@ -275,7 +275,6 @@ class RWKV_TimeMix(JITModClass):
 
         return r, k, v
 
-    @JITModMethod
     def _forward_wkbs_chunk(self, T, r, k, v):
         H = self.n_head
 
@@ -339,7 +338,6 @@ class RWKV_TimeMix(JITModClass):
         # print("")
         return self.output(x), TimeMixState(x_l, s)
 
-    @JITModMethod
     def _forward_chunk(self, x, last_state: TimeMixState):
         # Forward sizings (Batch, Time/ContextLength, Tokens)
         B, TT, C = x.size()
@@ -355,7 +353,6 @@ class RWKV_TimeMix(JITModClass):
         # Does the state forwarding
         return self._forward_state_chunk(r, k, v, w, wk, wb, ws, x[:, -1], last_state)
 
-    @JITModMethod
     @TCompileMax
     def forward(self, x, last_state: TimeMixState):
         # Get the x sizing
