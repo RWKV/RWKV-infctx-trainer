@@ -181,6 +181,7 @@ class BlockStateList:
         # HEAD nad HEADSIZE
         wkv_states = torch.empty((N, B, n_head, head_size, head_size),
                                  device=device,
+                                #  dtype=dtype)
                                  dtype=torch.float)
         shift_states = torch.empty((N, 2, B, C), device=device, dtype=dtype)
         return BlockStateList(shift_states, wkv_states)
@@ -309,6 +310,9 @@ class RWKV_TimeMix(JITModClass):
         # s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
         s = last_state.wkv_state
 
+        if r.dtype == torch.bfloat16 and s.dtype != torch.bfloat16:
+            s = s.contiguous().to(torch.bfloat16)
+
         # print("")
         # print("B,H,TT,S", B, H, TT, S)
         # print("S-zero", torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype).shape)
@@ -317,11 +321,35 @@ class RWKV_TimeMix(JITModClass):
         
         x = torch.zeros(B, H, TT, S, device=r.device, dtype=r.dtype) # output
 
+        # # Check if r is bf16 or float
+        # if s.dtype == torch.bfloat16:
+        #     print("s is bf16")
+        # elif s.dtype == torch.float32:
+        #     print("s is float32")
+        # else:
+        #     print("s is neither bf16 nor float32")
+
+        # # Check if r is bf16 or float
+        # if r.dtype == torch.bfloat16:
+        #     print("r is bf16")
+        # elif r.dtype == torch.float32:
+        #     print("r is float32")
+        # else:
+        #     print("r is neither bf16 nor float32")
+
         ########################################################################
         for i in range(TT // T):
             rr = r[:, :, i*T:i*T+T, :]
             kk = k[:, :, :, i*T:i*T+T]
             vv = v[:, :, i*T:i*T+T, :]
+
+            # # Check if r is bf16 or float
+            # if rr.dtype == torch.bfloat16:
+            #     print("rr is bf16")
+            # elif rr.dtype == torch.float32:
+            #     print("rr is float32")
+            # else:
+            #     print("rr is neither bf16 nor float32")
 
             x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv  +  (rr @ s) * wb
 
