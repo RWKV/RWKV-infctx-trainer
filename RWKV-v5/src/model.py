@@ -131,10 +131,6 @@ print(f"[RWKV.model] Running RWKV model using '{RWKV_TORCH_RUN_MODE}' with torch
 def deepspeed_checkpoint(*args, **kwargs):
     return deepspeed.checkpointing.checkpoint(*args, **kwargs)
 
-@TCompileDisable
-def wkv_op(time_decay, time_first, k, v, wkv_state):
-    return torch.ops.rwkv.wkv(time_decay, time_first, k, v, wkv_state)
-
 ########################################################################################################
 # RWKV: State Blocks
 ########################################################################################################
@@ -239,8 +235,9 @@ class RWKV_TimeMix(JITModClass):
             self.time_decay = nn.Parameter(decay_speed)
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
-            # time_first (no longer fancy)
-            self.time_first = nn.Parameter(torch.ones(n_head) * (-3.0))
+            # V5-R2 changes
+            self.time_faaaa = nn.Parameter(torch.ones(n_head) * 0.05)
+            # self.time_first = nn.Parameter(torch.ones(n_head) * (-3.0))
 
         # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
@@ -280,7 +277,10 @@ class RWKV_TimeMix(JITModClass):
         H = self.n_head
 
         w = torch.exp(-torch.exp(self.time_decay.float())).unsqueeze(-1)
-        u = torch.exp(self.time_first.float()).unsqueeze(-1)
+
+        # V5-R2 changes
+        u = self.time_faaaa.float().unsqueeze(-1)
+        # u = torch.exp(self.time_first.float()).unsqueeze(-1)
 
         ws = w.pow(T).reshape(1, H, 1, 1)
         ind = torch.arange(T-1, -1, -1, device=r.device).unsqueeze(0).repeat(H, 1)
@@ -707,8 +707,11 @@ class RWKV(L.LightningModule):
                     lr_1x.add(n)
                 elif "time_decay" in n:
                     lr_2x.add(n)
-                elif "time_first" in n:
-                    lr_3x.add(n)
+                # V5-R2 changes
+                elif "time_faaaa" in n:
+                    lr_2x.add(n)
+                # elif "time_first" in n:
+                #     lr_3x.add(n)
                 else:
                     lr_1x.add(n)
             lr_1x = sorted(list(lr_1x))
