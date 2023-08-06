@@ -58,7 +58,7 @@ def init_model(
             else:
                 if shape[0] > shape[1]:
                     gain = math.sqrt(shape[0] / shape[1])
-                for kk in [".att.key.", ".att.receptance.", ".att.output.", ".att.key.", ".ffn.value.", ".ffn.receptance.", ".ffnPre.value.", ".ffnPre.receptance.", "head_q.", '.oo.', '.rr.']:
+                for kk in [".att.output.", ".ffn.value.", ".ffn.receptance.", ".ffnPre.value.", ".ffnPre.receptance.", "head_q.", '.oo.', '.rr.']:
                     if kk in n:
                         scale = 0
                 if n == "head.weight":
