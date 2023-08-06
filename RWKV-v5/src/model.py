@@ -198,7 +198,7 @@ class BlockStateList:
 
 class RWKV_TimeMix(JITModClass):
 
-    def __init__(self, layer_id, n_layer, n_embd, dim_att):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att):
         super().__init__()
         
         self.dim_att = dim_att
@@ -206,9 +206,6 @@ class RWKV_TimeMix(JITModClass):
         self.n_embd = n_embd
         self.layer_id = layer_id
 
-        head_size = 64
-        n_head = n_embd // head_size
-        assert n_embd % n_head == 0
         self.n_head = n_head
         self.head_size = head_size
 
@@ -443,7 +440,7 @@ class RWKV_ChannelMix(JITModClass):
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, dim_ffn):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn):
         super().__init__()
         self.layer_id = layer_id
 
@@ -453,22 +450,41 @@ class Block(nn.Module):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
 
-        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, dim_att)
+        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
+
+        # Setup droupout at block level
+        self.dropout = dropout
+        if dropout > 0:            
+            self.drop0 = nn.Dropout(p = dropout)
+            self.drop1 = nn.Dropout(p = dropout)
 
     def forward(self, x, last_state: BlockState):
         if self.layer_id == 0:
             x = self.ln0(x)
+
         att_out, att_state = self.att(
             self.ln1(x),
             last_state.time_mix_state,
         )
-        x = x + att_out
-        ffn_out, ffn_state = self.ffn(
-            self.ln2(x),
-            last_state.channel_mix_state,
-        )
-        x = x + ffn_out
+
+        if self.dropout > 0.0:
+            # Handle with dropout
+            x = self.drop0(x + att_out)
+            ffn_out, ffn_state = self.ffn(
+                self.ln2(x),
+                last_state.channel_mix_state,
+            )
+            x = self.drop1(x + ffn_out)
+        else:
+            # Handle without dropout
+            x = x + att_out
+            ffn_out, ffn_state = self.ffn(
+                self.ln2(x),
+                last_state.channel_mix_state,
+            )
+            x = x + ffn_out
+        
         return x, BlockState(att_state, ffn_state)
 
 
@@ -534,6 +550,8 @@ class RWKV(L.LightningModule):
                  lr_final: float = -1.0,
                  lr_period: int = -1,
                  lr_period_type: str = 'epoch',
+                 # Dropout rate
+                 dropout: float = 0.0,
                  # Adam optimizer settings
                  beta1: float = 0.9,
                  beta2: float = 0.99,
@@ -608,6 +626,7 @@ class RWKV(L.LightningModule):
         self.lr_final = lr_final
         self.lr_period = lr_period
         self.lr_period_type = lr_period_type
+        self.dropout = dropout
         self.warmup_steps = warmup_steps
         self.beta1 = beta1
         self.beta2 = beta2
@@ -652,11 +671,15 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, n_head, head_size, dim_att, dim_ffn) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)
         self.head = nn.Linear(n_embd, vocab_size, bias=False)
+
+        # Dropout handling
+        if dropout > 0:
+            self.drop0 = nn.Dropout(p = dropout)
 
         # load the state, and GC the original cpu copy
         if model_weights != None:
@@ -885,6 +908,10 @@ class RWKV(L.LightningModule):
         assert T <= self.ctx_len, "Cannot forward, model ctx_len is exhausted."
 
         x = self.emb(idx)
+
+        # Handle dropout (input)
+        if self.dropout > 0.0:
+            x = self.drop0(x)
 
         new_states = BlockStateList.empty(self.n_layer, B, self.n_embd, 
                                           self.n_head, self.head_size,
