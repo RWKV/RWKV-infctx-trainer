@@ -33,8 +33,8 @@ if len(sys.argv) >= 3:
 # Lets load the SimpleRWKV model
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '../../../../'))
-TRAINER_DIR = os.path.join(PROJECT_DIR, 'RWKV-v5')
-sys.path.insert(1, TRAINER_DIR)
+V4NEO_DIR = os.path.join(PROJECT_DIR, 'RWKV-v5')
+sys.path.insert(1, V4NEO_DIR)
 
 from src.model import SimpleRWKV
 model_path = sys.argv[1]
@@ -49,7 +49,7 @@ markdown_token = model.encode("```")[0]
 newline_token = model.encode("\n")[0]
 
 # Pipeline args to use
-token_ban = [] #[on_token] # ban the generation of some tokens
+token_ban = [on_token] # ban the generation of some tokens
 
 # Read the test word list, taken from ./eval_word_list.txt
 with open(os.path.join(SCRIPT_DIR,'./eval_word_list.txt'), 'r') as f:
@@ -130,6 +130,9 @@ def validate_model(token_count, withoutInstructAndInput=False):
         print("## ------------------ ")
         print(f'## Model validation for {token_count} tokens')
 
+    # CSV rows to write
+    csv_rows = []
+
     # Lets evaluate the logits, and check if they match one by one
     for i in range(len(target_tokens)):
         # Get the target token
@@ -176,16 +179,19 @@ def validate_model(token_count, withoutInstructAndInput=False):
                 # We need to encode the strings safely (escape special characters, new lines, etc)
                 top_token_str = top_token_str.encode('unicode_escape').decode('utf-8')
                 target_token_str = target_token_str.encode('unicode_escape').decode('utf-8')
-                csv_writer.writerow([
+                csv_rows.append([
                     token_count, i, top_token == target,
                     top_token_str, top_prob,
                     target_token_str, target_pos, target_prob,
                     withoutInstructAndInput == True
                 ])
-            
-        
+                
         # Forward with the target token
         logits, state = model.forward([target], state)
+
+    # Write the CSV rows
+    if csv_writer != None:
+        csv_writer.writerows(csv_rows)
     
     # Percentage token match
     matched_percentage = matched_tokens / token_count * 100.0
