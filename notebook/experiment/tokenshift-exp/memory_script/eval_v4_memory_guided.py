@@ -33,7 +33,7 @@ if len(sys.argv) >= 3:
 # Lets load the SimpleRWKV model
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '../../../../'))
-V4NEO_DIR = os.path.join(PROJECT_DIR, 'RWKV-v4wavenet')
+V4NEO_DIR = os.path.join(PROJECT_DIR, 'RWKV-v4neo')
 sys.path.insert(1, V4NEO_DIR)
 
 from src.model import SimpleRWKV
