@@ -174,7 +174,7 @@ trainer:
 ########################################
 model:
   # Model to start the finetune/training process from
-  load_model: ../model/L24-D2048-neox-v5wavenet-init.pth
+  load_model: ../model/L24-D2048-neox-v5altwavenet-init.pth
 
   # The model size setting, this MUST match
   # your current model settings, refer to the model card
