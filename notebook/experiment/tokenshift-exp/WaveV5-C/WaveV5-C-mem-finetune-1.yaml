@@ -35,7 +35,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'BaseV5-C memory-finetune-1 (bs=256, train-ctx=512)'
+      name: 'WaveV5-C memory-finetune-1 (bs=256, train-ctx=512)'
       project: 'RWKV-5X-Experiments'
       tags: ['RWKV', 'RWKV-5X']
       id: null
@@ -79,7 +79,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/BaseV5-C-mem-finetune-1/
+      dirpath: ../checkpoint/WaveV5-C-mem-finetune-1/
       filename: null
       
       # Save the top/last K checkpoints
@@ -175,7 +175,7 @@ trainer:
 ########################################
 model:
   # Model to start the finetune/training process from
-  load_model: ../model/BaseV5-C-Stage2.pth
+  load_model: ../model/WaveV5-C-Stage2.pth
 
   # The model size setting, this MUST match
   # your current model settings, refer to the model card
