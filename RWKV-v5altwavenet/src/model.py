@@ -249,10 +249,17 @@ class RWKV_TimeMix(JITModClass):
 
         self.ln_x = nn.GroupNorm(n_head, n_embd)
 
+        exponent = layer_id 
+        if exponent % 2 == 0:
+            exponent = exponent // 2
+        else:
+            exponent = 0
+
+        if exponent > 11:
+            exponent = 0
         # Channel tokenshift
-        shiftamount = pow(2,layer_id)
-        if(shiftamount > 2048):
-            shiftamount = 1
+        shiftamount = pow(2,exponent)
+        
         self.time_shift = nn.ZeroPad2d((0, 0, shiftamount, -shiftamount))
 
     # this is based on jit_func(self,x)
