@@ -132,7 +132,7 @@ def validate_model(token_count, withoutInstructAndInput=False):
         print("## ------------------ ")
         print(f'## Model validation for {token_count} tokens')
 
-    logits, state = model.forward(target_tokens[1:], state)
+    logits, state = model.forward(target_tokens[1:], state, True)
     # CSV rows to write
     csv_rows = []
 
