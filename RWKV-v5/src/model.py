@@ -1412,7 +1412,8 @@ class SimpleRWKV():
     # Forwarding logic, withoout torch._no_grad() context
     def _forward(
             self, tokens, 
-            stateObj = None
+            stateObj = None,
+            alllogits = False
         ):
 
         logits_arr = None
@@ -1440,7 +1441,10 @@ class SimpleRWKV():
             )
 
         # Return the logits and state
-        return logits_arr[0][-1], { "shift_states": shift_states, "wkv_states": wkv_states }
+        if alllogits:
+            return logits_arr[0], { "shift_states": shift_states, "wkv_states": wkv_states }
+        else:
+            return logits_arr[0][-1], { "shift_states": shift_states, "wkv_states": wkv_states }
     
     # Forwarding logic, with torch._no_grad() context
     def forward(
