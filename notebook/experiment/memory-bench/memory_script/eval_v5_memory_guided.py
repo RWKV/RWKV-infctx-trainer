@@ -132,7 +132,8 @@ def validate_model(token_count, withoutInstructAndInput=False):
         print("## ------------------ ")
         print(f'## Model validation for {token_count} tokens')
 
-    logits, state = model.forward(target_tokens[1:], state, True)
+    all_logits, state = model.forward(target_tokens, state, all_logits=True)
+
     # CSV rows to write
     csv_rows = []
 
@@ -143,14 +144,15 @@ def validate_model(token_count, withoutInstructAndInput=False):
 
         # Apply token ban
         for n in token_ban:
-            logits[i][n] = -float('inf')
+            all_logits[i][n] = -float('inf')
 
         # We are using a custom sampling method to provide more insight
         # to the probability distribution of the target token
 
         # Softmax and Sample the logits
-        probs = F.softmax(logits[i], dim=-1)
-        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+        sorted_probs, sorted_indices = torch.sort(all_logits[i], descending=True)
+        # probs = F.softmax(all_logits[i], dim=-1)
+        # sorted_probs, sorted_indices = torch.sort(probs, descending=True)
 
         # Get the top token info
         top_token = sorted_indices[0].item()
@@ -189,9 +191,8 @@ def validate_model(token_count, withoutInstructAndInput=False):
                     withoutInstructAndInput == True
                 ])
                 
-        # Forward with the target token
-        
-        logits, state = model.forward([target], state)
+        # # Forward with the target token (no longer needed, with multi-token forward)
+        # logits, state = model.forward([target], state)
 
     # Write the CSV rows
     if csv_writer != None:
