@@ -106,6 +106,11 @@ def validate_model(token_count, withoutInstructAndInput=False):
     # Get the target tokens
     target_tokens = test_word_tokens[:token_count]
 
+    # Line break for verbose mode
+    if verbose:
+        print("## ------------------ ")
+        print(f'## Model validation for {token_count} tokens')
+
     logits = None
     state = None
 
@@ -127,40 +132,27 @@ def validate_model(token_count, withoutInstructAndInput=False):
     # Score counter
     matched_tokens = 0
 
-    # Line break for verbose mode
-    if verbose:
-        print("## ------------------ ")
-        print(f'## Model validation for {token_count} tokens')
-
-    all_logits, state = model.forward(target_tokens, state, all_logits=True)
-
     # CSV rows to write
     csv_rows = []
 
-    # Lets evaluate the logits, and check if they match one by one
-    for i in range(len(target_tokens)):
-        # Get the target token
-        target = target_tokens[i]
+    # Lets validate the first logits
+    # ----
+
+    def validateToken(logit, tokenIdx, match_count = 0):
+        sorted_probs, sorted_indices = torch.sort(logits, descending=True)
 
         # Apply token ban
         for n in token_ban:
-            all_logits[i][n] = -float('inf')
-
-        # We are using a custom sampling method to provide more insight
-        # to the probability distribution of the target token
-
-        # Softmax and Sample the logits
-        sorted_probs, sorted_indices = torch.sort(all_logits[i], descending=True)
-        # probs = F.softmax(all_logits[i], dim=-1)
-        # sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+            logits[n] = -float('inf')
 
         # Get the top token info
         top_token = sorted_indices[0].item()
         top_prob = sorted_probs[0].item()
 
         # Check if the token matches, and score it
+        target = target_tokens[tokenIdx]
         if top_token == target:
-            matched_tokens += 1
+            match_count += 1
 
         # Find the target token position
         if verbose or csv_writer != None:
@@ -185,14 +177,29 @@ def validate_model(token_count, withoutInstructAndInput=False):
                 top_token_str = top_token_str.encode('unicode_escape').decode('utf-8')
                 target_token_str = target_token_str.encode('unicode_escape').decode('utf-8')
                 csv_rows.append([
-                    token_count, i, top_token == target,
+                    token_count, tokenIdx, top_token == target,
                     top_token_str, top_prob,
                     target_token_str, target_pos, target_prob,
                     withoutInstructAndInput == True
                 ])
+
+        # Return matched count
+        return match_count
                 
-        # # Forward with the target token (no longer needed, with multi-token forward)
-        # logits, state = model.forward([target], state)
+    # Validate the first token
+    matched_tokens = validateToken(logits, 0)
+
+    # Forward all the target tokens in a single pass
+    # ---
+    all_logits, state = model.forward(target_tokens, state, all_logits=True)
+
+    # Lets evaluate the logits, and check if they match one by one
+    for i in range(len(target_tokens)-1):
+        # Get the logits
+        logits = all_logits[i]
+
+        # Validate the token
+        matched_tokens = validateToken(logits, i+1, matched_tokens,)
 
     # Write the CSV rows
     if csv_writer != None:
@@ -263,5 +270,5 @@ if EXTENDED_EVAL == False:
 
 else:
     # We validate in increments of 100 from 1100 to MAXTOKEN (inclusive)
-    for i in range(1100, MAX_TOKENS+1, 100):
+    for i in range(MIN_TOKENS, MAX_TOKENS+1, 100):
         validate_model(i)
