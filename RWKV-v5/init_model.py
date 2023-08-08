@@ -54,7 +54,7 @@ def init_model(
         else:
             if n == "emb.weight":
                 # scale = -1 * self.args.lr_init
-                scale = -1 * 0.1
+                scale = -1 * 0.0001
             else:
                 if shape[0] > shape[1]:
                     gain = math.sqrt(shape[0] / shape[1])

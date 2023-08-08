@@ -27,6 +27,8 @@ csv_file_path = None
 if len(sys.argv) >= 3:
     if sys.argv[2] == "verbose":
         verbose = True
+    elif sys.argv[2] == "none":
+        csv_file_path = None
     else:
         csv_file_path = sys.argv[2]
 
@@ -131,6 +133,9 @@ def validate_model(token_count, withoutInstructAndInput=False):
         print(f'## Model validation for {token_count} tokens')
 
     logits, state = model.forward(target_tokens[1:], state)
+    # CSV rows to write
+    csv_rows = []
+
     # Lets evaluate the logits, and check if they match one by one
     for i in range(len(target_tokens)):
         # Get the target token
@@ -177,16 +182,20 @@ def validate_model(token_count, withoutInstructAndInput=False):
                 # We need to encode the strings safely (escape special characters, new lines, etc)
                 top_token_str = top_token_str.encode('unicode_escape').decode('utf-8')
                 target_token_str = target_token_str.encode('unicode_escape').decode('utf-8')
-                csv_writer.writerow([
+                csv_rows.append([
                     token_count, i, top_token == target,
                     top_token_str, top_prob,
                     target_token_str, target_pos, target_prob,
                     withoutInstructAndInput == True
                 ])
-            
-        
+                
         # Forward with the target token
         
+        logits, state = model.forward([target], state)
+
+    # Write the CSV rows
+    if csv_writer != None:
+        csv_writer.writerows(csv_rows)
     
     # Percentage token match
     matched_percentage = matched_tokens / token_count * 100.0
@@ -213,31 +222,45 @@ print("###")
 print("### Model validation start ###")
 print("###")
 
+# Check if its an extended eval set
+if len(sys.argv) == 4:
+    EXTENDED_EVAL = True
+    
+    # Get the int value from sys.argv[3]
+    MAX_TOKENS = int(sys.argv[3])
+    MIN_TOKENS = 1100
+elif len(sys.argv) == 5:
+    EXTENDED_EVAL = True
+    
+    # Get the int value from sys.argv[3]/[4]
+    MIN_TOKENS = int(sys.argv[3])
+    MAX_TOKENS = int(sys.argv[4])
+else:
+    EXTENDED_EVAL = False
+
 # Validate the model at different token counts
+if EXTENDED_EVAL == False:
+    # We validate in increments of 5, from 5 to 150
+    for i in range(5, 150, 5):
+        validate_model(i)
 
-# We validate in increments of 5, from 5 to 150
-for i in range(5, 150, 5):
-    validate_model(i)
+    # We validate in increments of 10 from 150 to 300
+    for i in range(150, 300, 10):
+        validate_model(i)
 
-# We validate in increments of 10 from 150 to 300
-for i in range(150, 300, 10):
-    validate_model(i)
+    # We validate in increments of 25 from 300 to 700
+    for i in range(300, 700, 25):
+        validate_model(i)
 
-# We validate in increments of 25 from 300 to 700
-for i in range(300, 700, 25):
-    validate_model(i)
+    # We validate in increments of 50 from 700 to MAXTOKEN (inclusive)
+    for i in range(700, MAX_TOKENS+1, 50):
+        validate_model(i)
 
-# We validate in increments of 50 from 700 to MAXTOKEN (inclusive)
-for i in range(700, MAX_TOKENS+1, 50):
-    validate_model(i)
+    # Lets do the baseline
+    if csv_file_path != None:
+        validate_model(MAX_TOKENS, withoutInstructAndInput=True)
 
-# Lets do the baseline
-if csv_file_path != None:
-    validate_model(MAX_TOKENS, withoutInstructAndInput=True)
-
-# validate_model(750)
-# validate_model(800)
-# validate_model(850)
-# validate_model(900)
-# validate_model(950)
-# validate_model(1000)
+else:
+    # We validate in increments of 100 from 1100 to MAXTOKEN (inclusive)
+    for i in range(1100, MAX_TOKENS+1, 100):
+        validate_model(i)
