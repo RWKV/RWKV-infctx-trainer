@@ -27,6 +27,8 @@ csv_file_path = None
 if len(sys.argv) >= 3:
     if sys.argv[2] == "verbose":
         verbose = True
+    elif sys.argv[2] == "none":
+        csv_file_path = None
     else:
         csv_file_path = sys.argv[2]
 
