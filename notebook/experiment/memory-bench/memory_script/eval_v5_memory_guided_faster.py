@@ -118,7 +118,7 @@ def validate_model(token_count, withoutInstructAndInput=False):
     # having the option to disable this, helps us have a randomized baseline score
     if withoutInstructAndInput == True:
         # Because we actuall need a logit to start with, we compromise with a new line at minimum
-        logits, state = model.forward([newline_token], state)
+        first_logits, state = model.forward([newline_token], state)
     else:
         # Clone the state
         state = copy.deepcopy(prompt_prefix_state)
@@ -127,7 +127,7 @@ def validate_model(token_count, withoutInstructAndInput=False):
         logits, state = model.forward(target_tokens, state)
 
         # Compute the mid segment
-        logits, state = model.forward(mid_segment_tokens, state)
+        first_logits, state = model.forward(mid_segment_tokens, state)
 
     # Score counter
     matched_tokens = 0
@@ -139,11 +139,15 @@ def validate_model(token_count, withoutInstructAndInput=False):
     # ----
 
     def validateToken(logit, tokenIdx, match_count = 0):
-        sorted_probs, sorted_indices = torch.sort(logits, descending=True)
-
         # Apply token ban
         for n in token_ban:
-            logits[n] = -float('inf')
+            logit[n] = -float('inf')
+
+        # (sort in gpu if possible ??)
+        # logit = logit.to("gpu")
+
+        # Sort the logits 
+        sorted_probs, sorted_indices = torch.sort(logit, descending=True)
 
         # Get the top token info
         top_token = sorted_indices[0].item()
@@ -187,7 +191,7 @@ def validate_model(token_count, withoutInstructAndInput=False):
         return match_count
                 
     # Validate the first token
-    matched_tokens = validateToken(logits, 0)
+    matched_tokens = validateToken(first_logits, 0)
 
     # Forward all the target tokens in a single pass
     # ---
@@ -199,7 +203,7 @@ def validate_model(token_count, withoutInstructAndInput=False):
         logits = all_logits[i]
 
         # Validate the token
-        matched_tokens = validateToken(logits, i+1, matched_tokens,)
+        matched_tokens = validateToken(logits, i+1, matched_tokens)
 
     # Write the CSV rows
     if csv_writer != None:
