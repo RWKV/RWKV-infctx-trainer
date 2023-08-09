@@ -12,38 +12,55 @@ sys.path.insert(1, MODEL_CODE_DIR)
 # Special multi-threaded sorting code
 #---
 
-import ray
+# import ray
 
-import torch
-import ray
-from multiprocessing import cpu_count
-NUM_THREADS = cpu_count()
+# import torch
+# import ray
+# from multiprocessing import cpu_count
+# NUM_THREADS = cpu_count()
 
-ray.init(num_cpus=NUM_THREADS)  # Initialize Ray
+# ray.init(num_cpus=NUM_THREADS)  # Initialize Ray
 
-# Sort logits
-@ray.remote  # Annotation to make the function a remote function
-def sortLogits(logits):
-    return torch.sort(logits, descending=True)
+# # Sort logits
+# @ray.remote  # Annotation to make the function a remote function
+# def sortLogits(logits):
+#     return torch.sort(logits, descending=True)
 
-# The sorting function
-def sortLogitSet(all_logits, token_ban):
-    list_of_future_objs = []
+# # The sorting function
+# def sortLogitSet(all_logits, token_ban):
+#     # Apply token ban
+#     for n in token_ban:
+#         all_logits[:,n] = -float('inf')
+    
+#     # GPU based sort
+#     all_logits = all_logits.to('cuda')
+#     sorted, indices = torch.sort(all_logits, descending=True, stable=True)
+#     argsorted = torch.argsort(all_logits, descending=False, stable=True)
 
-    # Apply token ban
-    for i in range(len(all_logits)):
-        logit = all_logits[i]
-        logit = logit.to('cpu')
+#     # Convert to CPU
+#     sorted = sorted.to('cpu')
+#     indices = indices.to('cpu')
+#     argsorted = argsorted.to('cpu')
 
-        for n in token_ban:
-            logit[n] = -float('inf')
-        
-        future = sortLogits.remote(logit)  # Invoke a task asynchronously
-        list_of_future_objs.append(future)
+#     # Convert to list
+#     sorted_pairs = []
+#     for i in range(len(all_logits)):
+#         sorted_pairs.append((sorted[i], indices[i]))
+#     return sorted_pairs
 
-    # Sort logit pairs, done in multi-threaded process
-    sorted_pairs = ray.get(list_of_future_objs)  # Get the results.
-    return sorted_pairs
+
+#     # # RAY cpu based sorting
+#     # list_of_future_objs = []
+#     # for i in range(len(all_logits)):
+#     #     logit = all_logits[i]
+#     #     logit = logit.to('cpu')
+
+#     #     future = sortLogits.remote(logit)  # Invoke a task asynchronously
+#     #     list_of_future_objs.append(future)
+
+#     # # Sort logit pairs, done in multi-threaded process
+#     # sorted_pairs = ray.get(list_of_future_objs)  # Get the results.
+#     # return sorted_pairs
 
 #---
 # Given the RWKV model path
@@ -155,7 +172,7 @@ async def main_function():
     async def validate_model(token_count, withoutInstructAndInput=False):
         # Start the performance timer
         start_time = time.time()
-        print("-- Validating model for token count: ", token_count)
+        # print(f"-- Validating model for token count: ", token_count)
 
         # Get the target tokens
         target_tokens = test_word_tokens[:token_count]
@@ -189,10 +206,10 @@ async def main_function():
         # CSV rows to write
         csv_rows = []
 
-        # Lets validate the first logits
+        # Common validation function
         # ----
 
-        async def validateToken(sorted_probs, sorted_indices, tokenIdx, match_count = 0):
+        async def validateToken(sorted_probs, sorted_indices, softmax_arr, argsort_arr, tokenIdx, match_count = 0):
             # Get the top token info
             top_token = sorted_indices[0].item()
             top_prob = sorted_probs[0].item()
@@ -204,19 +221,16 @@ async def main_function():
 
             # Find the target token position
             if verbose or csv_writer != None:
-                for j in range(len(sorted_indices)):
-                    if sorted_indices[j].item() == target:
-                        target_pos = j
-                        target_prob = sorted_probs[j].item()
+                target_pos = argsort_arr[target].item()
+                target_prob = softmax_arr[target].item()
 
                 # Get top_token_str & target_token_str, but because an error can happen, we catch it
                 try:
-                    top_token_str = model.decode([top_token])
+                    top_token_str = model.decode([top_token]).encode('unicode_escape').decode('utf-8')
                 except:
                     top_token_str = "<UNSAFE_TOKEN_FORMAT>"
-
                 try:
-                    target_token_str = model.decode([target])
+                    target_token_str = model.decode([target]).encode('unicode_escape').decode('utf-8')
                 except:
                     target_token_str = "<UNSAFE_TOKEN_FORMAT>"
 
@@ -230,8 +244,6 @@ async def main_function():
                 # Log it to CSV file if enabled
                 if csv_writer != None:
                     # We need to encode the strings safely (escape special characters, new lines, etc)
-                    top_token_str = top_token_str.encode('unicode_escape').decode('utf-8')
-                    target_token_str = target_token_str.encode('unicode_escape').decode('utf-8')
                     csv_rows.append([
                         token_count, tokenIdx, top_token == target,
                         top_token_str, top_prob,
@@ -241,42 +253,59 @@ async def main_function():
 
             # Return matched count
             return match_count
-                    
+                 
+        # Lets validate the first logits
+        # ----
+   
         # Apply token ban
         for n in token_ban:
             first_logits[n] = -float('inf')
 
         # Validate the first token (special case)
-        sorted_probs, sorted_indices = torch.sort(first_logits, descending=True)
-        matched_tokens = await validateToken(sorted_probs, sorted_indices, 0)
+        first_logits = torch.softmax(first_logits, dim=-1)
+        sorted_probs, sorted_indices = torch.sort(first_logits, descending=True, stable=True)
+        argsort_arr = torch.argsort(first_logits, descending=True, stable=True)
+        matched_tokens = await validateToken(sorted_probs, sorted_indices, first_logits, argsort_arr, 0)
 
         # Print the timing till now
-        print(f"-- Finished validating first token ({time.time() - start_time:.2f}s)")
+        # print(f"-- Finished validating first token ({time.time() - start_time:.2f}s)")
 
         # Forward all the target tokens in a single pass
         # ---
         all_logits, state = model.forward(target_tokens, state, all_logits=True)
-        print(f"-- Finished multi-token forward pass ({time.time() - start_time:.2f}s)")
+        # print(f"-- Finished multi-token forward pass ({time.time() - start_time:.2f}s)")
 
-        # Sorted logit pairs
-        sortedSet = sortLogitSet(all_logits, token_ban)
-        print(f"-- Finished sorting logits ({time.time() - start_time:.2f}s)")
+        # Extract the sorted values, and cast them to CPU
+        # ---
+        # Apply token ban
+        for n in token_ban:
+            all_logits[:,n] = -float('inf')
+
+        # GPU based sort
+        all_logits = all_logits.to('cuda')
+        all_logits = torch.softmax(all_logits, dim=-1)
+        sorted_probs, sorted_indices = torch.sort(all_logits, descending=True, stable=True)
+        argsorted_arr = torch.argsort(all_logits, descending=False, stable=True)
+
+        # Convert back to CPU land
+        sorted_probs = sorted_probs.to('cpu')
+        sorted_indices = sorted_indices.to('cpu')
+        argsorted_arr = argsorted_arr.to('cpu')
+
+        # print(f"-- Finished sorting logits ({time.time() - start_time:.2f}s)")
 
         # Lets evaluate the logits, and check if they match one by one
         for i in range(len(target_tokens)-1):
-            # Get the sorted set
-            sorted_probs, sorted_indices = sortedSet[i]
-
             # Validate the token
-            matched_tokens = await validateToken(sorted_probs, sorted_indices, i+1, matched_tokens)
+            matched_tokens = await validateToken(sorted_probs[i], sorted_indices[i], all_logits[i], argsorted_arr[i], i+1, matched_tokens)
 
-        print(f"-- Finished token matching ({time.time() - start_time:.2f}s)")
+        # print(f"-- Finished token matching ({time.time() - start_time:.2f}s)")
 
         # Write the CSV rows
         if csv_writer != None:
             await csv_writer.writerows(csv_rows)
 
-        print(f"-- Finished CSV write ({time.time() - start_time:.2f}s)")
+        # print(f"-- Finished CSV write ({time.time() - start_time:.2f}s)")
         
         # Percentage token match
         matched_percentage = matched_tokens / token_count * 100.0
