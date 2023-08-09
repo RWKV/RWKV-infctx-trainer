@@ -115,7 +115,7 @@ async def main_function():
         return target_words
 
     # Function for validating once the model at a specific token count
-    def validate_model(token_count, withoutInstructAndInput=False):
+    async def validate_model(token_count, withoutInstructAndInput=False):
         # Get the target tokens
         target_tokens = test_word_tokens[:token_count]
 
@@ -151,7 +151,7 @@ async def main_function():
         # Lets validate the first logits
         # ----
 
-        def validateToken(logit, tokenIdx, match_count = 0):
+        async def validateToken(logit, tokenIdx, match_count = 0):
             # Apply token ban
             for n in token_ban:
                 logit[n] = -float('inf')
@@ -204,7 +204,7 @@ async def main_function():
             return match_count
                     
         # Validate the first token
-        matched_tokens = validateToken(first_logits, 0)
+        matched_tokens = await validateToken(first_logits, 0)
 
         # Forward all the target tokens in a single pass
         # ---
@@ -216,7 +216,7 @@ async def main_function():
             logits = all_logits[i]
 
             # Validate the token
-            matched_tokens = validateToken(logits, i+1, matched_tokens)
+            matched_tokens = await validateToken(logits, i+1, matched_tokens)
 
         # Write the CSV rows
         if csv_writer != None:
@@ -267,28 +267,28 @@ async def main_function():
     if EXTENDED_EVAL == False:
         # We validate in increments of 5, from 5 to 150
         for i in range(5, 150, 5):
-            validate_model(i)
+            await validate_model(i)
 
         # We validate in increments of 10 from 150 to 300
         for i in range(150, 300, 10):
-            validate_model(i)
+            await validate_model(i)
 
         # We validate in increments of 25 from 300 to 700
         for i in range(300, 700, 25):
-            validate_model(i)
+            await validate_model(i)
 
         # We validate in increments of 50 from 700 to MAXTOKEN (inclusive)
         for i in range(700, MAX_TOKENS+1, 50):
-            validate_model(i)
+            await validate_model(i)
 
         # Lets do the baseline
         if csv_file_path != None:
-            validate_model(MAX_TOKENS, withoutInstructAndInput=True)
+            await validate_model(MAX_TOKENS, withoutInstructAndInput=True)
 
     else:
         # We validate in increments of 100 from 1100 to MAXTOKEN (inclusive)
         for i in range(MIN_TOKENS, MAX_TOKENS+1, 100):
-            validate_model(i)
+            await validate_model(i)
 
 
 if __name__ == '__main__':
