@@ -154,7 +154,7 @@ async def main_function():
         # Common validation function
         # ----
 
-        async def validateToken(sorted_probs, sorted_indices, softmax_arr, argsort_arr, tokenIdx, match_count = 0):
+        async def validateToken(sorted_probs, sorted_indices, softmax_arr, tokenIdx, match_count = 0):
             # Get the top token info
             top_token = sorted_indices[0].item()
             top_prob = sorted_probs[0].item()
@@ -166,8 +166,12 @@ async def main_function():
 
             # Find the target token position
             if verbose or csv_writer != None:
-                target_pos = argsort_arr[target].item()
                 target_prob = softmax_arr[target].item()
+                target_pos = 0
+                for i in range(len(sorted_indices)):
+                    if sorted_indices[i].item() == target:
+                        target_pos = i
+                        break
 
                 # Get top_token_str & target_token_str, but because an error can happen, we catch it
                 try:
@@ -208,9 +212,8 @@ async def main_function():
 
         # Validate the first token (special case)
         first_logits = torch.softmax(first_logits, dim=-1)
-        sorted_probs, sorted_indices = torch.sort(first_logits, descending=True, stable=True)
-        argsort_arr = torch.argsort(first_logits, descending=True, stable=True)
-        matched_tokens = await validateToken(sorted_probs, sorted_indices, first_logits, argsort_arr, 0)
+        sorted_probs, sorted_indices = torch.sort(first_logits, descending=True, stable=True, dim=-1)
+        matched_tokens = await validateToken(sorted_probs, sorted_indices, first_logits, 0)
 
         # Print the timing till now
         # print(f"-- Finished validating first token ({time.time() - start_time:.2f}s)")
@@ -229,20 +232,18 @@ async def main_function():
         # GPU based sort
         all_logits = all_logits.to('cuda')
         all_logits = torch.softmax(all_logits, dim=-1)
-        sorted_probs, sorted_indices = torch.sort(all_logits, descending=True, stable=True)
-        argsorted_arr = torch.argsort(all_logits, descending=False, stable=True)
+        sorted_probs, sorted_indices = torch.sort(all_logits, descending=True, stable=True, dim=-1)
 
         # Convert back to CPU land
         sorted_probs = sorted_probs.to('cpu')
         sorted_indices = sorted_indices.to('cpu')
-        argsorted_arr = argsorted_arr.to('cpu')
 
         # print(f"-- Finished sorting logits ({time.time() - start_time:.2f}s)")
 
         # Lets evaluate the logits, and check if they match one by one
         for i in range(len(target_tokens)-1):
             # Validate the token
-            matched_tokens = await validateToken(sorted_probs[i], sorted_indices[i], all_logits[i], argsorted_arr[i], i+1, matched_tokens)
+            matched_tokens = await validateToken(sorted_probs[i], sorted_indices[i], all_logits[i], i+1, matched_tokens)
 
         # print(f"-- Finished token matching ({time.time() - start_time:.2f}s)")
 
