@@ -12,21 +12,37 @@ sys.path.insert(1, MODEL_CODE_DIR)
 # Special multi-threaded sorting code
 #---
 
-# Multi processing handling
+import ray
+
 import torch
-from multiprocessing import Pool
+import ray
 from multiprocessing import cpu_count
 NUM_THREADS = cpu_count()
 
+ray.init(num_cpus=NUM_THREADS)  # Initialize Ray
+
 # Sort logits
+@ray.remote  # Annotation to make the function a remote function
 def sortLogits(logits):
     return torch.sort(logits, descending=True)
 
 # The sorting function
 def sortLogitSet(all_logits, token_ban):
-    # Sorted logit pairs, done in multi-threaded process
-    with Pool(NUM_THREADS) as p:
-        sorted_pairs = p.map(sortLogits, all_logits)
+    list_of_future_objs = []
+
+    # Apply token ban
+    for i in range(len(all_logits)):
+        logit = all_logits[i]
+        logit = logit.to('cpu')
+
+        for n in token_ban:
+            logit[n] = -float('inf')
+        
+        future = sortLogits.remote(logit)  # Invoke a task asynchronously
+        list_of_future_objs.append(future)
+
+    # Sort logit pairs, done in multi-threaded process
+    sorted_pairs = ray.get(list_of_future_objs)  # Get the results.
     return sorted_pairs
 
 #---
@@ -188,8 +204,16 @@ async def main_function():
                         target_pos = j
                         target_prob = sorted_probs[j].item()
 
-                top_token_str = model.decode([top_token])
-                target_token_str = model.decode([target])
+                # Get top_token_str & target_token_str, but because an error can happen, we catch it
+                try:
+                    top_token_str = model.decode([top_token])
+                except:
+                    top_token_str = "<UNSAFE_TOKEN_FORMAT>"
+
+                try:
+                    target_token_str = model.decode([target])
+                except:
+                    target_token_str = "<UNSAFE_TOKEN_FORMAT>"
 
                 # Print the results, for verbose
                 if verbose:
@@ -217,7 +241,7 @@ async def main_function():
         for n in token_ban:
             first_logits[n] = -float('inf')
 
-        # Validate the first token
+        # Validate the first token (special case)
         sorted_probs, sorted_indices = torch.sort(first_logits, descending=True)
         matched_tokens = await validateToken(sorted_probs, sorted_indices, 0)
 
@@ -225,18 +249,13 @@ async def main_function():
         # ---
         all_logits, state = model.forward(target_tokens, state, all_logits=True)
 
-        # Apply token ban
-        for i in range(len(target_tokens)-1):
-            for n in token_ban:
-                all_logits[i][n] = -float('inf')
-
         # Sorted logit pairs
+        sortedSet = sortLogitSet(all_logits, token_ban)
 
         # Lets evaluate the logits, and check if they match one by one
         for i in range(len(target_tokens)-1):
-            # Get the logits
-            logits = all_logits[i]
-            sorted_probs, sorted_indices = torch.sort(logits, descending=True)
+            # Get the sorted set
+            sorted_probs, sorted_indices = sortedSet[i]
 
             # Validate the token
             matched_tokens = await validateToken(sorted_probs, sorted_indices, i+1, matched_tokens)
