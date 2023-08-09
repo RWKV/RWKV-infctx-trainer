@@ -123,10 +123,9 @@ async def main_function():
         # Get the target tokens
         target_tokens = test_word_tokens[:token_count]
 
-        # # Line break for verbose mode
-        # if verbose:
-        #     print("## ------------------ ")
-        #     print(f'## Model validation for {token_count} tokens')
+        # Validate that hte token list match the target token count (throw an error if not)
+        if len(target_tokens) != token_count:
+            raise Exception("Target tokens count mismatch - target is probably larger then the eval word list")
 
         logits = None
         state = None
