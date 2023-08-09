@@ -69,6 +69,7 @@ async def main_function():
     from torch.nn import functional as F
     import csv
     import aiofiles
+    import time
     from aiocsv import AsyncReader, AsyncDictReader, AsyncWriter, AsyncDictWriter
 
     # Check for argument, else throw error
@@ -152,13 +153,17 @@ async def main_function():
 
     # Function for validating once the model at a specific token count
     async def validate_model(token_count, withoutInstructAndInput=False):
+        # Start the performance timer
+        start_time = time.time()
+        print("-- Validating model for token count: ", token_count)
+
         # Get the target tokens
         target_tokens = test_word_tokens[:token_count]
 
-        # Line break for verbose mode
-        if verbose:
-            print("## ------------------ ")
-            print(f'## Model validation for {token_count} tokens')
+        # # Line break for verbose mode
+        # if verbose:
+        #     print("## ------------------ ")
+        #     print(f'## Model validation for {token_count} tokens')
 
         logits = None
         state = None
@@ -245,12 +250,17 @@ async def main_function():
         sorted_probs, sorted_indices = torch.sort(first_logits, descending=True)
         matched_tokens = await validateToken(sorted_probs, sorted_indices, 0)
 
+        # Print the timing till now
+        print(f"-- Finished validating first token ({time.time() - start_time:.2f}s)")
+
         # Forward all the target tokens in a single pass
         # ---
         all_logits, state = model.forward(target_tokens, state, all_logits=True)
+        print(f"-- Finished multi-token forward pass ({time.time() - start_time:.2f}s)")
 
         # Sorted logit pairs
         sortedSet = sortLogitSet(all_logits, token_ban)
+        print(f"-- Finished sorting logits ({time.time() - start_time:.2f}s)")
 
         # Lets evaluate the logits, and check if they match one by one
         for i in range(len(target_tokens)-1):
@@ -260,9 +270,13 @@ async def main_function():
             # Validate the token
             matched_tokens = await validateToken(sorted_probs, sorted_indices, i+1, matched_tokens)
 
+        print(f"-- Finished token matching ({time.time() - start_time:.2f}s)")
+
         # Write the CSV rows
         if csv_writer != None:
             await csv_writer.writerows(csv_rows)
+
+        print(f"-- Finished CSV write ({time.time() - start_time:.2f}s)")
         
         # Percentage token match
         matched_percentage = matched_tokens / token_count * 100.0
