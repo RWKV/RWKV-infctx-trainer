@@ -1428,7 +1428,7 @@ class SimpleRWKV():
             wkv_states = stateObj["wkv_states"]
         
         # The all_logits array, if requested
-        all_logits_arr = []
+        all_logits_arr = None
 
         # For each token, process the state, in batches up to ctx_len
         for i in range(0, token_len, self.ctx_len):
@@ -1448,8 +1448,10 @@ class SimpleRWKV():
 
             # Build the all_logits array
             if all_logits:
-                for a in range(len(token_set)):
-                    all_logits_arr.append(logits_arr[0][a])
+                if all_logits_arr is None:
+                    all_logits_arr = logits_arr[0]
+                else:
+                    all_logits_arr = torch.cat([all_logits_arr, logits_arr[0]], dim=0)
 
         # Return the logits and state
         if all_logits:
