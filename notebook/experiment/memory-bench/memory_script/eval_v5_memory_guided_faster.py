@@ -9,6 +9,27 @@ MODEL_CODE_DIR = os.path.join(PROJECT_DIR, 'RWKV-v5')
 sys.path.insert(1, MODEL_CODE_DIR)
 
 #---
+# Special multi-threaded sorting code
+#---
+
+# Multi processing handling
+import torch
+from multiprocessing import Pool
+from multiprocessing import cpu_count
+NUM_THREADS = cpu_count()
+
+# Sort logits
+def sortLogits(logits):
+    return torch.sort(logits, descending=True)
+
+# The sorting function
+def sortLogitSet(all_logits, token_ban):
+    # Sorted logit pairs, done in multi-threaded process
+    with Pool(NUM_THREADS) as p:
+        sorted_pairs = p.map(sortLogits, all_logits)
+    return sorted_pairs
+
+#---
 # Given the RWKV model path
 # Evaluate token memorization capabilities of the model
 #
@@ -78,12 +99,11 @@ async def main_function():
             os.makedirs(csv_file_dir)
 
         # Open the CSV file
-        import csv
-        csv_file_handle = open(csv_file_path, 'w', newline='') 
-        csv_writer = csv.writer(csv_file_handle)
+        csv_file_handle = await aiofiles.open(csv_file_path, 'w', encoding="utf-8", newline="")
+        csv_writer = AsyncWriter(csv_file_handle, dialect="unix")
 
         # Write the header
-        csv_writer.writerow([
+        await csv_writer.writerow([
             'eval_token_count', 'token_idx', 'matched', 
             'top_token_str', 'top_token_percentage', 
             'eval_token_str', 'eval_token_pos', 'eval_token_percentage', 
@@ -151,17 +171,7 @@ async def main_function():
         # Lets validate the first logits
         # ----
 
-        async def validateToken(logit, tokenIdx, match_count = 0):
-            # Apply token ban
-            for n in token_ban:
-                logit[n] = -float('inf')
-
-            # (sort in gpu if possible ??)
-            # logit = logit.to("gpu")
-
-            # Sort the logits 
-            sorted_probs, sorted_indices = torch.sort(logit, descending=True)
-
+        async def validateToken(sorted_probs, sorted_indices, tokenIdx, match_count = 0):
             # Get the top token info
             top_token = sorted_indices[0].item()
             top_prob = sorted_probs[0].item()
@@ -203,24 +213,37 @@ async def main_function():
             # Return matched count
             return match_count
                     
+        # Apply token ban
+        for n in token_ban:
+            first_logits[n] = -float('inf')
+
         # Validate the first token
-        matched_tokens = await validateToken(first_logits, 0)
+        sorted_probs, sorted_indices = torch.sort(first_logits, descending=True)
+        matched_tokens = await validateToken(sorted_probs, sorted_indices, 0)
 
         # Forward all the target tokens in a single pass
         # ---
         all_logits, state = model.forward(target_tokens, state, all_logits=True)
 
+        # Apply token ban
+        for i in range(len(target_tokens)-1):
+            for n in token_ban:
+                all_logits[i][n] = -float('inf')
+
+        # Sorted logit pairs
+
         # Lets evaluate the logits, and check if they match one by one
         for i in range(len(target_tokens)-1):
             # Get the logits
             logits = all_logits[i]
+            sorted_probs, sorted_indices = torch.sort(logits, descending=True)
 
             # Validate the token
-            matched_tokens = await validateToken(logits, i+1, matched_tokens)
+            matched_tokens = await validateToken(sorted_probs, sorted_indices, i+1, matched_tokens)
 
         # Write the CSV rows
         if csv_writer != None:
-            csv_writer.writerows(csv_rows)
+            await csv_writer.writerows(csv_rows)
         
         # Percentage token match
         matched_percentage = matched_tokens / token_count * 100.0
