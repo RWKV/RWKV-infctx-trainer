@@ -1445,10 +1445,12 @@ class SimpleRWKV():
 
         # Get the shift/wkv state
         if stateObj is None:
-            shift_states = None
+            att_shift_state = None
+            ffn_shift_state = None
             wkv_states = None
         else:
-            shift_states = stateObj["shift_states"]
+            att_shift_state = stateObj["att_shift_state"]
+            ffn_shift_state = stateObj["ffn_shift_state"]
             wkv_states = stateObj["wkv_states"]
         
         # The all_logits array, if requested
@@ -1466,8 +1468,8 @@ class SimpleRWKV():
             ).unsqueeze(0)
             
             # Compute the logits and state
-            logits_arr, shift_states, wkv_states = self.model.forward(
-                batch_tokens, shift_states, wkv_states
+            logits_arr, att_shift_state, ffn_shift_state, wkv_states = self.model.forward(
+                batch_tokens, att_shift_state, ffn_shift_state, wkv_states
             )
 
             # Build the all_logits array
@@ -1479,9 +1481,9 @@ class SimpleRWKV():
 
         # Return the logits and state
         if all_logits:
-            return all_logits_arr, { "shift_states": shift_states, "wkv_states": wkv_states }
+            return all_logits_arr, { "att_shift_state": att_shift_state, "ffn_shift_state":ffn_shift_state, "wkv_states": wkv_states }
         else:
-            return logits_arr[0][-1], { "shift_states": shift_states, "wkv_states": wkv_states }
+            return logits_arr[0][-1], { "att_shift_state": att_shift_state, "ffn_shift_state":ffn_shift_state, "wkv_states": wkv_states }
     
     # Forwarding logic, with torch._no_grad() context
     def forward(
