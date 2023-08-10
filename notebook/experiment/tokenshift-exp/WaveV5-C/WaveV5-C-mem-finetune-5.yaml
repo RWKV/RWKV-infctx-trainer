@@ -79,7 +79,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/WaveV5-C-mem-finetune-4/
+      dirpath: ../checkpoint/WaveV5-C-mem-finetune-5/
       filename: null
       
       # Save the top/last K checkpoints
