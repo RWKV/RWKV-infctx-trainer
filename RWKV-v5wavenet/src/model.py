@@ -251,7 +251,7 @@ class RWKV_TimeMix(JITModClass):
 
         # Channel tokenshift
         shiftamount = pow(2,layer_id)
-        if(shiftamount > (2048*2)):
+        if(shiftamount > (2048*4)):
             shiftamount = 1
         self.time_shift = nn.ZeroPad2d((0, 0, shiftamount, -shiftamount))
 
