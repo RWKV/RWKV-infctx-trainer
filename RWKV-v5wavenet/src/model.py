@@ -564,7 +564,7 @@ class RWKV(L.LightningModule):
                  ctx_len_cutoffs: List[int] = [],
                  ctx_len_warmup_steps: List[int] = [],
                  # Wavenet layer count
-                 wavenet_layers: int = 12,
+                 wavenet_layers: int = -1,
                  # Learning rate schedule
                  # use only target_lr_init / lr_init
                  # to configure a constant learning rate
@@ -659,6 +659,14 @@ class RWKV(L.LightningModule):
         self.bptt_truncated_learning = bptt_truncated_learning
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
+
+        # Handle wavenet layering
+        if wavenet_layers < 0:
+            # Get from ENV variable
+            if 'RWKV_WAVENET_LAYERS' in os.environ:
+                wavenet_layers = int(os.environ['RWKV_WAVENET_LAYERS'])
+            else:
+                wavenet_layers = 12
         self.wavenet_layers = wavenet_layers
 
         dim_att = dim_att or n_embd
