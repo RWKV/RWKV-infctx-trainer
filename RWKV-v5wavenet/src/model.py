@@ -158,15 +158,16 @@ class BlockState:
 
 class BlockStateList:
 
-    def __init__(self, att_shift_states, ffn_shift_states, wkv_states):
+    def __init__(self, att_shift_states, ffn_shift_states, wkv_states, wavenet_layers:int):
         self.wkv_states = wkv_states
         self.att_shift_states = att_shift_states
         self.ffn_shift_states = ffn_shift_states
+        self.wavenet_layers = wavenet_layers
 
     # @ TCompileMax (no difference)
     @staticmethod
-    def create(N, B, C, n_head, head_size, device, dtype):
-        result = BlockStateList.empty(N, B, C, n_head, head_size, device, dtype)
+    def create(N, B, C, n_head, head_size, device, dtype, wavenet_layers:int):
+        result = BlockStateList.empty(N, B, C, n_head, head_size, device, dtype, wavenet_layers)
         result.wkv_states[:] = 0
         # result.wkv_states[:, :, :, -1] = -1e38
         result.att_shift_states[:] = 0
@@ -175,16 +176,16 @@ class BlockStateList:
 
     # @ TCompileMax (no difference)
     @staticmethod
-    def empty(N, B, C, n_head, head_size, device, dtype):
+    def empty(N, B, C, n_head, head_size, device, dtype, wavenet_layers:int):
         # @TODO: confirm if dtype can be changed from .flaot to dtype=dtype (when bf16)
         wkv_states = torch.empty((N, B, n_head, head_size, head_size),
                                  device=device,
                                 #  dtype=dtype)
                                  dtype=torch.float)
-        	        # @TODO : Make the state storage layer, configurable (instead of hard code 12 now)
-        att_shift_states = torch.empty((N, B, 2**12, C), device=device, dtype=dtype)
+        # wavenet_layers should default to 12
+        att_shift_states = torch.empty((N, B, 2**(wavenet_layers), C), device=device, dtype=dtype)
         ffn_shift_states = torch.empty((N, B, 1, C), device=device, dtype=dtype)
-        return BlockStateList(att_shift_states, ffn_shift_states, wkv_states)
+        return BlockStateList(att_shift_states, ffn_shift_states, wkv_states, wavenet_layers)
 
     def __getitem__(self, layer: int):
         return BlockState(
@@ -192,8 +193,8 @@ class BlockStateList:
             ChannelMixState(self.ffn_shift_states[layer]))
 
     def __setitem__(self, layer: int, state: BlockState):
-        # @TODO : Make the state storage layer, configurable (instead of hard code 12 now)
-        self.att_shift_states[layer] = state.time_mix_state.shift_state[:,-(2**12):,:]
+        # Use configurable wavenet_layers
+        self.att_shift_states[layer] = state.time_mix_state.shift_state[:,-(2**(self.wavenet_layers)):,:]
         self.ffn_shift_states[layer] = state.channel_mix_state.shift_state
         self.wkv_states[layer] = state.time_mix_state.wkv_state
 
@@ -203,7 +204,7 @@ class BlockStateList:
 
 class RWKV_TimeMix(JITModClass):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, wavenet_layers:int):
         super().__init__()
         
         self.dim_att = dim_att
@@ -251,7 +252,8 @@ class RWKV_TimeMix(JITModClass):
 
         # Channel tokenshift
         shiftamount = pow(2,layer_id)
-        if(shiftamount > (2048*4)):
+        maxshift = pow(2, wavenet_layers)
+        if(shiftamount > maxshift):
             shiftamount = 1
         self.time_shift = nn.ZeroPad2d((0, 0, shiftamount, -shiftamount))
 
@@ -458,7 +460,7 @@ class RWKV_ChannelMix(JITModClass):
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, wavenet_layers:int):
         super().__init__()
         self.layer_id = layer_id
 
@@ -468,7 +470,7 @@ class Block(nn.Module):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
 
-        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att, wavenet_layers)
         self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
 
         # Setup droupout at block level
@@ -561,6 +563,8 @@ class RWKV(L.LightningModule):
                  # Context length schedule
                  ctx_len_cutoffs: List[int] = [],
                  ctx_len_warmup_steps: List[int] = [],
+                 # Wavenet layer count
+                 wavenet_layers: int = 12,
                  # Learning rate schedule
                  # use only target_lr_init / lr_init
                  # to configure a constant learning rate
@@ -655,6 +659,7 @@ class RWKV(L.LightningModule):
         self.bptt_truncated_learning = bptt_truncated_learning
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
+        self.wavenet_layers = wavenet_layers
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or n_embd * 4
@@ -689,7 +694,7 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, wavenet_layers) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)
@@ -933,17 +938,18 @@ class RWKV(L.LightningModule):
 
         new_states = BlockStateList.empty(self.n_layer, B, self.n_embd, 
                                           self.n_head, self.head_size,
-                                          x.device, x.dtype)
+                                          x.device, x.dtype, self.wavenet_layers)
         
         # last_shift_states can be None, when we are performing direct inference
         if last_att_shift_states is None:
             cur_bs_list = BlockStateList.create(
                 self.n_layer, B, self.n_embd, 
                 self.n_head, self.head_size,
-                x.device, x.dtype
+                x.device, x.dtype,
+                self.wavenet_layers
             )
         else:
-            cur_bs_list = BlockStateList(last_att_shift_states, last_ffn_shift_states, last_wkv_states)
+            cur_bs_list = BlockStateList(last_att_shift_states, last_ffn_shift_states, last_wkv_states, self.wavenet_layers)
 
         # Avoid using the zip operation, as torch.compile throws an exception on it
         # with `zip not reconized as a valid function`
@@ -1084,7 +1090,8 @@ class RWKV(L.LightningModule):
         steps = 0
         states = BlockStateList.create(self.n_layer, B, C, 
                                        self.n_head, self.head_size,
-                                       seq.device, self.emb.weight.dtype)
+                                       seq.device, self.emb.weight.dtype,
+                                       self.wavenet_layers)
         segment_count = math.ceil(T / self.ctx_len)
 
         #
@@ -1214,7 +1221,7 @@ class RWKV(L.LightningModule):
                     prv_wkv_states,
                     steps,
                 )
-                states = BlockStateList(new_att_shift_states, new_ffn_shift_states, new_wkv_states)
+                states = BlockStateList(new_att_shift_states, new_ffn_shift_states, new_wkv_states, self.wavenet_layers)
 
                 # # Keep the segment loss (for backpassing in reverse)
                 # segment_loss_arr[i] = segment_loss
@@ -1309,7 +1316,7 @@ class RWKV(L.LightningModule):
                         steps,
                     )
 
-                states = BlockStateList(new_att_shift_states, new_ffn_shift_states, new_wkv_states)
+                states = BlockStateList(new_att_shift_states, new_ffn_shift_states, new_wkv_states, self.wavenet_layers)
                 gc.collect()
                 # torch.cuda.empty_cache()
 
