@@ -93,6 +93,14 @@ def prepare_data_static(**kargs):
         # Load the dataset
         src_dataset = load_dataset(**load_dataset_params)
 
+        # If for some reason the dataset is a "test" only split, and missing a "train" split, we remap it as a "train" split
+        if "train" not in src_dataset.keys():
+            if "test" in src_dataset.keys():
+                src_dataset["train"] = src_dataset["test"]
+                del src_dataset["test"]
+            else:
+                raise ValueError('Dataset must have a "train" split')
+
         # Tokenizer vars
         hf_tokenizer = None
         world_tokenizer = None
