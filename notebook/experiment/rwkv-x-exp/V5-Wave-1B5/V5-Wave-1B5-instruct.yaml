@@ -99,6 +99,9 @@ model:
   # Model to start the finetune/training process from
   load_model: ../model/V5-Wave-1B5-Stage1.pth
 
+  # wavenet_layers overwrite
+  wavenet_layers: 13
+
   # Context length to use for the training process
   # the larger the number (and batch size) the larger the vram usage
   # 
