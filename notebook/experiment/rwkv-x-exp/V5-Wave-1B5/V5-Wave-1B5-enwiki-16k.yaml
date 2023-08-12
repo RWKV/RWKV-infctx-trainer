@@ -110,7 +110,7 @@ model:
   # Learning rate of the training process
   # ---
   # Initia learning rate of the process
-  lr_init: 4e-4
+  lr_init: 5e-4
   # Final learning rate after the learning rate period
   # learning rate will stay at final value from then onwards
   #
