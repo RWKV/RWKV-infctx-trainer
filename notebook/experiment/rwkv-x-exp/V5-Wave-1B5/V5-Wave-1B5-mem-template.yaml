@@ -18,7 +18,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'V5-Wave-1B5 memory-finetune-2 (bs=256, train-ctx=512)'
+      name: '<TO OVERRIDE>'
       project: 'RWKV-5X-Experiments'
       tags: ['RWKV', 'RWKV-5X']
   
@@ -34,7 +34,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/V5-Wave-1B5-mem-finetune-2/
+      dirpath: ../checkpoint/V5-Wave-1B5-mem-finetune/
       filename: null
       
       # Save the top/last K checkpoints
@@ -57,7 +57,7 @@ trainer:
       # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
       # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
       # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
-      every_n_train_steps: 10
+      every_n_train_steps: 25
       every_n_epochs: null
       save_on_train_epoch_end: true
       train_time_interval: null
@@ -95,7 +95,7 @@ trainer:
 ########################################
 model:
   # Model to start the finetune/training process from
-  load_model: ../model/V5-Wave-1B5-Tune1.pth
+  load_model: ../model/<TO-OVERRIDE>.pth
 
   # Context length to use for the training process
   # the larger the number (and batch size) the larger the vram usage
@@ -106,7 +106,7 @@ model:
   # This allows the training of extreamly large context length (eg. 100k),
   # without eating up too much vram by keeping the training context length
   # to a resonable number sutible to the current GPU setup
-  ctx_len: 512
+  ctx_len: 4096
   
   # Learning rate of the training process
   # ---
@@ -131,7 +131,7 @@ model:
   # (by skipping some syncronization code). Additionally, as bptt learning should not be triggering 
   # anyway as the data sample should be within ctx size 99% of the time
   bptt_learning: true
-  bptt_learning_range: 1
+  bptt_learning_range: -1
   
 data:
   # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
@@ -177,4 +177,4 @@ data:
   #
   # This is ignored, if set to -1
   min_token_size: -1
-  max_token_size: 512
+  max_token_size: 4096
