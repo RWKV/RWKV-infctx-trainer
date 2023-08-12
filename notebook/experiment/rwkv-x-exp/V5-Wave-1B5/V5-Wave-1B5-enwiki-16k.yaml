@@ -11,16 +11,12 @@ trainer:
   #
   strategy: deepspeed_stage_1
 
-  # Floating point precision for the model, because RWKV is built FOR bf16
-  # you should pretty much never change this setting
-  precision: bf16
-
   # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
   # ---
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'V5-Base-1B5 instruct-tune (train-ctx=4096)'
+      name: 'V5-Wave-1B5 Enwiki foundation (train-ctx=16,384)'
       project: 'RWKV-5X-Experiments'
       tags: ['RWKV', 'RWKV-5X']
   
@@ -36,7 +32,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/V5-Base-1B5-instruct/
+      dirpath: ../checkpoint/V5-Wave-1B5-enwiki-16k/
       filename: null
       
       # Save the top/last K checkpoints
@@ -73,7 +69,7 @@ trainer:
   ########################################
 
   # Generally what you want to configure is the maximum number of epochs
-  # Leave it as -1, and it will keep going forever till interrupted
+  # If you leave it as -1, and it will keep going forever till interrupted
   # Or set it as a number, and it will stop after that number of epochs
   max_epochs: 1
   min_epochs: null
@@ -92,13 +88,14 @@ trainer:
   # your GPU processing time %, and avoid idle time for the GPU between batches
   target_batch_size: 32
 
+
 ########################################
 ## Training model settings
 ########################################
 model:
   # Model to start the finetune/training process from
-  load_model: ../model/V5-Base-1B5-Enwiki-16k.pth
-  
+  load_model: ../model/V5-Wave-1B5-Enwiki-4k.pth
+
   # Context length to use for the training process
   # the larger the number (and batch size) the larger the vram usage
   # 
@@ -109,7 +106,7 @@ model:
   # without eating up too much vram by keeping the training context length
   # to a resonable number sutible to the current GPU setup
   ctx_len: 4096
-  
+
   # Learning rate of the training process
   # ---
   # Initia learning rate of the process
@@ -132,7 +129,7 @@ model:
   # (by skipping some syncronization code). Additionally, as bptt learning should not be triggering 
   # anyway as the data sample should be within ctx size 99% of the time
   bptt_learning: true
-  bptt_learning_range: 1
+  bptt_learning_range: -1
 
 data:
   # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
@@ -140,7 +137,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/dolly-15k-instruction-alpaca-format/
+  data_path: ../datapath/enwiki_100k_16k/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -153,7 +150,7 @@ data:
   # - null
   #
   # If source is disabled, all other params, except data_path, is ignored
-  source: "c-s-ale/dolly-15k-instruction-alpaca-format"
+  source: "teven/enwiki_100k"
   # source: text
   # source: /home/ubuntu/RWKV-LM-LoRA/dataset-text/enwik8.txt
 
@@ -177,8 +174,8 @@ data:
   # (eg. removal of small articles of less then 512 tokens from wikipedia)
   #
   # This is ignored, if set to -1
-  min_token_size: -1
-  max_token_size: 4096
+  min_token_size: 1024
+  max_token_size: -1
 
   # Rechunking of text dataset, this is done only when source is set as 'text'
   # and will merge the various sentencees, into larger chunks up to the target size
@@ -188,12 +185,12 @@ data:
   # This is ignored, if source is not set as text
   # This is ignored, if set to zero
   # ---
-  # text_rechunk_size: 2048
+  text_rechunk_size: 16384
 
   # Apply text rechunk to the dataset, even if its not a 'text' source
   # This is done only after dataset filtering, and if source is not 'text'
   # ---
-  # text_rechunk_force: false
+  text_rechunk_force: True
 
   # Custom text column to use, useful for dataset with alternative training columns labels
   # This is checked before multi column merging, default is null (disabled)
@@ -208,10 +205,10 @@ data:
   # If no match is found, this will fallback to the default prompt/completion or text column, 
   # or throw an error if the default fallback is not found
   # ---
-  multi_column_keys: ['instruction', 'input', 'output']
-  multi_column_prefix: ['# Instruction:\n', '# Context:\n', '# Answer:\n']
-  multi_column_train_mask: [true, false, true]
-  multi_column_separator: '\n\n'
+  # multi_column_keys: ['instruction', 'input', 'output']
+  # multi_column_prefix: ['Instruction:\n', 'Input:\n', 'Output:\n']
+  # multi_column_train_mask: [false, true, false]
+  # multi_column_seperator: '\n\n'
 
   # If processing prompt/completion jsonl pairs, the prompt is masked by default
   # use this flag to disable this default behaviour
