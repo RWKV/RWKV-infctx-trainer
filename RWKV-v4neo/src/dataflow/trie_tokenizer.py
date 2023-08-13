@@ -120,9 +120,8 @@ from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
 
 import torch
-
-num_cpus = cpu_count()
-shared_executor = ProcessPoolExecutor(max_workers=num_cpus)
+# num_cpus = cpu_count()
+# shared_executor = ProcessPoolExecutor(max_workers=num_cpus)
 
 class MT_TRIE_TOKENIZER():
     def __init__(self, filename):

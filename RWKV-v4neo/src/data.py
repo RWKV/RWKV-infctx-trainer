@@ -13,7 +13,7 @@ import os
 SRC_DIR = os.path.dirname(os.path.realpath(__file__))
 
 # World tokenizer
-from .dataflow.trie_tokenizer import MT_TRIE_TOKENIZER
+from .dataflow.trie_tokenizer import TRIE_TOKENIZER
 import numpy as np
 
 # We have to extract out the prepare function to be "outside the class"
@@ -113,7 +113,7 @@ def prepare_data_static(**kargs):
             hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
         elif kargs["tokenizer"] == "world":
             # Setup the tokenizer
-            world_tokenizer = MT_TRIE_TOKENIZER(os.path.join(SRC_DIR, "./dataflow/rwkv_vocab_v20230424.txt"))
+            world_tokenizer = TRIE_TOKENIZER(os.path.join(SRC_DIR, "./dataflow/rwkv_vocab_v20230424.txt"))
         else:
             # AutoTokenizer
             tokenizerName = kargs["tokenizer"]
@@ -278,7 +278,7 @@ def prepare_data_static(**kargs):
                 prompt_encodings = encodeTokens(x['prompt'])
                 completion_encodings = encodeTokens(x['completion'])
 
-                # Join the two input_ids lists
+                # Join the two input_ids tensors together
                 input_ids = prompt_encodings['input_ids'] + completion_encodings['input_ids']
                 # Join the two token_type_ids lists
                 token_type_ids = prompt_encodings['token_type_ids'] + completion_encodings['token_type_ids']
