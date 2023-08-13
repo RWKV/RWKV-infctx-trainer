@@ -1,3 +1,7 @@
+# memory_script
+
+Collection of scripts, related to memory task training
+
 ## word_list.txt
 
 Was generated from the infochimps.org wordlist archived dataset.

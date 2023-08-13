@@ -14,6 +14,7 @@ def init_model(
     print(f'Embedding size: {embedding_size}')
     print(f'Output model path: {output_model_path}')
     print(f'Vocab size: {vocab_size}')
+    print(f'Emb scale: {emb_scale}')
     # print(f'Existing model path: {existing_model_path}')
     print(f"---- ----- ----")
 
