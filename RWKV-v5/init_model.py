@@ -5,7 +5,7 @@ from src.model import RWKV
 
 def init_model(
         layers, embedding_size, vocab_size, output_model_path, 
-        skip_if_exists=False, safe_init=False
+        skip_if_exists=False, safe_init=False, emb_scale=0.0001
         # existing_model_path=None
         ):
     # Insert your own function behavior here
@@ -54,7 +54,7 @@ def init_model(
         else:
             if n == "emb.weight":
                 # scale = -1 * self.args.lr_init
-                scale = -1 * 0.0001
+                scale = -1 * abs(emb_scale)
             else:
                 if shape[0] > shape[1]:
                     gain = math.sqrt(shape[0] / shape[1])
@@ -100,6 +100,7 @@ def main():
     parser.add_argument('--vocab_size', type=str, help="Vocab size for the model as an int, alternativey use 'neox' or 'world' if using their respective tokenizer", default="neox")
     parser.add_argument('--skip-if-exists', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Skip the init if the model already exists, enables --safe-init if set')
     parser.add_argument('--safe-init', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Init in safe mode, where the model is first init as a tmp file, before overwritting/moving to the output path')
+    parser.add_argument('--emb-scale', type=float, default=0.0001, help='Embedding weight scale, default is 0.0001')
 
     # (todo) implement in the future, to support model resizing
     # parser.add_argument('--existing_model_path', type=str, help='Existing model path', default=None)
@@ -119,7 +120,8 @@ def main():
 
     init_model(
         args.n_layer, args.n_embd, vocab_size, args.output_model_path, 
-        skip_if_exists=args.skip_if_exists, safe_init=args.safe_init
+        skip_if_exists=args.skip_if_exists, safe_init=args.safe_init,
+        emb_scale=args.emb_scale
     ) #, args.existing_model_path
 
 if __name__ == "__main__":
