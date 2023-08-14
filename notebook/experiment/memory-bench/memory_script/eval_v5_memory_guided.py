@@ -250,7 +250,6 @@ async def main_function():
             gc.collect()
             torch.cuda.empty_cache()
             
-
         # # Forward all the target tokens in a single pass
         # # ---
         # all_logits, state = model.forward(target_tokens, state, all_logits=True)
@@ -350,7 +349,7 @@ async def main_function():
             await validate_model(MAX_TOKENS, withoutInstructAndInput=True)
 
     else:
-        # We validate in increments of 100 from 1100 to MAXTOKEN (inclusive)
+        # We validate in increments of 100 from 8000 to MAXTOKEN (inclusive)
         if MAX_TOKENS > 8000:
             for i in range(MIN_TOKENS, MAX_TOKENS+1, 100):
                 await validate_model(i)
