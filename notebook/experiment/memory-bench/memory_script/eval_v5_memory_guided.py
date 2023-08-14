@@ -29,6 +29,7 @@ async def main_function():
     import difflib
     import copy
     import torch
+    import gc
     from torch.nn import functional as F
     import csv
     import aiofiles
@@ -218,32 +219,64 @@ async def main_function():
         # Print the timing till now
         # print(f"-- Finished validating first token ({time.time() - start_time:.2f}s)")
 
-        # Forward all the target tokens in a single pass
-        # ---
-        all_logits, state = model.forward(target_tokens, state, all_logits=True)
-        # print(f"-- Finished multi-token forward pass ({time.time() - start_time:.2f}s)")
+        # Loop through the target tokens in set of 1000
+        # ----
+        for subsetPos in range(0, token_count, 1000):
 
-        # Extract the sorted values, and cast them to CPU
-        # ---
-        # Apply token ban
-        for n in token_ban:
-            all_logits[:,n] = -float('inf')
+            # Get the subset, and forward it
+            token_subset = target_tokens[subsetPos:subsetPos+1000]
+            subset_logits, state = model.forward(token_subset, state, all_logits=True)
 
-        # GPU based sort
-        all_logits = all_logits.to('cuda')
-        all_logits = torch.softmax(all_logits, dim=-1)
-        sorted_probs, sorted_indices = torch.sort(all_logits, descending=True, stable=True, dim=-1)
+            # Apply the token ban
+            for n in token_ban:
+                subset_logits[:,n] = -float('inf')
 
-        # Convert back to CPU land
-        sorted_probs = sorted_probs.to('cpu')
-        sorted_indices = sorted_indices.to('cpu')
+            # Sort via GPU
+            subset_logits = subset_logits.to('cuda')
+            subset_logits = torch.softmax(subset_logits, dim=-1)
+            sorted_probs, sorted_indices = torch.sort(subset_logits, descending=True, stable=True, dim=-1)
 
-        # print(f"-- Finished sorting logits ({time.time() - start_time:.2f}s)")
+            # Convert back to CPU land
+            sorted_probs = sorted_probs.to('cpu')
+            sorted_indices = sorted_indices.to('cpu')
 
-        # Lets evaluate the logits, and check if they match one by one
-        for i in range(len(target_tokens)-1):
-            # Validate the token
-            matched_tokens = await validateToken(sorted_probs[i], sorted_indices[i], all_logits[i], i+1, matched_tokens)
+            # Loop through the subset
+            for i in range(len(token_subset)):
+                pos = i+1+subsetPos
+                if pos <= len(target_tokens)-1:
+                    matched_tokens = await validateToken(sorted_probs[i], sorted_indices[i], subset_logits[i], pos, matched_tokens)
+
+            # Garbage collect
+            gc.collect()
+            torch.cuda.empty_cache()
+            
+
+        # # Forward all the target tokens in a single pass
+        # # ---
+        # all_logits, state = model.forward(target_tokens, state, all_logits=True)
+        # # print(f"-- Finished multi-token forward pass ({time.time() - start_time:.2f}s)")
+
+        # # Extract the sorted values, and cast them to CPU
+        # # ---
+        # # Apply token ban
+        # for n in token_ban:
+        #     all_logits[:,n] = -float('inf')
+
+        # # GPU based sort
+        # all_logits = all_logits.to('cuda')
+        # all_logits = torch.softmax(all_logits, dim=-1)
+        # sorted_probs, sorted_indices = torch.sort(all_logits, descending=True, stable=True, dim=-1)
+
+        # # Convert back to CPU land
+        # sorted_probs = sorted_probs.to('cpu')
+        # sorted_indices = sorted_indices.to('cpu')
+
+        # # print(f"-- Finished sorting logits ({time.time() - start_time:.2f}s)")
+
+        # # Lets evaluate the logits, and check if they match one by one
+        # for i in range(len(target_tokens)-1):
+        #     # Validate the token
+        #     matched_tokens = await validateToken(sorted_probs[i], sorted_indices[i], all_logits[i], i+1, matched_tokens)
 
         # print(f"-- Finished token matching ({time.time() - start_time:.2f}s)")
 
