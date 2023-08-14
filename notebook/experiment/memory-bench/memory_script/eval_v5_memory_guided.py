@@ -318,8 +318,12 @@ async def main_function():
 
     else:
         # We validate in increments of 100 from 1100 to MAXTOKEN (inclusive)
-        for i in range(MIN_TOKENS, MAX_TOKENS+1, 50):
-            await validate_model(i)
+        if MAX_TOKENS > 8000:
+            for i in range(MIN_TOKENS, MAX_TOKENS+1, 100):
+                await validate_model(i)
+        else:
+            for i in range(MIN_TOKENS, MAX_TOKENS+1, 50):
+                await validate_model(i)
 
     # Print the end of model validation
     print("###")
