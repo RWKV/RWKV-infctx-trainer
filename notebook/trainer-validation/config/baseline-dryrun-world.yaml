@@ -79,7 +79,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/trainer-validaiton/infctx-validation-dryrun
+      dirpath: ../checkpoint/trainer-validaiton/infctx-validation-dryrun-world
       filename: null
       
       # Save the top/last K checkpoints
@@ -171,7 +171,7 @@ trainer:
 ########################################
 model:
   # Model to start the finetune/training process from
-  load_model: ../model/Echo-A-1B5-Init.pth
+  load_model: ../model/L6-D512-world-init.pth
 
   # The model size setting, this MUST match
   # your current model settings, refer to the model card
@@ -254,7 +254,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/enwiki_10k_1024/
+  data_path: ../datapath/enwiki_100k_world_1024/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -267,7 +267,7 @@ data:
   # - null
   #
   # If source is disabled, all other params, except data_path, is ignored
-  source: "teven/enwiki_10k"
+  source: "teven/enwiki_100k"
   # source: text
   # source: /home/ubuntu/RWKV-LM-LoRA/dataset-text/enwik8.txt
 
@@ -284,7 +284,7 @@ data:
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
   # If using a custom tokenizer, provide the tokenizer file path
   # ---
-  tokenizer: neox
+  tokenizer: world
 
   # Minimum / Maximum token size of the dataset to use
   # useful for filtering out small noisy data samples from large datasets
