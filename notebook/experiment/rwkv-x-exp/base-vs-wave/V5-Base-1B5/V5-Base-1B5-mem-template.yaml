@@ -24,7 +24,7 @@ trainer:
   
   # Checkpoint settings for the training process
   callbacks:
-  - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    class_path: lightning.pytorch.callbacks.ModelCheckpoint
     init_args:
       # Configure this to the path you want to save your checkpoints to
       # note that a subdir will be created with the name `epoch=x-step=y.ckpt`
