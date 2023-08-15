@@ -1,71 +1,15 @@
 # lightning.pytorch==2.0.2
-seed_everything: 3941088705
 trainer:
-  # Configure the number of GPU, avaliable on your machine
-  accelerator: gpu
-  devices: auto
-  num_nodes: 1
-
-  #
-  # Configure the deepspeed strategy, we recommend you start with `deepspeed_stage_2_offload` 
-  # and adjust from there according to your training needs. `deepspeed_stage_3_offload` is useful  
-  # for training LoRA on large models on a single GPU.
-  #
-  # In general you would want to use the following:
-  #
-  # - deepspeed_stage_1 : Each of your GPU has too much vram, and you do not know what to do
-  #
-  # - deepspeed_stage_2 : Optimal distributed training strategy, across multiple gpu each with sufficient vram
-  # - deepspeed_stage_2_offload : Reduce vram usage by offloading the optimizer state and work to cpu
-  #
-  # - deepspeed_stage_3 : Split up the model across multiple gpu, useful for large models, at a performance cost
-  # - deepspeed_stage_3_offload : Additional offloading, for even greater performance cost
-  #
-  # For more details see:
-  # https://lightning.ai/docs/pytorch/stable/advanced/model_parallel.html#deepspeed-zero-stage-2
-  #
-  strategy: deepspeed_stage_2_offload
-
-  # Floating point precision for the model, because RWKV is built FOR bf16
-  # you should pretty much never change this setting
-  precision: bf16
 
   # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
   # ---
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'infctx-validation-baseline (train-ctx=1024, data-ctx=1024, bs=10)'
+      name: 'infctx-validation ckpt-test (train-ctx=1024, data-ctx=1024)'
       project: 'RWKV-infctx-validation'
       tags: ['RWKV', 'infctx']
-      id: null
-      save_dir: .
-      version: null
-      offline: false
-      dir: null
-      anonymous: null
-      log_model: false
-      experiment: null
-      prefix: ''
-      checkpoint_name: null
-      job_type: null
-      config: null
-      entity: null
-      reinit: null
-      group: null
-      notes: null
-      magic: null
-      config_exclude_keys: null
-      config_include_keys: null
-      mode: null
-      allow_val_change: null
-      resume: null
-      force: null
-      tensorboard: null
-      sync_tensorboard: null
-      monitor_gym: null
-      save_code: null
-      settings: null
+      resume: True
   
   # Checkpoint settings for the training process
   callbacks:
@@ -79,7 +23,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/trainer-validaiton/infctx-validation-baseline
+      dirpath: ../checkpoint/trainer-validaiton/ckpt-auto-resume-test
       filename: null
       
       # Save the top/last K checkpoints
@@ -90,7 +34,7 @@ trainer:
       
       # If enabled (true), save a copy of the latest checkpoint to 'last.ckpt'
       # useful to simply checkpoint resume scripts, at a price of disk performance
-      save_last: false
+      save_last: true
 
       # DO NOT set this as true, as the model weight exported will have format issues
       # expert as checkpoint, and use the `export_checkpoint.py` script to convert to model instead
@@ -102,7 +46,7 @@ trainer:
       # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
       # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
       # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
-      every_n_train_steps: 5000
+      every_n_train_steps: 2
       every_n_epochs: null
       save_on_train_epoch_end: true
       train_time_interval: null
@@ -140,53 +84,19 @@ trainer:
   # This number is divided by the number of GPUs, and nodes configured
   # So if you have 4 GPUs, and 2 nodes, and this is configured as 128
   # Each GPU will process 128/4/2 = 16 datasamples per step, via accumulate_grad_batches
-  target_batch_size: 128
+  target_batch_size: 16
 
   # # Number of datasamples to accumulate before backproping, per GPU
   # # this can't be used with target_batch_size.
   # accumulate_grad_batches: -1
 
-  # Various other settings, you probably want to leave alone
-  fast_dev_run: false
-  limit_train_batches: null
-  limit_val_batches: null
-  limit_test_batches: null
-  limit_predict_batches: null
-  overfit_batches: 0.0
-  val_check_interval: null
-  check_val_every_n_epoch: 1
-  num_sanity_val_steps: 0
-  log_every_n_steps: 1
-  enable_checkpointing: true
-  enable_progress_bar: null
-  enable_model_summary: null
-  gradient_clip_val: 1.0
-  gradient_clip_algorithm: null
-  deterministic: null
-  benchmark: null
-  inference_mode: true
-  use_distributed_sampler: true
-  profiler: null
-  detect_anomaly: false
-  barebones: false
-  plugins: null
-  sync_batchnorm: false
-  reload_dataloaders_every_n_epochs: 0
-  default_root_dir: null
 
 ########################################
 ## Training model settings
 ########################################
 model:
   # Model to start the finetune/training process from
-  load_model: ../model/Echo-A-1B5-Init.pth
-
-  # The model size setting, this MUST match
-  # your current model settings, refer to the model card
-  # of the downloaded model for more details
-  n_embd: 2048
-  n_layer: 24
-  vocab_size: 50277
+  load_model: ../model/L6-D512-neox-init.pth
 
   # Context length to use for the training process
   # the larger the number (and batch size) the larger the vram usage
@@ -199,14 +109,6 @@ model:
   # to a resonable number sutible to the current GPU setup
   ctx_len: 1024
   
-  # Data samples would be cut down to the respective max ctx_len_cutoffs
-  # values if its larger then ctx_len. If the data sample is larger then
-  # the largest len_cutoff, the remaining data will be discarded
-  ctx_len_cutoffs: []
-  # Experimental settings, number of tokens to skip in the data sample
-  # prefix, for the respective cutoff length. Used to speed up the process
-  ctx_len_warmup_steps: []
-
   # Learning rate of the training process
   # ---
 
