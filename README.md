@@ -2,8 +2,6 @@
 
 This branch contains my experimental attempts to achieve infinite context training in RWKV.
 With this implementation you can train on arbitrarily long context within (near) constant VRAM consumption; the increasing should be, take RWKV 7B as an example, about 2MB per 1024/2048 tokens (depending on your chosen `ctx_len`) in the training sample, which will enable training on sequences over 1M tokens.
-Yet directly tune to such long sequences might be problematic; so `ctx_len_cutoff` is provided so longer sequences are sliced into multiple pieces of the specified cutoff size and learnt by the model separately.
-It can be later increased until no cutoff presents.
 
 The training code is by the way tremendously refactored into using PyTorch 2.0, Lightning 2.0 and DeepSpeed 2.0, and the starting script now relies on LightningCLI so you will see the [config.yaml](RWKV-v4neo/config-7B.yaml) containing all the switches, mostly standard ones that Lightning processes by itself.
 
@@ -21,12 +19,9 @@ See [RWKV-v4neo/config-example.yaml](./RWKV-v4neo/config-example.yaml) for docum
 
 The following features are not yet supported (that may exist in [blinks original repo](https://github.com/BlinkDL/RWKV-LM))
 - numpy file dataset
-- binidx dataset
-- model init weight
 - model resize weights (init from smaller to bigger model)
-- world tokenizer
-- Learning Rate init -> Learning Rate Final support
 - helper script to add new tokens to existing model
+- torch compile is NOT supported, as this has been unstable on nightly build
 
 ## Environment setup
 
@@ -48,7 +43,7 @@ conda activate rwkv-infctx
 
 # Install pytorch (>=2.0.1)
 conda install -y pytorch==2.0.1 torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-python -m pip install lightning==2.0.4 deepspeed==0.9.5
+python -m pip install lightning==2.0.5 deepspeed==0.10.0
 
 # Currently for torch.compile + 3.11 to work, for some platform, you will need the nightly build
 # if so you may need to try the following instead - this is considered "unstable"
@@ -64,20 +59,61 @@ python -c "import torch; print(torch.__version__)"
 python -m pip install datasets transformers 
 python -m pip install ninja numexpr jsonargparse 'jsonargparse[signatures]'
 python -m pip install lm-dataformat ftfy sentencepiece tokenizers wandb
+
+# Optional dependencies, useful for running notebooks, etc
+python -m pip install papermill
 ```
 
 Due to issues with [deepspeed on windows](https://github.com/microsoft/DeepSpeed/issues/2427). Only linux environments are supported. WSl2 with windows is not recommended, due to heavy performance penalities in the process (cannot use deepspeed offload, ~50% slower)
 
 ## Overall training process
 
-- Either init a new model (todo script), or download an existing model
+- Either init a new model, or download an existing model
+    - To initialize a new model use `python3 ./init_model.py --n_layer {number-of-layers} --n_embd {embedding-size} --vocab_size {vocab-size/neox/world} --skip-if-exists ../model/file/path.pth`
 - Setup the [config.yaml](./RWKV-v4neo/config-example.yaml) file, customized for your foundation model / finetune use case
 - Preload the dataset using the `python3 preload_datapath.py {you-config}.yaml`
 - Start the training process `python3 lightning_trainer.py fit -c {your_config}.yaml`
-- Export the checkpoint after training is complete with `python3 export_checkpoint.py ../path/to/checkpoint`
-- From the checkpoint folder, you should find the fp32 model named `rwkv_model.pth`
+- Export the checkpoint after training is complete with `python3 export_checkpoint.py ../path/to/checkpoint ../path/to/export/model.pth`
+- optional, run the dragon prompt as a quick sanity check `python3 dragon_test.py ../path/to/export/model.pth`
 - You should probably convert this to an fp16 model (todo script)
+
+In summary with code, from the trainer directory (eg. RWKV-v4neo)
+
+```bash
+# Initialize the blank model (or download a pretrained model)
+python3 init_model.py --n_layer {number-of-layers} --n_embd {embedding-size} --vocab_size {vocab-size/neox/world} --skip-if-exists ../model/file/path.pth
+
+# Preload your dataset
+python3 preload_datapath.py {you-config}.yaml
+
+# Run the training process
+python3 lightning_trainer.py fit -c {your_config}.yaml
+
+# Export the checkpoint to model code
+python3 export_checkpoint.py ../path/to/checkpoint ../path/to/export/model.pth
+
+# Quick test the model with the dragon prompt
+python3 dragon_test.py ../path/to/export/model.pth
+
+# @TODO, convert the model to bf16 format (instead of the huge fp32 format now)
+#        for now you will have to use the RWKV pip package to do this with python code: 
+#        https://pypi.org/project/rwkv/
+```
 
 ## Examples of dataset configs
 
-@TODO
+You can find the following notebook/examples at the following ...
+- fully annotation of various configs at [./RWKV-v4neo/config-example.py](./RWKV-v4neo/config-example.py)
+- minimal config example at [./RWKV-v4neo/config-example.py](./RWKV-v4neo/config-example.py)
+- [configuration / notebooks for various dataset usecases here](./notebook/dataset-config/)
+
+For configuration issues, please review through the examples listed above first, before asking questions on discord.
+
+You can find the training channel on our discord here: https://discord.com/channels/992359628979568762/992362252269256815
+
+## Some long term architecture goals
+
+- CUDA should be optional
+    - Moving forward, this allows us to potentially train (even if its at a perf cost) on other architectures like AMD ROCM, or Apple M1 architecture.
+- No dependency on the official RWKV pip package
+    - This is an intentional choice, to help facilitate easy iteration on model architecture in `#rwkv-x` development. So that the entire train-test-validation of design changes can be done in this repository.
