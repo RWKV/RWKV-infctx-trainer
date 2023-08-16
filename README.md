@@ -105,6 +105,7 @@ You can find the following notebook/examples at the following ...
 - fully annotation of various configs at [./RWKV-v4neo/config-example.py](./RWKV-v4neo/config-example.py)
 - minimal config example at [./RWKV-v4neo/config-example.py](./RWKV-v4neo/config-example.py)
 - [configuration / notebooks for various dataset usecases here](./notebook/dataset-config/)
+- @TODO: training scenerios specific examples
 
 For configuration issues, please review through the examples listed above first, before asking questions on discord.
 
@@ -131,7 +132,7 @@ The following features are not yet supported (that may exist in [blinks original
 - helper script to add new tokens to existing model
 - torch compile is NOT supported, as this has been unstable on nightly build
 
-# Designated maintainer
+## Designated maintainer
 
 [@picocreator](https://github.com/PicoCreator) - is the current maintainer of the project, you can ping him on the RWKV discord if you have any questions on this project
 
