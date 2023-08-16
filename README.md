@@ -114,6 +114,6 @@ You can find the training channel on our discord here: https://discord.com/chann
 ## Some long term architecture goals
 
 - CUDA should be optional
-    - Moving forward, this allows us to potentially train (even if its at a perf cost) on other architectures like AMD ROCM, or Apple M1 architecture.
+    - Moving forward, this allows us to potentially train (even if its at a perf cost) on other architectures like AMD ROCM, TPU, or Apple M1 architecture.
 - No dependency on the official RWKV pip package
     - This is an intentional choice, to help facilitate easy iteration on model architecture in `#rwkv-x` development. So that the entire train-test-validation of design changes can be done in this repository.
