@@ -14,10 +14,14 @@ If you want the bleeding edge infctx branch from picocreator, find it here : htt
 
 # RWKV Implementation for Infinite Context
 
-This branch contains my experimental attempts to achieve infinite context training in RWKV.
-With this implementation you can train on arbitrarily long context within (near) constant VRAM consumption; the increasing should be, take RWKV 7B as an example, about 2MB per 1024/2048 tokens (depending on your chosen `ctx_len`) in the training sample, which will enable training on sequences over 1M tokens.
+RWKV trainer with
+- no training context limit (via BPTT)
+- deepspeed 3
+- HF dataset integration
 
-The training code is by the way tremendously refactored into using PyTorch 2.0, Lightning 2.0 and DeepSpeed 2.0, and the starting script now relies on LightningCLI so you will see the [config.yaml](RWKV-v4neo/config-7B.yaml) containing all the switches, mostly standard ones that Lightning processes by itself.
+With this implementation you can train on arbitrarily long context within (near) constant VRAM consumption; this increasing should be, about 2MB per 1024/2048 tokens (depending on your chosen `ctx_len`, with RWKV 7B as an example) in the training sample, which will enable training on sequences over 1M tokens.
+
+The training code is by the way tremendously refactored into using PyTorch 2.0, Lightning 2.0 and DeepSpeed 2.0, and the starting script now relies on LightningCLI so you will see the [config-example.yaml](RWKV-v4neo/config-example.yaml) containing all the switches, mostly standard ones that Lightning processes by itself. And new ones for RWKV and the dataset parser.
 
 To use this repo, go into `RWKV-v4neo` directory and do
 
