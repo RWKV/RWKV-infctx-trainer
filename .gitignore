@@ -164,3 +164,6 @@ notebook/scratch/*
 # Ignore generated lightning logs and config files
 */lightning_logs/
 */config.yaml
+
+# Add back requirements.txt
+!requirements.txt
