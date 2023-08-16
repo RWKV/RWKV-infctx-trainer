@@ -167,3 +167,4 @@ notebook/scratch/*
 
 # Add back requirements.txt
 !requirements.txt
+!requirements-*.txt

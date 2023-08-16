@@ -43,7 +43,7 @@ conda install -y pytorch==2.0.1 torchvision torchaudio pytorch-cuda=11.8 -c pyto
 python -m pip install lightning==2.0.5 deepspeed==0.10.0
 
 # Currently for torch.compile + 3.11 to work, for some platform, you will need the nightly build
-# if so you may need to try the following instead - this is considered "unstable"
+# if so you may need to try the following instead - this is considered highly "unstable"
 # ---
 # conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch-nightly -c nvidia
 # python -m pip install lightning==2.0.5 deepspeed==0.10.0
@@ -61,7 +61,7 @@ python -m pip install lm-dataformat ftfy sentencepiece tokenizers wandb
 python -m pip install papermill
 ```
 
-Alternatively you could use the requirements.txt (this may not install pytorch-cuda properly)
+Alternatively you could use the requirements.txt (this may not install pytorch-cuda properly, and is found to be **not compatible** with conda environments)
 
 ```shell
 python3 -m pip install -r requirements.txt
@@ -114,6 +114,16 @@ You can find the following notebook/examples at the following ...
 For configuration issues, please review through the examples listed above first, before asking questions on discord.
 
 You can find the training channel on our discord here: https://discord.com/channels/992359628979568762/992362252269256815
+
+## Important notes on infctx lightning trainer
+
+- Ensure your host is not running cuda 12.0 (use either 11.8, or >=12.1), as this is known to have freeze issues
+- When resuming from checkpoint, the estimated time is inaccurate. See: https://github.com/Lightning-AI/lightning/issues/18220
+- Note that some terms are confusing, so this is a quick glossary
+   - a `step` in the progress bar below, means 1 data sample PER GPU. 
+   - a classic transformer batch is a `trainer/global_step` in wandb
+   - a `substep` in wandb means a single data sample. 
+   -`(accumulate_gradiant_batch * gpu count) substeps = 1 trainer/global_step`
 
 ## Should I use the official RWKV-LM trainer or the infctx trainer?
 
