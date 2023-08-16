@@ -18,7 +18,7 @@ trainer:
   target_batch_size: 32
 
 model:
-  load_model: ../model/L6-D512-neox-init.pth
+  load_model: ../model/L6-D512-world-init.pth
   ctx_len: 1024
   lr_init: 3e-4
 
@@ -36,7 +36,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/enwiki8_neox_1024/
+  data_path: ../datapath/sample-mem-train/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -49,26 +49,16 @@ data:
   # - null
   #
   # If source is disabled, all other params, except data_path, is ignored
-  source: "text"
+  source: "json"
   
   # Use data_dir, if you are using source=text/json/etc
   # this should be relative to the trainer script path
-  source_data_dir: "../dataset/dataset-config/text/"
+  source_data_dir: "../dataset/dataset-config/jsonl/"
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'neox' tokenizer
   # If using a custom tokenizer, provide the tokenizer file path
   # ---
-  tokenizer: neox
-
-  # Rechunking of text dataset, this is done only when source is set as 'text'
-  # and will merge the various sentencees, into larger chunks up to the target size
-  #
-  # Defaults to 4096
-  #
-  # This is ignored, if source is not set as text
-  # This is ignored, if set to zero
-  # ---
-  text_rechunk_size: 1024
+  tokenizer: world
 
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
