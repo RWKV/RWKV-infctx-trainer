@@ -15,14 +15,6 @@ Remember to modify the configuration for your own need.
 
 See [RWKV-v4neo/config-example.yaml](./RWKV-v4neo/config-example.yaml) for documentation on the various options
 
-## Existing limitations
-
-The following features are not yet supported (that may exist in [blinks original repo](https://github.com/BlinkDL/RWKV-LM))
-- numpy file dataset
-- model resize weights (init from smaller to bigger model)
-- helper script to add new tokens to existing model
-- torch compile is NOT supported, as this has been unstable on nightly build
-
 ## Environment setup
 
 > Note: There is a known issue with CUDA 12.0 and multi-gpu at this point of writing. Upgrade to CUDA 12.1 or 12.2 atleast Or downgrade to 11.8
@@ -100,7 +92,7 @@ python3 dragon_test.py ../path/to/export/model.pth
 #        https://pypi.org/project/rwkv/
 ```
 
-## Examples of dataset configs
+## Examples of configuration files
 
 You can find the following notebook/examples at the following ...
 - fully annotation of various configs at [./RWKV-v4neo/config-example.py](./RWKV-v4neo/config-example.py)
@@ -111,12 +103,26 @@ For configuration issues, please review through the examples listed above first,
 
 You can find the training channel on our discord here: https://discord.com/channels/992359628979568762/992362252269256815
 
+## Should I use the official RWKV-LM trainer or the infctx trainer?
+
+Generally if your training a foundation model from scratch - with a fixed context size, and you need the absolute highest throughput across multiple nodes (ie. 10 nodes filled with A100 servers), the [official trainer](https://github.com/BlinkDL/RWKV-LM) should perform better.
+
+If you need deepspeed 3 support, or you deal with dynamic datasets, this trainer is much more flexible, for most nearly all other use cases.
+
 ## Some long term architecture goals
 
 - CUDA should be optional
     - Moving forward, this allows us to potentially train (even if its at a perf cost) on other architectures like AMD ROCM, TPU, or Apple M1 architecture.
 - No dependency on the official RWKV pip package
     - This is an intentional choice, to help facilitate easy iteration on model architecture in `#rwkv-x` development. So that the entire train-test-validation of design changes can be done in this repository.
+
+## Existing limitations
+
+The following features are not yet supported (that may exist in [blinks original repo](https://github.com/BlinkDL/RWKV-LM))
+- numpy file dataset
+- model resize weights (init from smaller to bigger model)
+- helper script to add new tokens to existing model
+- torch compile is NOT supported, as this has been unstable on nightly build
 
 ## Credits (for v4neo and v5 code)
 
