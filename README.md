@@ -145,6 +145,7 @@ The following features are not yet supported (that may exist in [blinks original
 - model resize weights (init from smaller to bigger model)
 - helper script to add new tokens to existing model
 - torch compile is NOT supported, as this has been unstable on nightly build
+- LoRA is not yet supported, use [https://github.com/blealtan/RWKV-LM-LoRA](https://github.com/blealtan/RWKV-LM-LoRA) instead for now
 
 ## Designated maintainer
 
