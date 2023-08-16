@@ -41,7 +41,7 @@ trainer:
       save_code: null
       settings: null
   callbacks:
-  - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    class_path: lightning.pytorch.callbacks.ModelCheckpoint
     init_args:
       dirpath: /home/blealtancao/rwkv-models/pile-10k-ckpt
       filename: null

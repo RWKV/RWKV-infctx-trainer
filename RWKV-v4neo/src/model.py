@@ -1231,7 +1231,8 @@ class SimpleRWKV():
     # Forwarding logic, withoout torch._no_grad() context
     def _forward(
             self, tokens, 
-            stateObj = None
+            stateObj = None,
+            all_logits = False
         ):
 
         logits_arr = None
@@ -1245,11 +1246,17 @@ class SimpleRWKV():
             shift_states = stateObj["shift_states"]
             wkv_states = stateObj["wkv_states"]
         
+        # The all_logits array, if requested
+        all_logits_arr = None
+
         # For each token, process the state, in batches up to ctx_len
         for i in range(0, token_len, self.ctx_len):
+            # Token set
+            token_set = tokens[i:i+self.ctx_len]
+
             # Check if tokens are already tensors
             batch_tokens = torch.tensor(
-                tokens[i:i+self.ctx_len], 
+                token_set, 
                 dtype=torch.long, device=self.device
             ).unsqueeze(0)
             
@@ -1258,16 +1265,27 @@ class SimpleRWKV():
                 batch_tokens, shift_states, wkv_states
             )
 
+            # Build the all_logits array
+            if all_logits:
+                if all_logits_arr is None:
+                    all_logits_arr = logits_arr[0]
+                else:
+                    all_logits_arr = torch.cat([all_logits_arr, logits_arr[0]], dim=0)
+
         # Return the logits and state
-        return logits_arr[0][-1], { "shift_states": shift_states, "wkv_states": wkv_states }
+        if all_logits:
+            return all_logits_arr, { "shift_states": shift_states, "wkv_states": wkv_states }
+        else:
+            return logits_arr[0][-1], { "shift_states": shift_states, "wkv_states": wkv_states }
     
     # Forwarding logic, with torch._no_grad() context
     def forward(
             self, tokens:list, 
-            stateObj = None
+            stateObj = None,
+            all_logits = False
         ):
         with torch.no_grad():
-            return self._forward(tokens, stateObj)
+            return self._forward(tokens, stateObj, all_logits)
 
     # Sampling logits
     def sample_logits(

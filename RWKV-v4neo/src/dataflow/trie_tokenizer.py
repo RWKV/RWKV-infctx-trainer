@@ -114,15 +114,30 @@ class TRIE_TOKENIZER():
 # The following is a MT extension of the trie tokenizer
 ########################################################################################################
 
-from multiprocessing.pool import ThreadPool
-from threading import Thread
-from concurrent.futures import ProcessPoolExecutor
-from multiprocessing import cpu_count
+# Get the current file dir
+import os
+DATAFLOW_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# We use this in global, easier for HF to handle for arrow functions ??
+WORLD_TOKENIZER = None
+
+# Setup the local world tokenizer if needed and return it
+def get_world_tokenizer():
+    global WORLD_TOKENIZER
+    if WORLD_TOKENIZER is None:
+        WORLD_TOKENIZER = TRIE_TOKENIZER(os.path.join(DATAFLOW_DIR, "./rwkv_vocab_v20230424.txt"))
+    return WORLD_TOKENIZER
+
+# Provide a global function for the world tokenizer
+def world_tokenizer_encode(src):
+    return get_world_tokenizer().encode(src)
+
+########################################################################################################
+# Tensor specific tokenizer
+########################################################################################################
 
 import torch
-
-num_cpus = cpu_count()
-shared_executor = ProcessPoolExecutor(max_workers=num_cpus)
+import numpy as np
 
 class MT_TRIE_TOKENIZER():
     def __init__(self, filename):
