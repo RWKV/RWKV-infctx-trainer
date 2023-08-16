@@ -117,3 +117,10 @@ You can find the training channel on our discord here: https://discord.com/chann
     - Moving forward, this allows us to potentially train (even if its at a perf cost) on other architectures like AMD ROCM, TPU, or Apple M1 architecture.
 - No dependency on the official RWKV pip package
     - This is an intentional choice, to help facilitate easy iteration on model architecture in `#rwkv-x` development. So that the entire train-test-validation of design changes can be done in this repository.
+
+## Credits (for v4neo and v5 code)
+
+- The bulk of the infctx trainer was originally written by @Blealtan at : [https://github.com/Blealtan/RWKV-LM-LoRA/tree/dev-infctx](https://github.com/Blealtan/RWKV-LM-LoRA/tree/dev-infctx)
+- RWKV-LM and the original trainer code is credited to @BlinkDL at : [https://github.com/BlinkDL/RWKV-LM](https://github.com/BlinkDL/RWKV-LM)
+- Special credit to @Yuzaboto and @bananaman via our RWKV discord, whose assistance was crucial to help debug and fix the repo to work with RWKVv4 and RWKVv5 code respectively.
+- PyTorch Lightning team @lantiga and @Adrian via Pytorch LIghtning AI discord - who assisted in clarifying questions for me
