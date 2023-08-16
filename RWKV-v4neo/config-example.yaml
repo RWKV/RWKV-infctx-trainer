@@ -1,4 +1,14 @@
-# lightning.pytorch==2.0.2
+# -----
+#
+#  The infctx trainer is based on pytorch lightning - and uses the following yaml config file format
+#  For many of the undocumented trainer parameters / settings in this example, additional documentation details can be found in pytorch lightning documentation
+#  https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.cli.LightningCLI.html
+#
+#  For better dataset specific configuration, you may want to see the various notebooks in `notebook/dataset-config`
+#
+# -----
+
+# Use either an intger value to enable a fixed training seed.
 seed_everything: true
 trainer:
   # Configure the number of GPU, avaliable on your machine
@@ -36,14 +46,20 @@ trainer:
   # logger:
   #   class_path: lightning.pytorch.loggers.WandbLogger
   #   init_args:
+  #     # In most cases, all you would want to modify is name/project/tags
+  #     # or the run ID / resume flag
   #     name: null
+  #     project: RWKV_training
+  #     tags: ['RWKV']
+  #     id: null
+  #     resume: null
+  #
+  #     # The rest is advance WANDB settings, which in most cases you can remove/ignore
   #     save_dir: .
   #     version: null
   #     offline: false
   #     dir: null
-  #     id: null
   #     anonymous: null
-  #     project: RWKV_training
   #     log_model: false
   #     experiment: null
   #     prefix: ''
@@ -52,7 +68,6 @@ trainer:
   #     config: null
   #     entity: null
   #     reinit: null
-  #     tags: ['RWKV']
   #     group: null
   #     notes: null
   #     magic: null
@@ -60,7 +75,6 @@ trainer:
   #     config_include_keys: null
   #     mode: null
   #     allow_val_change: null
-  #     resume: null
   #     force: null
   #     tensorboard: null
   #     sync_tensorboard: null
@@ -84,14 +98,14 @@ trainer:
       filename: null
       
       # Save the top/last K checkpoints
-      save_top_k: 5
+      save_top_k: 3
       # Choose the most recent checkpoints by steps
       monitor: 'step'
       mode: max
       
       # If enabled (true), save a copy of the latest checkpoint to 'last.ckpt'
       # useful to simply checkpoint resume scripts, at a price of disk performance
-      save_last: null
+      save_last: true
 
       # DO NOT set this as true, as the model weight exported will have format issues
       # expert as checkpoint, and use the `export_checkpoint.py` script to convert to model instead
@@ -108,9 +122,10 @@ trainer:
       save_on_train_epoch_end: true
       train_time_interval: null
 
-      # Other settings, you can probably leave alone
-      verbose: false
-      auto_insert_metric_name: true
+      # Other pytorch lightning settings, which in most cases you can remove/ignore
+      # ---
+      # verbose: false
+      # auto_insert_metric_name: true
   
   ########################################
   ## Training run parameter settings
@@ -119,7 +134,7 @@ trainer:
   # Generally what you want to configure is the maximum number of epochs
   # Leave it as -1, and it will keep going forever till interrupted
   # Or set it as a number, and it will stop after that number of epochs
-  max_epochs: -1
+  max_epochs: 1
   min_epochs: null
   max_steps: -1
   min_steps: null
@@ -128,48 +143,60 @@ trainer:
   # Number of datasamples to train for each step, a data sample is considered
   # a "substep" in wandb logs, and a "step" is tracked as "trainer/global_step"
   #
-  # This decides the number of datasample * the number of GPU devices, to learn together from, 
-  # before backproping any weight changes at the end of the batch.
+  # This decides the number of datasample, to learn together from, before backproping
+  # any weight changes at the end of the batch.
   #
   # `1 trainer/global_step = accumulate_grad_batches * number of GPU devices * number of nodes`
   #
-  # Recommended to be a big enough number (like 128/256) for finetuning where it prevents the  
-  # training loss from flucuating in the process. But not too big of a number where the increased
-  # GPU vRAM usage will cause the training to crash.
-  #
-  # For foundation model training, a low accumulate_grad_batches like 8/12/16 is recommended.
+  # Recommended to be a big enough number (like 128/256) where it prevents the training 
+  # loss from flucuating in the process. But not too big of a number where the increased
+  # GPU vRAM / offloaded RAM usage will cause the training to crash.
   #
   # You are also recommended to configure this to a large enough number to fully utilize
   # your GPU processing time %, and avoid idle time for the GPU between batches
-  accumulate_grad_batches: 256
+  target_batch_size: 32
 
-  # Various other settings, you probably want to leave alone
-  fast_dev_run: false
-  limit_train_batches: null
-  limit_val_batches: null
-  limit_test_batches: null
-  limit_predict_batches: null
-  overfit_batches: 0.0
-  val_check_interval: null
-  check_val_every_n_epoch: 1
-  num_sanity_val_steps: 0
-  log_every_n_steps: 1
-  enable_checkpointing: null
-  enable_progress_bar: null
-  enable_model_summary: null
-  gradient_clip_val: 1.0
-  gradient_clip_algorithm: null
-  deterministic: null
-  benchmark: null
-  inference_mode: true
-  use_distributed_sampler: true
-  profiler: null
-  detect_anomaly: false
-  barebones: false
-  plugins: null
-  sync_batchnorm: false
-  reload_dataloaders_every_n_epochs: 0
-  default_root_dir: null
+  # You can alternatively set the accumulate_grad_batches per GPU directly
+  # (not recommended)
+  #
+  # You can only either use target_batch_size, which would auto-compute this value for you
+  # based on the number of GPU's you have, or have this value set directly - not both
+  #
+  # `target_batch_size ~= number of GPU's * accumulate_grad_batches`
+  #
+  # In event that taget_batch_size cannot be "perfectly divided" by the number of GPU's
+  # this number is rounded down, with a minimum of 1
+  # ---
+  # accumulate_grad_batches: 256
+
+  # Various other pytorch lightning settings, which in most cases you can remove/ignore
+  # ---
+  # fast_dev_run: false
+  # limit_train_batches: null
+  # limit_val_batches: null
+  # limit_test_batches: null
+  # limit_predict_batches: null
+  # overfit_batches: 0.0
+  # val_check_interval: null
+  # check_val_every_n_epoch: 1
+  # num_sanity_val_steps: 0
+  # log_every_n_steps: 1
+  # enable_checkpointing: null
+  # enable_progress_bar: null
+  # enable_model_summary: null
+  # gradient_clip_val: 1.0
+  # gradient_clip_algorithm: null
+  # deterministic: null
+  # benchmark: null
+  # inference_mode: true
+  # use_distributed_sampler: true
+  # profiler: null
+  # detect_anomaly: false
+  # barebones: false
+  # plugins: null
+  # sync_batchnorm: false
+  # reload_dataloaders_every_n_epochs: 0
+  # default_root_dir: null
 
 ########################################
 ## Training model settings
@@ -177,13 +204,6 @@ trainer:
 model:
   # Model to start the finetune/training process from
   load_model: /path/to/your/model.pth
-
-  # The model size setting, this MUST match
-  # your current model settings, refer to the model card
-  # of the downloaded model for more details
-  n_embd: 768
-  n_layer: 12
-  vocab_size: 50277
 
   # Context length to use for the training process
   # the larger the number (and batch size) the larger the vram usage
@@ -195,15 +215,24 @@ model:
   # without eating up too much vram by keeping the training context length
   # to a resonable number sutible to the current GPU setup
   ctx_len: 2048
-  # Learning rate of the training process
-  lr_init: 1.0e-04
 
-  # Adam optimizer settings
-  # You probably want to leave this alone, unless you know what you are doing
-  beta1: 0.9
-  beta2: 0.99
-  adam_eps: 1.0e-08
-  weight_decay: 0.01
+  # Learning rate of the training process
+  # ---
+  # Initia learning rate of the process
+  lr_init: 6e-4
+  # Final learning rate after the learning rate period
+  # learning rate will stay at final value from then onwards
+  #
+  # NOTE: lr_final / lr_period does not work with warmup_steps
+  #       and will be ignored (or replaced) with the warmup_steps logic instead
+  lr_final: 4e-4
+  # Number of epoch to reduce the learning rate from lr_init to lr_final
+  #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
+  #  0 means lr_final will apply immediately
+  # -1 means we take the current max_step / max_epoch as the period
+  lr_period: -1
+  # lr_period type if its set, defaults to epoch
+  lr_period_type: epoch
 
   # Back Propagation through time, used to work around training of large context length
   # beyond what can be supported by the current GPU vram architecture
@@ -217,8 +246,9 @@ model:
   # 1 means to apply only for the last segment
   # -1 means to apply for all segments
   #
-  # For multi-gpu training, this must be set to 1, due to a known issue
-  # else an exception would be thrown
+  # For multi-gpu training, when possible, used a fixed value
+  # to reduce gpu sync overhead. When used with fixed dataset context length
+  # For mixed dataset sizes, -1 is a resonable trade-off
   bptt_learning_range: -1
 
   # Limits the bptt learning only to the "current" chunk
@@ -235,6 +265,17 @@ model:
   # `1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance...`
   substep_cuda_cache_clear: false
 
+  # The model size setting, to use against the current model
+  # It is recommended to not configure this, and simply use auto-detection
+  # Otherwise, this is useful to double check the model settings prior running
+  # 
+  # For your current model settings, refer to the model card
+  # of the downloaded model for more details
+  # ---
+  # n_embd: 768
+  # n_layer: 12
+  # vocab_size: 50277
+
   # Experimental cutoff settings
   # ---
   # Data samples would be cut down to the respective max ctx_len_cutoffs
@@ -242,30 +283,44 @@ model:
   # the largest len_cutoff, the remaining data will be discarded
   #
   # Leave it as a blank array to disable the feature
-  ctx_len_cutoffs: []
+  # ---
+  # ctx_len_cutoffs: []
+  # ---
   # Experimental settings, number of tokens to skip in the data sample
   # prefix, for the respective cutoff length. Used to speed up the process
   #
   # Leave it as a blank array to disable the feature
-  ctx_len_warmup_steps: []
+  # ---
+  # ctx_len_warmup_steps: []
 
   # torch.set_float32_matmul_precision, used to optimize operations with tensor cores
-  # this should be set as null, for non cuda core GPUs
-  torch_set_float32_matmul_precision: 'high'
-  # torch_set_float32_matmul_precision: null
+  # this should be set as null, for non cuda core GPUs. Has no major impact AFAIK
+  # ---
+  # torch_set_float32_matmul_precision: 'high'
 
-  # various other settings you probably should leave alone
-  grad_cp: true
-  warmup_steps: -1
-  layerwise_lr: true
-  dim_att: null
-  dim_ffn: null
+  # Adam optimizer settings
+  # You probably want to leave this alone, unless you know what you are doing
+  # ---
+  # beta1: 0.9
+  # beta2: 0.99
+  # adam_eps: 1.0e-08
+  # weight_decay: 0.01
+
+  # various other pytorch lightning settings you probably should leave alone
+  # ---
+  # grad_cp: true
+  # warmup_steps: -1
+  # layerwise_lr: true
+  # dim_att: null
+  # dim_ffn: null
 data:
   # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
   #
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
+  #
+  # If using relative path, this should be relative to the trainer script path
   data_path: /path/to/store/your/data_path/
 
   # Other wise provide the source path, which is used as huggingface dataset path
@@ -273,35 +328,37 @@ data:
   #
   # Use either the following
   # - hugging face dataset 
-  # - Directory path to a directory containing dataset files
-  # - Path to a single dataset file
-  # - hugging face dataset mode (ie: text,csv,etc - use data_dir, to configure the path then)
+  # - local dataset mode (ie: text,json,csv - use source_data_dir, to configure the path then)
   # - null
   #
   # If source is disabled, all other params, except data_path, is effectively ignored
   # as the dataset building process is skipped. You are expected to prepare the huggingface
   # compliant dataset yourself, and save it to the data_path
   source: null
-  # source: "teven/enwiki_100k"  # Hugging face dataset
-  # source: text                 # Text dir, used with source_data_dir
-  # source: /home/ubuntu/RWKV-LM-LoRA/dataset-text/enwik8.txt
+  # source: "teven/enwiki_00k"   # Hugging face dataset
+  # source: text                 # Text mode, used with source_data_dir
 
-  # # Additional source dataset params, used to grab subsets of the dataset
+  # Additional source dataset params, used to grab subsets of the dataset
+  # ---
   # source_dataset_params:
   #   language: en
 
   # Use data_dir, if you are using source=text/json/etc
-  # this should be relative to the trainer script path
+  # If using relative path, this should be relative to the trainer script path
   source_data_dir: ../dataset-text/
 
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
-  # This process is skipped if set to zero
-  test_split: 0.05
+  #
+  # If given a float value, a percentage of the dataset is used (1.0 being 100%)
+  # If given an int value, the number of data sample is used.
+  #
+  # Due to the limitaitons in the trainer process, there is always a minimum of 1 test sample
+  test_split: 0.01
   test_split_shuffle: true
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
-  # If using a custom tokenizer, provide the tokenizer file path
+  # If using a custom tokenizer, provide the HF tokenizer name/path
   # ---
   tokenizer: neox
 
@@ -319,10 +376,15 @@ data:
   #
   # Defaults to 2048
   #
-  # This is ignored, if source is not set as text
+  # This is ignored, if source is not set as text (unless text_rechunk_force)
   # This is ignored, if set to zero
   # ---
   # text_rechunk_size: 2048
+
+  # Apply text rechunk to the dataset, even if its not a 'text' source
+  # This is done only after dataset filtering, and if source is not 'text'
+  # ---
+  # text_rechunk_force: True
 
   # Custom text column to use, useful for dataset with alternative training columns labels
   # This is checked before multi column merging, default is null (disabled)
@@ -348,4 +410,5 @@ data:
   # disable_prompt_completion_mask: false
 
 # Path to the current checkpoint to continue training from
+# this should be the directory path, and ends with `.ckpt/`
 ckpt_path: null

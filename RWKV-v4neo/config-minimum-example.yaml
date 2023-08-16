@@ -1,0 +1,174 @@
+# -----
+#
+#  The infctx trainer is based on pytorch lightning - and uses the following yaml config file format
+#  For many of the undocumented trainer parameters / settings in this example, additional documentation details can be found in pytorch lightning documentation
+#  https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.cli.LightningCLI.html
+#
+#  The following is a somewhat minimum example, for training with JSONL files with prompt/completion pairs.
+#  reducing only to the most commonly configured settings.
+#
+#  For more details on every single setting, see the full `config-example.yaml`
+#  For better dataset specific configuration, you may want to see the various notebooks in `notebook/dataset-config`
+#
+# -----
+
+trainer:
+  # Deepspeed strategy to use
+  strategy: deepspeed_stage_2_offload
+
+  # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
+  # ---
+  # logger:
+  #   class_path: lightning.pytorch.loggers.WandbLogger
+  #   init_args:
+  #     # In most cases, all you would want to modify is name/project/tags
+  #     # or the run ID / resume flag
+  #     name: null
+  #     project: RWKV_training
+  #     tags: ['RWKV']
+  #     id: null
+  #     resume: null
+  
+  # Checkpoint settings for the training process
+  callbacks:
+    class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      # Checkpoint directory to use
+      dirpath: ../checkpoint/path/to/your/checkpoint/dir
+      
+      # Save the top/last K checkpoints
+      save_top_k: 3
+      # Choose the most recent checkpoints by max steps
+      monitor: 'step'
+      mode: max
+      
+      # If enabled (true), save a copy of the latest checkpoint to 'last.ckpt'
+      # useful to simply checkpoint resume scripts, at a price of disk performance
+      save_last: true
+
+      # How frequent you want to save a checkpoint for every step.
+      # This will happen for every X data sample, where X = every_n_train_steps * accumulate_grad_batches
+      #
+      # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
+      # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
+      # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
+      every_n_train_steps: 100
+      every_n_epochs: null
+      save_on_train_epoch_end: true
+      train_time_interval: null
+  
+  ########################################
+  ## Training run parameter settings
+  ########################################
+
+  # Generally what you want to configure is the maximum number of epochs
+  # Leave it as -1, and it will keep going forever till interrupted
+  # Or set it as a number, and it will stop after that number of epochs
+  max_epochs: 1
+  min_epochs: null
+  max_steps: -1
+  min_steps: null
+  max_time: null
+
+  # Number of datasamples to train for each step, a data sample is considered
+  # a "substep" in wandb logs, and a "step" is tracked as "trainer/global_step"
+  #
+  # This decides the number of datasample, to learn together from, before backproping
+  # any weight changes at the end of the batch.
+  #
+  # `1 trainer/global_step = accumulate_grad_batches * number of GPU devices * number of nodes`
+  #
+  # Recommended to be a big enough number (like 128/256) where it prevents the training 
+  # loss from flucuating in the process. But not too big of a number where the increased
+  # GPU vRAM / offloaded RAM usage will cause the training to crash.
+  #
+  # You are also recommended to configure this to a large enough number to fully utilize
+  # your GPU processing time %, and avoid idle time for the GPU between batches
+  target_batch_size: 32
+
+  # You can alternatively set the accumulate_grad_batches per GPU directly
+  # (not recommended)
+  #
+  # You can only either use target_batch_size, which would auto-compute this value for you
+  # based on the number of GPU's you have, or have this value set directly - not both
+  #
+  # `target_batch_size ~= number of GPU's * accumulate_grad_batches`
+  #
+  # In event that taget_batch_size cannot be "perfectly divided" by the number of GPU's
+  # this number is rounded down, with a minimum of 1
+  # ---
+  # accumulate_grad_batches: 256
+
+########################################
+## Training model settings
+########################################
+model:
+  # Model to start the finetune/training process from
+  load_model: /path/to/your/model.pth
+
+  # Context length to use for the training process
+  # the larger the number (and batch size) the larger the vram usage
+  # 
+  # Note that if the datasample context length is larger then the ctx_len
+  # its training process would be split into ctx_len sized chunks.
+  #
+  # This allows the training of extreamly large context length (eg. 100k),
+  # without eating up too much vram by keeping the training context length
+  # to a resonable number sutible to the current GPU setup
+  ctx_len: 2048
+  
+  # Learning rate of the training process
+  # ---
+  # Initia learning rate of the process
+  lr_init: 6e-4
+  # Final learning rate after the learning rate period
+  # learning rate will stay at final value from then onwards
+  #
+  # NOTE: lr_final / lr_period does not work with warmup_steps
+  #       and will be ignored (or replaced) with the warmup_steps logic instead
+  lr_final: 4e-4
+  # Number of epoch to reduce the learning rate from lr_init to lr_final
+  #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
+  #  0 means lr_final will apply immediately
+  # -1 means we take the current max_step / max_epoch as the period
+  lr_period: -1
+  # lr_period type if its set, defaults to epoch
+  lr_period_type: epoch
+
+data:
+  # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
+  #
+  # Use this if you have built your own dataset and saved it with `save_to_disk()`
+  # with source left as null. Other wise configure this to a directory which the 
+  # dataset will be built and tokenized by the huggingface dataset process.
+  #
+  # If using relative path, this should be relative to the trainer script path
+  data_path: /path/to/store/your/data_path/
+
+  # Other wise provide the source path, which is used as huggingface dataset path
+  # this will be used to populate the dataset_path
+  #
+  # Use either the following
+  # - hugging face dataset 
+  # - local dataset mode (ie: text,json,csv - use source_data_dir, to configure the path then)
+  # - null
+  #
+  # If source is disabled, all other params, except data_path, is effectively ignored
+  # as the dataset building process is skipped. You are expected to prepare the huggingface
+  # compliant dataset yourself, and save it to the data_path
+  source: json
+  # source: "teven/enwiki_00k"   # Hugging face dataset
+  # source: text                 # Text mode, used with source_data_dir
+
+  # Use data_dir, if you are using source=text/json/etc
+  # If using relative path, this should be relative to the trainer script path
+  source_data_dir: ../dataset-json-dir/
+
+  # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
+  # If using a custom tokenizer, provide the HF tokenizer name/path
+  # ---
+  tokenizer: neox
+
+# Path to the current checkpoint to continue training from
+# this should be the directory path, and ends with `.ckpt/`
+ckpt_path: null
