@@ -56,6 +56,8 @@ python -m pip install lm-dataformat ftfy sentencepiece tokenizers wandb
 python -m pip install papermill
 ```
 
+Alternatively you could use `python3 -m pip install -r requirements.txt`
+
 Due to issues with [deepspeed on windows](https://github.com/microsoft/DeepSpeed/issues/2427). Only linux environments are supported. WSl2 with windows is not recommended, due to heavy performance penalities in the process (cannot use deepspeed offload, ~50% slower)
 
 ## Overall training process
@@ -124,11 +126,16 @@ The following features are not yet supported (that may exist in [blinks original
 - helper script to add new tokens to existing model
 - torch compile is NOT supported, as this has been unstable on nightly build
 
+# Designated maintainer
+
+[@picocreator](https://github.com/PicoCreator) - is the current maintainer of the project, you can ping him on the RWKV discord if you have any questions on this project
+
 ## Credits (for v4neo and v5 code)
 
-- The bulk of the infctx trainer was originally written by @Blealtan at : [https://github.com/Blealtan/RWKV-LM-LoRA/tree/dev-infctx](https://github.com/Blealtan/RWKV-LM-LoRA/tree/dev-infctx)
+- The bulk of the first infctx trainer was originally rewritten by @Blealtan at : [https://github.com/Blealtan/RWKV-LM-LoRA/tree/dev-infctx](https://github.com/Blealtan/RWKV-LM-LoRA/tree/dev-infctx)
 - RWKV-LM and the original trainer code is credited to @BlinkDL at : [https://github.com/BlinkDL/RWKV-LM](https://github.com/BlinkDL/RWKV-LM)
 - Special credit to @Yuzaboto and @bananaman via our RWKV discord, whose assistance was crucial to help debug and fix the repo to work with RWKVv4 and RWKVv5 code respectively.
-- PyTorch Lightning team @lantiga and @Adrian via Pytorch LIghtning AI discord - who assisted in clarifying questions for me
+- PyTorch Lightning team @lantiga and @Adrian via Pytorch LIghtning AI discord - who assisted in clarifying questions on pytorch lightning
+- [@picocreator](https://github.com/PicoCreator) for getting the project feature complete for RWKV mainline release
 
-> This was intentionally a hard fork, as it has too many conflicting changes to the official RWKV-LM repo
+> This project was intentionally a hard fork, as it has too many conflicting changes to the official RWKV-LM repo
