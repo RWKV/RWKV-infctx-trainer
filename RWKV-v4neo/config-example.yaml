@@ -4,6 +4,8 @@
 #  For many of the undocumented trainer parameters / settings in this example, additional documentation details can be found in pytorch lightning documentation
 #  https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.cli.LightningCLI.html
 #
+#  For better dataset specific configuration, you may want to see the various notebooks in `notebook/dataset-config`
+#
 # -----
 
 # Use either an intger value to enable a fixed training seed.
@@ -213,15 +215,24 @@ model:
   # without eating up too much vram by keeping the training context length
   # to a resonable number sutible to the current GPU setup
   ctx_len: 2048
-  # Learning rate of the training process
-  lr_init: 1.0e-04
 
-  # Adam optimizer settings
-  # You probably want to leave this alone, unless you know what you are doing
-  beta1: 0.9
-  beta2: 0.99
-  adam_eps: 1.0e-08
-  weight_decay: 0.01
+  # Learning rate of the training process
+  # ---
+  # Initia learning rate of the process
+  lr_init: 6e-4
+  # Final learning rate after the learning rate period
+  # learning rate will stay at final value from then onwards
+  #
+  # NOTE: lr_final / lr_period does not work with warmup_steps
+  #       and will be ignored (or replaced) with the warmup_steps logic instead
+  lr_final: 4e-4
+  # Number of epoch to reduce the learning rate from lr_init to lr_final
+  #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
+  #  0 means lr_final will apply immediately
+  # -1 means we take the current max_step / max_epoch as the period
+  lr_period: -1
+  # lr_period type if its set, defaults to epoch
+  lr_period_type: epoch
 
   # Back Propagation through time, used to work around training of large context length
   # beyond what can be supported by the current GPU vram architecture
@@ -235,8 +246,9 @@ model:
   # 1 means to apply only for the last segment
   # -1 means to apply for all segments
   #
-  # For multi-gpu training, this must be set to 1, due to a known issue
-  # else an exception would be thrown
+  # For multi-gpu training, when possible, used a fixed value
+  # to reduce gpu sync overhead. When used with fixed dataset context length
+  # For mixed dataset sizes, -1 is a resonable trade-off
   bptt_learning_range: -1
 
   # Limits the bptt learning only to the "current" chunk
@@ -285,6 +297,14 @@ model:
   # this should be set as null, for non cuda core GPUs. Has no major impact AFAIK
   # ---
   # torch_set_float32_matmul_precision: 'high'
+
+  # Adam optimizer settings
+  # You probably want to leave this alone, unless you know what you are doing
+  # ---
+  # beta1: 0.9
+  # beta2: 0.99
+  # adam_eps: 1.0e-08
+  # weight_decay: 0.01
 
   # various other pytorch lightning settings you probably should leave alone
   # ---
@@ -390,4 +410,5 @@ data:
   # disable_prompt_completion_mask: false
 
 # Path to the current checkpoint to continue training from
+# this should be the directory path, and ends with `.ckpt/`
 ckpt_path: null
