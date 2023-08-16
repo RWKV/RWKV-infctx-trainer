@@ -7,7 +7,7 @@ import sys, os, yaml
 # #
 # # See: https://pytorch.org/docs/stable/notes/cuda.html#environment-variables
 # #
-# # UPDATE: This is found to have issues with deepspeed 3, and is disabled for now (Aug 2023)
+# # UPDATE: This is found to have issues with deepspeed 3, and is disabled for now
 # # ---
 # PYTORCH_CUDA_ALLOC_CONF = os.environ.get('PYTORCH_CUDA_ALLOC_CONF', "")
 # if len(PYTORCH_CUDA_ALLOC_CONF) > 0 and PYTORCH_CUDA_ALLOC_CONF.find("backend") == -1:
@@ -221,6 +221,18 @@ def remove_arg(argList, argCommand):
 # Remove the --auto-resume-ckpt-dir and --auto-resume-ckpt-offset
 PYTORCH_CLI_ARGV = remove_arg(PYTORCH_CLI_ARGV, "--auto-resume-ckpt-dir")
 PYTORCH_CLI_ARGV = remove_arg(PYTORCH_CLI_ARGV, "--auto-resume-ckpt-mode")
+
+# ---
+
+print("""
+#
+# RWKV lighting_trainer.py important notes
+#
+# - Ensure your host is not running cuda 12.0 (use either 11.8, or >=12.1), as this is known to have freeze issues
+# - The terms used in wandb / the progress bar can be confusing, see the README.md for beter clarifications
+# - When resuming from checkpoint, the estimated time is inaccurate
+#
+""")
 
 # ---
 

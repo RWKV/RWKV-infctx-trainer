@@ -224,6 +224,18 @@ PYTORCH_CLI_ARGV = remove_arg(PYTORCH_CLI_ARGV, "--auto-resume-ckpt-mode")
 
 # ---
 
+print("""
+#
+# RWKV lighting_trainer.py important notes
+#
+# - Ensure your host is not running cuda 12.0 (use either 11.8, or >=12.1), as this is known to have freeze issues
+# - The terms used in wandb / the progress bar can be confusing, see the README.md for beter clarifications
+# - When resuming from checkpoint, the estimated time is inaccurate
+#
+""")
+
+# ---
+
 from lightning.pytorch.cli import LightningCLI
 from src.model import RWKV
 from src.data import RWKVDataModule
