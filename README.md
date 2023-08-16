@@ -1,4 +1,4 @@
-# RWKV Implementation for Infinite Context
+# RWKV Infinite Context trainer
 
 RWKV trainer with
 - no training context limit (via BPTT)
