@@ -20,7 +20,8 @@ See [RWKV-v4neo/config-example.yaml](./RWKV-v4neo/config-example.yaml) for docum
 > Note: There is a known issue with CUDA 12.0 and multi-gpu at this point of writing. Upgrade to CUDA 12.1 or 12.2 atleast Or downgrade to 11.8
 
 The following venv setup using conda, modify for your use case respectively
-```bash
+
+```shell
 # ninja-build is required for the new trainer
 sudo apt-get install ninja-build
 
@@ -56,9 +57,13 @@ python -m pip install lm-dataformat ftfy sentencepiece tokenizers wandb
 python -m pip install papermill
 ```
 
-Alternatively you could use `python3 -m pip install -r requirements.txt`
+Alternatively you could use the requirements.txt (this may not install pytorch-cuda properly)
 
-Due to issues with [deepspeed on windows](https://github.com/microsoft/DeepSpeed/issues/2427). Only linux environments are supported. WSl2 with windows is not recommended, due to heavy performance penalities in the process (cannot use deepspeed offload, ~50% slower)
+```shell
+python3 -m pip install -r requirements.txt
+```
+
+> Due to issues with [deepspeed on windows](https://github.com/microsoft/DeepSpeed/issues/2427). Only linux environments are supported. WSl2 with windows is not recommended, due to heavy performance penalities in the process (cannot use deepspeed offload, ~50% slower)
 
 ## Overall training process
 
@@ -73,7 +78,7 @@ Due to issues with [deepspeed on windows](https://github.com/microsoft/DeepSpeed
 
 In summary with code, from the trainer directory (eg. RWKV-v4neo)
 
-```bash
+```shell
 # Initialize the blank model (or download a pretrained model)
 python3 init_model.py --n_layer {number-of-layers} --n_embd {embedding-size} --vocab_size {vocab-size/neox/world} --skip-if-exists ../model/file/path.pth
 
