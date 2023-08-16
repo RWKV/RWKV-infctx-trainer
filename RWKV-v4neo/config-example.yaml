@@ -291,7 +291,7 @@ data:
   #   language: en
 
   # Use data_dir, if you are using source=text/json/etc
-  # this should be relative to the data_path
+  # this should be relative to the trainer script path
   source_data_dir: ../dataset-text/
 
   # After loading the dataset, split out test data used for validation, 

@@ -154,7 +154,7 @@ data:
   # source: /home/ubuntu/RWKV-LM-LoRA/dataset-text/enwik8.txt
 
   # Use data_dir, if you are using source=text/json/etc
-  # this should be relative to the data_path
+  # this should be relative to the trainer script path
   source_data_dir: null
 
   # After loading the dataset, split out test data used for validation, 
