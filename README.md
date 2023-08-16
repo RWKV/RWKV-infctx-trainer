@@ -130,3 +130,5 @@ The following features are not yet supported (that may exist in [blinks original
 - RWKV-LM and the original trainer code is credited to @BlinkDL at : [https://github.com/BlinkDL/RWKV-LM](https://github.com/BlinkDL/RWKV-LM)
 - Special credit to @Yuzaboto and @bananaman via our RWKV discord, whose assistance was crucial to help debug and fix the repo to work with RWKVv4 and RWKVv5 code respectively.
 - PyTorch Lightning team @lantiga and @Adrian via Pytorch LIghtning AI discord - who assisted in clarifying questions for me
+
+> This was intentionally a hard fork, as it has too many conflicting changes to the official RWKV-LM repo
