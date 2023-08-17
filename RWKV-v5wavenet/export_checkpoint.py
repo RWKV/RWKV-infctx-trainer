@@ -523,7 +523,12 @@ def get_fp32_state_dict_from_zero_checkpoint(checkpoint_dir, tag=None):
     return _get_fp32_state_dict_from_zero_checkpoint(ds_checkpoint_dir)
 
 
-def convert_zero_checkpoint_to_fp32_state_dict(checkpoint_dir, output_file, tag=None):
+def convert_zero_checkpoint_to_fp32_state_dict(
+        checkpoint_dir, output_file, tag=None,
+        ### RWKV modified code ###
+        save_dtype="bf16"
+        ### RWKV modified code ###
+    ):
     """
     Convert ZeRO 2 or 3 checkpoint into a single fp32 consolidated ``state_dict`` file that can be
     loaded with ``torch.load(file)`` + ``load_state_dict()`` and used for training without DeepSpeed.
@@ -535,14 +540,29 @@ def convert_zero_checkpoint_to_fp32_state_dict(checkpoint_dir, output_file, tag=
     """
 
     state_dict = get_fp32_state_dict_from_zero_checkpoint(checkpoint_dir, tag)
-    print(f"Saving fp32 state dict to {output_file}")
 
     ### Original code ###
+    # print(f"Saving fp32 state dict to {output_file}")
     # torch.save(state_dict, output_file)
     ### Original code ###
 
     ### RWKV modified code ###
+    print(f"Saving {save_dtype} state dict to {output_file}")
+    # Fix some module namings, due to quirk with deepspeed
     newDictionary=OrderedDict((k[16:] if k.startswith("_forward_module.") else k, v) for k, v in state_dict.items())
+    # Convert to requested dtype
+    for k, v in newDictionary.items():
+        # Skip if not a tensor
+        if not isinstance(v, torch.Tensor):
+            continue
+        # Convert to requested dtype
+        if save_dtype == "bf16":
+            newDictionary[k] = v.to(torch.bfloat16)
+        elif save_dtype == "fp32":
+            newDictionary[k] = v.to(torch.float32)
+        else:
+            raise ValueError(f"Unsupported dtype {save_dtype}")
+    # Save the model respectively
     torch.save(newDictionary, output_file)
     ### RWKV modified code ###
 
@@ -611,7 +631,13 @@ if __name__ == "__main__":
         "output_file",
         type=str,
         default="",
-        help="path to the pytorch fp32 state_dict output file (e.g. path/model.pth), if blank defaults to 'rwkv_model.pth' within the checkpoint dir")
+        help="path to the pytorch state_dict output file (e.g. path/model.pth), if blank defaults to 'rwkv_model.pth' within the checkpoint dir")
+    parser.add_argument(
+        "dtype",
+        type=str,
+        default="bf16",
+        help="dtype to save the model as, either 'bf16' or 'fp32'")
+
     parser.add_argument("-d", "--debug", action='store_true', help="enable debug")
     args = parser.parse_args()
 
@@ -620,5 +646,5 @@ if __name__ == "__main__":
     output_file = args.output_file
     if output_file == "" or output_file is None:
         output_file = os.path.join(args.checkpoint_dir, "rwkv_model.pth")
-    convert_zero_checkpoint_to_fp32_state_dict(args.checkpoint_dir, output_file)
+    convert_zero_checkpoint_to_fp32_state_dict(args.checkpoint_dir, output_file, save_dtype=args.dtype)
     ### RWKV modified code ###
