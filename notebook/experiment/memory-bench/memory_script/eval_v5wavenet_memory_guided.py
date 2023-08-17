@@ -29,6 +29,7 @@ async def main_function():
     import difflib
     import copy
     import torch
+    import gc
     from torch.nn import functional as F
     import csv
     import aiofiles
