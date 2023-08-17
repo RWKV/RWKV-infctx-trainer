@@ -705,6 +705,19 @@ class RWKV(L.LightningModule):
 
         # Log the learning rate, and various other parameters
         if self.trainer.local_rank == 0:
+
+            # Add the important notes, for informing users of common gotchas
+            print((
+                "#\n"
+                "# RWKV lighting_trainer.py important notes \n"
+                "# https://github.com/RWKV/RWKV-infctx-trainer \n"
+                "#\n"
+                "# - Ensure your host is not running cuda 12.0 (use either 11.8, or >=12.1), as this is known to have freeze issues\n"
+                "# - The terms used in wandb / the progress bar can be confusing, see the github README.md for beter clarifications\n"
+                "# - When resuming from checkpoint, the estimated time is inaccurate\n"
+                "#"
+            ))
+
             lr_init_e = "{:.3e}".format(lr_init)
             lr_final_e = "{:.3e}".format(lr_final)
             print(f"\n[RWKV.model] Configuring optimizer with\n"+
