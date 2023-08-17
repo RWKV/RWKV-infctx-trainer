@@ -927,6 +927,9 @@ class RWKV(L.LightningModule):
         else:
             cur_bs_list = BlockStateList(last_shift_states, last_wkv_states)
 
+        # Accumulative stack state
+        xstack = torch.zeros_like(x)
+
         # Avoid using the zip operation, as torch.compile throws an exception on it
         # with `zip not reconized as a valid function`
         # ---
@@ -935,6 +938,10 @@ class RWKV(L.LightningModule):
         #             BlockStateList(last_shift_states, last_wkv_states))):
         # ---
         for i in range(len(self.blocks)):
+            # Applying accumulative stack
+            xstack = x + 2*xstack
+            x = xstack + x
+
             block = self.blocks[i]
             last_state = cur_bs_list[i]
             if self.grad_cp:
