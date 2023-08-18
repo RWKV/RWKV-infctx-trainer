@@ -74,6 +74,9 @@ trainer:
   max_epochs: 1
   min_epochs: null
 
+  # Validation check every 10%
+  val_check_interval: 0.10
+
   # Number of datasamples to train for each step, a data sample is considered
   # a "substep" in wandb logs, and a "step" is tracked as "trainer/global_step"
   #
@@ -133,9 +136,6 @@ model:
   # Positional loss bias mode
   position_loss_bias: 1.0
   position_loss_bias_in_validation: false
-
-  # Check every 10%
-  val_check_interval: 0.10
 data:
   # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
   #
