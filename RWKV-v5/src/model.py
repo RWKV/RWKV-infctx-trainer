@@ -560,7 +560,7 @@ class RWKV(L.LightningModule):
                  warmup_steps: int = -1,
                  # loss bias start
                  position_loss_bias: float = 1.0,
-                 position_loss_in_validation: bool = False,
+                 position_loss_bias_in_validation: bool = False,
                  # Backprop settings
                  grad_cp: bool = True,
                  bptt_learning: bool = True,
@@ -643,7 +643,7 @@ class RWKV(L.LightningModule):
 
         # Save the position loss params
         self.position_loss_bias = position_loss_bias
-        self.position_loss_in_validation = position_loss_in_validation
+        self.position_loss_bias_in_validation = position_loss_bias_in_validation
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or n_embd * 4
@@ -1030,7 +1030,7 @@ class RWKV(L.LightningModule):
         total_mask_sum = torch.sum(ori_seq_mask)
 
         # Skip loss bias calculation, if loss_bias_start is 1.0
-        if loss_bias_start == 1.0 or (is_training_run == False and self.position_loss_in_validation == False):
+        if loss_bias_start == 1.0 or (is_training_run == False and self.position_loss_bias_in_validation == False):
             seq_mask = ori_seq_mask
         else:
             # Lets get a linear multiplier for the loss bias
@@ -1046,7 +1046,7 @@ class RWKV(L.LightningModule):
 
             # And save it as seq_mask
             seq_mask = final_mask.unsqueeze(0)
-            
+
         do_bptt_learning = self.bptt_learning and is_training_run
         idx, targets = seq[:, :-1], seq[:, 1:]
 
