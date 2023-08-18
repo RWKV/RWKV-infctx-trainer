@@ -190,7 +190,7 @@ data:
   # This is ignored, if source is not set as text
   # This is ignored, if set to zero
   # ---
-  text_rechunk_size: 1024
+  text_rechunk_size: 4096
 
   # Apply text rechunk to the dataset, even if its not a 'text' source
   # This is done only after dataset filtering, and if source is not 'text'
