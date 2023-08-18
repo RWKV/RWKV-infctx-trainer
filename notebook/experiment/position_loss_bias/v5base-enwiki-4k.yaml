@@ -1,5 +1,5 @@
 # lightning.pytorch==2.0.2
-seed_everything: true
+seed_everything: 89723452
 trainer:
   # Configure the number of GPU, avaliable on your machine
   accelerator: gpu
@@ -32,7 +32,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/EWR-1B5-enwiki-4k/
+      dirpath: ../checkpoint/v5Base-1B5-enwiki-4k/
       filename: null
       
       # Save the top/last K checkpoints
@@ -107,7 +107,7 @@ model:
   # This allows the training of extreamly large context length (eg. 100k),
   # without eating up too much vram by keeping the training context length
   # to a resonable number sutible to the current GPU setup
-  ctx_len: 1024
+  ctx_len: 4096
 
   # Learning rate of the training process
   # ---
@@ -142,7 +142,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/enwiki_10k_1k/
+  data_path: ../datapath/enwiki_10k_4k/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -166,7 +166,7 @@ data:
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
   # This process is skipped if set to zero
-  test_split: 0.005
+  test_split: 0.01
   test_split_shuffle: true
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
