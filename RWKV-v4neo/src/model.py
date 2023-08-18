@@ -870,7 +870,7 @@ class RWKV(L.LightningModule):
             ori_seq_mask = torch.ones_like(seq[:, 1:])
 
         # Get the starting and ending loss bias
-        loss_bias_start = self.loss_bias_start
+        loss_bias_start = self.position_loss_bias
         loss_bias_end   = 2.0 - loss_bias_start
 
         # total_mask_sum
