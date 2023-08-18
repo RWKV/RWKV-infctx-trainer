@@ -35,7 +35,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'infctx-validation-baseline (train-ctx=1024, data-ctx=1024, bs=10)'
+      name: 'infctx-validation-baseline (train-ctx=1024, data-ctx=1024)'
       project: 'RWKV-infctx-validation'
       tags: ['RWKV', 'infctx']
       id: null
@@ -79,7 +79,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/trainer-validaiton/infctx-validation-baseline
+      dirpath: ../checkpoint/trainer-validaiton/infctx-validation-baseline-parallel
       filename: null
       
       # Save the top/last K checkpoints
@@ -140,7 +140,7 @@ trainer:
   # This number is divided by the number of GPUs, and nodes configured
   # So if you have 4 GPUs, and 2 nodes, and this is configured as 128
   # Each GPU will process 128/4/2 = 16 datasamples per step, via accumulate_grad_batches
-  target_batch_size: 128
+  target_batch_size: 16
 
   # # Number of datasamples to accumulate before backproping, per GPU
   # # this can't be used with target_batch_size.
