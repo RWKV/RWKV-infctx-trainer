@@ -416,6 +416,9 @@ class RWKV(L.LightningModule):
                  adam_eps: float = 1.0e-08,
                  weight_decay: float = 0.01,
                  warmup_steps: int = -1,
+                 # loss bias start
+                 position_loss_bias: float = 1.0,
+                 position_loss_bias_in_validation: bool = False,
                  # Backprop settings
                  grad_cp: bool = True,
                  bptt_learning: bool = True,
@@ -497,6 +500,10 @@ class RWKV(L.LightningModule):
         self.bptt_truncated_learning = bptt_truncated_learning
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
+
+        # Save the position loss params
+        self.position_loss_bias = position_loss_bias
+        self.position_loss_bias_in_validation = position_loss_bias_in_validation
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or n_embd * 4
@@ -856,11 +863,36 @@ class RWKV(L.LightningModule):
     def compute_loss(self, batch, batch_idx, is_training_run: bool):
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
-        seq_mask = batch['attention_mask']
+        ori_seq_mask = batch['attention_mask']
 
         # Check if attent mask is set, if not initialize it
-        if seq_mask is None or seq_mask.ndim != 2:
-            seq_mask = torch.ones_like(seq[:, 1:])
+        if ori_seq_mask is None or ori_seq_mask.ndim != 2:
+            ori_seq_mask = torch.ones_like(seq[:, 1:])
+
+        # Get the starting and ending loss bias
+        loss_bias_start = self.position_loss_bias
+        loss_bias_end   = 2.0 - loss_bias_start
+
+        # total_mask_sum
+        total_mask_sum = torch.sum(ori_seq_mask)
+
+        # Skip loss bias calculation, if loss_bias_start is 1.0
+        if loss_bias_start == 1.0 or (is_training_run == False and self.position_loss_bias_in_validation == False):
+            seq_mask = ori_seq_mask
+        else:
+            # Lets get a linear multiplier for the loss bias
+            # seq_mask_sum = torch.sum(ori_seq_mask)
+            bias_mask = torch.linspace(loss_bias_start, loss_bias_end, int(total_mask_sum.item()), device=ori_seq_mask.device)
+
+            # Boolean flag of seq_mask > 0
+            seq_mask_index = ori_seq_mask[0] > 0
+
+            # Apply the bias mask only to positive seq_mask values
+            final_mask = torch.zeros(ori_seq_mask.shape[1], device=ori_seq_mask.device)
+            final_mask[seq_mask_index] = ori_seq_mask[0][seq_mask_index] * bias_mask
+
+            # And save it as seq_mask
+            seq_mask = final_mask.unsqueeze(0)
 
         # Perform cutoff for training run
         if is_training_run:
@@ -896,7 +928,6 @@ class RWKV(L.LightningModule):
 
         B, T = idx.shape
         C = self.n_embd
-        total_mask_sum = torch.sum(seq_mask)
 
         # If total_mask_sum, we skip, as there is no tokens of value to learn from anyway
         if total_mask_sum == 0:
