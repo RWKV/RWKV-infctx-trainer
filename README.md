@@ -93,7 +93,7 @@ python3 preload_datapath.py {you-config}.yaml
 python3 lightning_trainer.py fit -c {your_config}.yaml
 
 # Export the checkpoint to model code
-python3 export_checkpoint.py ../path/to/checkpoint ../path/to/export/model.pth
+python3 export_checkpoint.py ../path/to/checkpoint/last.ckpt/ ../path/to/export/model.pth
 
 # Quick test the model with the dragon prompt
 python3 dragon_test.py ../path/to/export/model.pth
