@@ -558,6 +558,9 @@ class RWKV(L.LightningModule):
                  adam_eps: float = 1.0e-08,
                  weight_decay: float = 0.01,
                  warmup_steps: int = -1,
+                 # loss bias start
+                 position_loss_bias: float = 1.0,
+                 position_loss_in_validation: bool = False,
                  # Backprop settings
                  grad_cp: bool = True,
                  bptt_learning: bool = True,
@@ -637,6 +640,10 @@ class RWKV(L.LightningModule):
         self.bptt_truncated_learning = bptt_truncated_learning
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
+
+        # Save the position loss params
+        self.position_loss_bias = position_loss_bias
+        self.position_loss_in_validation = position_loss_in_validation
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or n_embd * 4
@@ -1009,41 +1016,37 @@ class RWKV(L.LightningModule):
     def compute_loss(self, batch, batch_idx, is_training_run: bool):
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
-        seq_mask = batch['attention_mask']
+        ori_seq_mask = batch['attention_mask']
 
         # Check if attent mask is set, if not initialize it
-        if seq_mask is None or seq_mask.ndim != 2:
-            seq_mask = torch.ones_like(seq[:, 1:])
+        if ori_seq_mask is None or ori_seq_mask.ndim != 2:
+            ori_seq_mask = torch.ones_like(seq[:, 1:])
 
-        # Perform cutoff for training run
-        if is_training_run:
-            prev_step = 0
+        # Get the starting and ending loss bias
+        loss_bias_start = self.loss_bias_start
+        loss_bias_end   = 2.0 - loss_bias_start
 
-            # Avoid using the zip operation, as torch.compile throws an exception on it
-            # with `zip not reconized as a valid function`
-            # ---
-            # for step, len_cut in zip(self.ctx_len_warmup_steps,
-            #                          self.ctx_len_cutoffs):
-            # ---
-            for i in range(min(len(self.ctx_len_warmup_steps), len(self.ctx_len_cutoffs))):
-                step = self.ctx_len_warmup_steps[i]
-                len_cut = self.ctx_len_cutoffs[i]
+        # total_mask_sum
+        total_mask_sum = torch.sum(ori_seq_mask)
 
-                if prev_step <= self.global_step < step and len_cut < seq.shape[
-                        1] - 1:
-                    pos = randint(0, seq.shape[1] - len_cut - 1)
+        # Skip loss bias calculation, if loss_bias_start is 1.0
+        if loss_bias_start == 1.0 or (is_training_run == False and self.position_loss_in_validation == False):
+            seq_mask = ori_seq_mask
+        else:
+            # Lets get a linear multiplier for the loss bias
+            # seq_mask_sum = torch.sum(ori_seq_mask)
+            bias_mask = torch.linspace(loss_bias_start, loss_bias_end, int(total_mask_sum.item()), device=ori_seq_mask.device)
 
-                    # Original
-                    # seq = seq[:, pos:pos + len_cut + 1]
+            # Boolean flag of seq_mask > 0
+            seq_mask_index = ori_seq_mask[0] > 0
 
-                    # Changed to use masking for prefix cutoff (i do not know if this makes sense)
-                    seq = seq[:, :pos + len_cut + 1]
-                    seq_mask = seq_mask[:, :pos + len_cut + 1]
-                    # Set the attention mask to 0 for the skipped tokens
-                    seq_mask[:, :pos] = 0
-                    break
-                prev_step = step
-                
+            # Apply the bias mask only to positive seq_mask values
+            final_mask = torch.zeros(ori_seq_mask.shape[1], device=ori_seq_mask.device)
+            final_mask[seq_mask_index] = ori_seq_mask[0][seq_mask_index] * bias_mask
+
+            # And save it as seq_mask
+            seq_mask = final_mask.unsqueeze(0)
+            
         do_bptt_learning = self.bptt_learning and is_training_run
         idx, targets = seq[:, :-1], seq[:, 1:]
 
