@@ -166,7 +166,7 @@ notebook/scratch/*
 */config.yaml
 
 # Add .github items
-!.github/**/*
+!.github/
 
 # Add back requirements.txt
 !requirements.txt
