@@ -32,7 +32,9 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 512
+          # This is used by docker
+          root-reserve-mb: 35000
+          # Let our repo use everything else
           swap-size-mb: 1024
           temp-reserve-mb: 100
           remove-dotnet: 'true'
