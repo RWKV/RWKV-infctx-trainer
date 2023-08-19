@@ -15,6 +15,7 @@ def init_model(
     print(f'Output model path: {output_model_path}')
     print(f'Vocab size: {vocab_size}')
     # print(f'Existing model path: {existing_model_path}')
+    print(f'Note: this process takes a significant time (and ram) for large models')
     print(f"---- ----- ----")
 
     # Check if the model exists
