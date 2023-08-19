@@ -76,7 +76,7 @@ python3 -m pip install -r requirements.txt
 - Setup the [config.yaml](./RWKV-v4neo/config-example.yaml) file, customized for your foundation model / finetune use case
 - Preload the dataset using the `python3 preload_datapath.py {you-config}.yaml`
 - Start the training process `python3 lightning_trainer.py fit -c {your_config}.yaml`
-- Export the checkpoint after training is complete with `python3 export_checkpoint.py ../path/to/checkpoint ../path/to/export/model.pth`
+- Export the checkpoint after training is complete with `python3 export_checkpoint.py ../path/to/checkpoint/last.ckpt/ ../path/to/export/model.pth`
 - optional, run the dragon prompt as a quick sanity check `python3 dragon_test.py ../path/to/export/model.pth`
 - You should probably convert this to an fp16 model (todo script)
 
@@ -93,7 +93,7 @@ python3 preload_datapath.py {you-config}.yaml
 python3 lightning_trainer.py fit -c {your_config}.yaml
 
 # Export the checkpoint to model code
-python3 export_checkpoint.py ../path/to/checkpoint ../path/to/export/model.pth
+python3 export_checkpoint.py ../path/to/checkpoint/last.ckpt/ ../path/to/export/model.pth
 
 # Quick test the model with the dragon prompt
 python3 dragon_test.py ../path/to/export/model.pth
