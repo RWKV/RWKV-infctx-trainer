@@ -631,13 +631,13 @@ if __name__ == "__main__":
         "output_file",
         type=str,
         default="",
-        # required=False,
+        nargs="?",
         help="path to the pytorch state_dict output file (e.g. path/model.pth), if blank defaults to 'rwkv_model.pth' within the checkpoint dir")
     parser.add_argument(
         "dtype",
         type=str,
         default="bf16",
-        # required=False,
+        nargs="?",
         help="dtype to save the model as, either 'bf16' or 'fp32'")
 
     parser.add_argument("-d", "--debug", action='store_true', help="enable debug")
