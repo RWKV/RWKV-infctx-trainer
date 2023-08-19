@@ -1,12 +1,15 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 authors:
-- family-names: "Cheah"
-  given-names: "Eugene"
-  orcid: "https://orcid.org/0009-0002-8977-475X"
 - family-names: "PENG"
   given-names: "Bo"
   orcid: "https://orcid.org/0000-0002-0865-547X"
+- family-names: "Cao"
+  given-names: "Huanqi"
+  orcid: "https://orcid.org/0000-0002-3870-106X"
+- family-names: "Cheah"
+  given-names: "Eugene"
+  orcid: "https://orcid.org/0009-0002-8977-475X"
 title: "RWKV-LM infctx trainer"
 version: 1.0.0
 date-released: 2023-08-16
