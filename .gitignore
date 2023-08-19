@@ -165,6 +165,9 @@ notebook/scratch/*
 */lightning_logs/
 */config.yaml
 
+# Add .github items
+!.github/**/*
+
 # Add back requirements.txt
 !requirements.txt
 !requirements-*.txt
