@@ -111,7 +111,7 @@ trainer:
 ########################################
 model:
   # Model to start the finetune/training process from
-  load_model: ../model/Echo-A-1B5-Init.pth
+  load_model: ../model/L24-D2048-neox-v5base-init.pth
 
   # Context length to use for the training process
   # the larger the number (and batch size) the larger the vram usage
