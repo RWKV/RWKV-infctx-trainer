@@ -1165,7 +1165,11 @@ class RWKV(L.LightningModule):
             if self.trainer.num_devices > 1:
                 if self.bptt_learning_range <= 0:
                     # We perform forward/backward on the shared max segment count across all GPUs
-                    forward_segment_count  = self.trainer.strategy.reduce(segment_count, reduce_op="max").item()
+                    forward_segment_count  = self.trainer.strategy.reduce(segment_count, reduce_op="max")
+                    # Convert to int, if its a torch tensor
+                    if isinstance(forward_segment_count, torch.Tensor):
+                        forward_segment_count = forward_segment_count.item()
+                    # We perform as many backward pass as we need to be equal or more then bptt_learning_range
                     backward_segment_count = forward_segment_count
                 else:
                     # We perform as many forward pass as we need to be equal or more then bptt_learning_range
