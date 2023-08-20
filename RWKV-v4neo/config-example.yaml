@@ -345,7 +345,7 @@ data:
 
   # Use data_dir, if you are using source=text/json/etc
   # If using relative path, this should be relative to the trainer script path
-  source_data_dir: ../dataset-text/
+  # source_data_dir: ../dataset-text/
 
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
