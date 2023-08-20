@@ -305,8 +305,6 @@ class RWKV_TimeMix(JITModClass):
 
         ########################################################################
         for i in range(TT // T):
-            # # (optimizing out the for loop, since TT//T is always 1)
-            # i = 1
         
             rr = r[:, :, i*T:i*T+T, :]
             kk = k[:, :, :, i*T:i*T+T]
