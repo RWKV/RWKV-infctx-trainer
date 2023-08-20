@@ -4,9 +4,10 @@ datasets==2.13.1
 transformers==4.30.2
 ninja==1.11.1
 numexpr==2.8.4
-jsonargparse==4.22.1
 lm-dataformat==0.0.20
 ftfy==6.1.1
 sentencepiece==0.1.99
 tokenizers==0.13.3
 wandb==0.15.5
+jsonargparse==4.22.1
+jsonargparse[signatures]
