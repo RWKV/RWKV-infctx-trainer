@@ -2,10 +2,11 @@
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
 # Install ninja, and several common stuff
-RUN apt-get update && apt-get install -y ninja-build htop wget curl git
-
-# Install python3 and pip3
-RUN apt-get update && apt-get install -y python3.11 python3-pip
+RUN apt-get update && \
+    apt-get install -y \
+        ninja-build \
+        htop wget curl git vim \
+        python3.11 python3-pip
 
 # Install pytorch
 RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
