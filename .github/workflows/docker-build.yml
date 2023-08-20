@@ -1,4 +1,4 @@
-name: Docker Image Publish
+name: Docker Env Image (cuda-11-8)
 
 on:
   push:
@@ -16,6 +16,7 @@ env:
 
 jobs:
   build:
+    name: Docker Env Image (cuda-11-8)
   
     runs-on: ubuntu-latest
     permissions:
