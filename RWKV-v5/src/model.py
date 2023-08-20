@@ -304,17 +304,15 @@ class RWKV_TimeMix(JITModClass):
         x = torch.zeros(B, H, TT, S, device=r.device, dtype=r.dtype) # output
 
         ########################################################################
-        # for i in range(TT // T):
-        # (optimizing out the for loop, since TT//T is always 1)
-        i = 1
+        for i in range(TT // T):
         
-        rr = r[:, :, i*T:i*T+T, :]
-        kk = k[:, :, :, i*T:i*T+T]
-        vv = v[:, :, i*T:i*T+T, :]
+            rr = r[:, :, i*T:i*T+T, :]
+            kk = k[:, :, :, i*T:i*T+T]
+            vv = v[:, :, i*T:i*T+T, :]
 
-        x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv  +  (rr @ s) * wb
+            x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv  +  (rr @ s) * wb
 
-        s = ws * s + (kk * wk) @ vv
+            s = ws * s + (kk * wk) @ vv
         ########################################################################
         
         x = x.transpose(1, 2).contiguous().view(B * TT, H*S) # BHTS -> BTHS -> BTC
