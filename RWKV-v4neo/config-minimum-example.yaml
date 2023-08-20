@@ -162,7 +162,7 @@ data:
 
   # Use data_dir, if you are using source=text/json/etc
   # If using relative path, this should be relative to the trainer script path
-  source_data_dir: ../dataset-json-dir/
+  # source_data_dir: ../dataset-json-dir/
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
   # If using a custom tokenizer, provide the HF tokenizer name/path
