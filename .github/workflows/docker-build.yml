@@ -99,7 +99,7 @@ jobs:
         with:
           context: "{{defaultContext}}:docker/env-cuda-11-8"
           push: ${{ github.event_name != 'pull_request' }} # Don't push on PR
-          tags: "{{ env.REGISTRY }}/{{ env.IMAGE_NAME }}:env-cuda-11-8"
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:env-cuda-11-8
           # tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,src=docker/env-cuda-11-8
