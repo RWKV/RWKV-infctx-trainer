@@ -259,15 +259,6 @@ class RWKV_TimeMix(JITModClass):
         k = self.key(xk).view(B, TT, self.n_head, self.head_size).transpose(1, 2).transpose(-2, -1) # BTC -> BHTS -> BHST
         v = self.value(xv).view(B, TT, self.n_head, self.head_size).transpose(1, 2)                 # BTC -> BHTS
 
-        # # Enforce bf16 type for kv, as this can be mis init
-        # # when being called directly via inference
-        # if r.dtype != torch.bfloat16:
-        #     r = r.to(torch.bfloat16)
-        # if k.dtype != torch.bfloat16:
-        #     k = k.to(torch.bfloat16)
-        # if v.dtype != torch.bfloat16:
-        #     v = v.to(torch.bfloat16)
-
         return r, k, v
 
     def _forward_wkbs_chunk(self, T, r, k, v):
@@ -310,57 +301,25 @@ class RWKV_TimeMix(JITModClass):
         if r.dtype == torch.bfloat16 and s.dtype != torch.bfloat16:
             s = s.contiguous().to(torch.bfloat16)
 
-        # print("")
-        # print("B,H,TT,S", B, H, TT, S)
-        # print("S-zero", torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype).shape)
-        # print("wkv", last_state.wkv_state[:, :, :].shape)
-        # print("")
-        
         x = torch.zeros(B, H, TT, S, device=r.device, dtype=r.dtype) # output
 
-        # # Check if r is bf16 or float
-        # if s.dtype == torch.bfloat16:
-        #     print("s is bf16")
-        # elif s.dtype == torch.float32:
-        #     print("s is float32")
-        # else:
-        #     print("s is neither bf16 nor float32")
-
-        # # Check if r is bf16 or float
-        # if r.dtype == torch.bfloat16:
-        #     print("r is bf16")
-        # elif r.dtype == torch.float32:
-        #     print("r is float32")
-        # else:
-        #     print("r is neither bf16 nor float32")
-
         ########################################################################
-        for i in range(TT // T):
-            rr = r[:, :, i*T:i*T+T, :]
-            kk = k[:, :, :, i*T:i*T+T]
-            vv = v[:, :, i*T:i*T+T, :]
+        # for i in range(TT // T):
+        # (optimizing out the for loop, since TT//T is always 1)
+        i = 1
+        
+        rr = r[:, :, i*T:i*T+T, :]
+        kk = k[:, :, :, i*T:i*T+T]
+        vv = v[:, :, i*T:i*T+T, :]
 
-            # # Check if r is bf16 or float
-            # if rr.dtype == torch.bfloat16:
-            #     print("rr is bf16")
-            # elif rr.dtype == torch.float32:
-            #     print("rr is float32")
-            # else:
-            #     print("rr is neither bf16 nor float32")
+        x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv  +  (rr @ s) * wb
 
-            x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv  +  (rr @ s) * wb
-
-            s = ws * s + (kk * wk) @ vv
+        s = ws * s + (kk * wk) @ vv
         ########################################################################
         
         x = x.transpose(1, 2).contiguous().view(B * TT, H*S) # BHTS -> BTHS -> BTC
         x = self.ln_x(x).view(B, TT, H*S)
 
-        # # Return with logits outputs, and new timemix state
-        # print("")
-        # print("S-right", s.shape)
-        # print("n_layer, n_embd, layer_id", self.n_layer, self.n_embd, self.layer_id)
-        # print("")
         return self.output(x), TimeMixState(x_l, s)
 
     def _forward_chunk(self, x, last_state: TimeMixState):
