@@ -130,14 +130,7 @@ def get_world_tokenizer():
 
 # Provide a global function for the world tokenizer
 def world_tokenizer_encode(src):
-    res = get_world_tokenizer().encode(src)
-
-    # Check the result for any null, < 0, or > 65525
-    for i in res:
-        if i < 0 or i > 65529:
-            raise Exception(f"world_tokenizer_encode: Invalid token {i} from: {src}")
-
-    return res
+    return get_world_tokenizer().encode(src)
 
 ########################################################################################################
 # Tensor specific tokenizer
