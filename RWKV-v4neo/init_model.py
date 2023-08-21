@@ -114,7 +114,7 @@ def main():
     if vocab_size == "neox":
         vocab_size = 50277
     elif vocab_size == "world":
-        vocab_size = 65529
+        vocab_size = 65536
     else:
         vocab_size = int(vocab_size)
 
