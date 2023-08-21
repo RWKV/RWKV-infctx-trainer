@@ -69,7 +69,7 @@ trainer:
   
   # Checkpoint settings for the training process
   callbacks:
-  - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    class_path: lightning.pytorch.callbacks.ModelCheckpoint
     init_args:
       # Configure this to the path you want to save your checkpoints to
       # note that a subdir will be created with the name `epoch=x-step=y.ckpt`
@@ -272,7 +272,7 @@ data:
   # source: /home/ubuntu/RWKV-LM-LoRA/dataset-text/enwik8.txt
 
   # Use data_dir, if you are using source=text/json/etc
-  # this should be relative to the data_path
+  # this should be relative to the trainer script path
   source_data_dir: null
 
   # After loading the dataset, split out test data used for validation, 
@@ -324,7 +324,7 @@ data:
   # ---
   # multi_column_keys: ['instruction', 'input', 'output']
   # multi_column_prefix: ['Instruction:\n', 'Input:\n', 'Output:\n']
-  # multi_column_train_mask: [false, true, false]
+  # multi_column_train_mask: [true, false, true]
   # multi_column_seperator: '\n\n'
 
   # If processing prompt/completion jsonl pairs, the prompt is masked by default

@@ -991,6 +991,10 @@ class RWKV(L.LightningModule):
                 if self.bptt_learning_range <= 0:
                     # We perform forward/backward on the shared max segment count across all GPUs
                     forward_segment_count  = self.trainer.strategy.reduce(segment_count, reduce_op="max")
+                    # Convert to int, if its a torch tensor
+                    if isinstance(forward_segment_count, torch.Tensor):
+                        forward_segment_count = forward_segment_count.item()
+                    # We perform as many backward pass as we need to be equal or more then bptt_learning_range
                     backward_segment_count = forward_segment_count
                 else:
                     # We perform as many forward pass as we need to be equal or more then bptt_learning_range
@@ -1214,9 +1218,6 @@ class SimpleRWKV():
             dtype:str = "fp32"
         ):
 
-        # Device type must be cuda, cpu type is not supported (yet?)
-        if device != "cuda":
-            raise NotImplementedError("Only cuda device is supported (for now)")
         # Log the mismatch dtype
         if dtype != "fp32":
             print("[SimpleRWKV] Warning: dtype mismatch, only fp32 is supported (for now)")
@@ -1278,7 +1279,8 @@ class SimpleRWKV():
     # Forwarding logic, withoout torch._no_grad() context
     def _forward(
             self, tokens, 
-            stateObj = None
+            stateObj = None,
+            all_logits = False
         ):
 
         logits_arr = None
@@ -1286,37 +1288,54 @@ class SimpleRWKV():
 
         # Get the shift/wkv state
         if stateObj is None:
-            att_shift_states = None
-            ffn_shift_states = None
+            att_shift_state = None
+            ffn_shift_state = None
             wkv_states = None
         else:
-            att_shift_states = stateObj["att_shift_states"]
-            ffn_shift_states = stateObj["ffn_shift_states"]
+            att_shift_state = stateObj["att_shift_state"]
+            ffn_shift_state = stateObj["ffn_shift_state"]
             wkv_states = stateObj["wkv_states"]
         
+        # The all_logits array, if requested
+        all_logits_arr = None
+
         # For each token, process the state, in batches up to ctx_len
         for i in range(0, token_len, self.ctx_len):
+            # Token set
+            token_set = tokens[i:i+self.ctx_len]
+
             # Check if tokens are already tensors
             batch_tokens = torch.tensor(
-                tokens[i:i+self.ctx_len], 
+                token_set, 
                 dtype=torch.long, device=self.device
             ).unsqueeze(0)
             
             # Compute the logits and state
-            logits_arr, att_shift_states, ffn_shift_states, wkv_states = self.model.forward(
-                batch_tokens, att_shift_states, ffn_shift_states, wkv_states
+            logits_arr, att_shift_state, ffn_shift_state, wkv_states = self.model.forward(
+                batch_tokens, att_shift_state, ffn_shift_state, wkv_states
             )
 
+            # Build the all_logits array
+            if all_logits:
+                if all_logits_arr is None:
+                    all_logits_arr = logits_arr[0]
+                else:
+                    all_logits_arr = torch.cat([all_logits_arr, logits_arr[0]], dim=0)
+
         # Return the logits and state
-        return logits_arr[0][-1], { "att_shift_states": att_shift_states, "ffn_shift_states": ffn_shift_states, "wkv_states": wkv_states }
+        if all_logits:
+            return all_logits_arr, { "att_shift_state": att_shift_state, "ffn_shift_state":ffn_shift_state, "wkv_states": wkv_states }
+        else:
+            return logits_arr[0][-1], { "att_shift_state": att_shift_state, "ffn_shift_state":ffn_shift_state, "wkv_states": wkv_states }
     
     # Forwarding logic, with torch._no_grad() context
     def forward(
             self, tokens:list, 
-            stateObj = None
+            stateObj = None,
+            all_logits = False
         ):
         with torch.no_grad():
-            return self._forward(tokens, stateObj)
+            return self._forward(tokens, stateObj, all_logits)
 
     # Sampling logits
     def sample_logits(

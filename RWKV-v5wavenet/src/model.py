@@ -131,10 +131,6 @@ print(f"[RWKV.model] Running RWKV model using '{RWKV_TORCH_RUN_MODE}' with torch
 def deepspeed_checkpoint(*args, **kwargs):
     return deepspeed.checkpointing.checkpoint(*args, **kwargs)
 
-@TCompileDisable
-def wkv_op(time_decay, time_first, k, v, wkv_state):
-    return torch.ops.rwkv.wkv(time_decay, time_first, k, v, wkv_state)
-
 ########################################################################################################
 # RWKV: State Blocks
 ########################################################################################################
@@ -162,39 +158,45 @@ class BlockState:
 
 class BlockStateList:
 
-    def __init__(self, shift_states, wkv_states):
+    def __init__(self, att_shift_states, ffn_shift_states, wkv_states, wavenet_layers:int):
         self.wkv_states = wkv_states
-        self.shift_states = shift_states
+        self.att_shift_states = att_shift_states
+        self.ffn_shift_states = ffn_shift_states
+        self.wavenet_layers = wavenet_layers
 
     # @ TCompileMax (no difference)
     @staticmethod
-    def create(N, B, C, n_head, head_size, device, dtype):
-        result = BlockStateList.empty(N, B, C, n_head, head_size, device, dtype)
+    def create(N, B, C, n_head, head_size, device, dtype, wavenet_layers:int):
+        result = BlockStateList.empty(N, B, C, n_head, head_size, device, dtype, wavenet_layers)
         result.wkv_states[:] = 0
         # result.wkv_states[:, :, :, -1] = -1e38
-        result.shift_states[:] = 0
+        result.att_shift_states[:] = 0
+        result.ffn_shift_states[:] = 0
         return result
 
     # @ TCompileMax (no difference)
     @staticmethod
-    def empty(N, B, C, n_head, head_size, device, dtype):
-        # HEAD nad HEADSIZE
+    def empty(N, B, C, n_head, head_size, device, dtype, wavenet_layers:int):
+        # @TODO: confirm if dtype can be changed from .flaot to dtype=dtype (when bf16)
         wkv_states = torch.empty((N, B, n_head, head_size, head_size),
                                  device=device,
                                 #  dtype=dtype)
                                  dtype=torch.float)
-        shift_states = torch.empty((N, 2, B, C), device=device, dtype=dtype)
-        return BlockStateList(shift_states, wkv_states)
+        # wavenet_layers should default to 12
+        att_shift_states = torch.empty((N, B, 2**(wavenet_layers), C), device=device, dtype=dtype)
+        ffn_shift_states = torch.empty((N, B, 1, C), device=device, dtype=dtype)
+        return BlockStateList(att_shift_states, ffn_shift_states, wkv_states, wavenet_layers)
 
     def __getitem__(self, layer: int):
         return BlockState(
-            TimeMixState(self.shift_states[layer, 0], self.wkv_states[layer]),
-            ChannelMixState(self.shift_states[layer, 1]))
+            TimeMixState(self.att_shift_states[layer], self.wkv_states[layer]),
+            ChannelMixState(self.ffn_shift_states[layer]))
 
     def __setitem__(self, layer: int, state: BlockState):
-        self.shift_states[layer, 0] = state.time_mix_state.shift_state
+        # Use configurable wavenet_layers
+        self.att_shift_states[layer] = state.time_mix_state.shift_state[:,-(2**(self.wavenet_layers)):,:]
+        self.ffn_shift_states[layer] = state.channel_mix_state.shift_state
         self.wkv_states[layer] = state.time_mix_state.wkv_state
-        self.shift_states[layer, 1] = state.channel_mix_state.shift_state
 
 ########################################################################################################
 # RWKV: RWKV Time-mix + RWKV Channel-mix
@@ -202,7 +204,7 @@ class BlockStateList:
 
 class RWKV_TimeMix(JITModClass):
 
-    def __init__(self, layer_id, n_layer, n_embd, dim_att):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, wavenet_layers:int):
         super().__init__()
         
         self.dim_att = dim_att
@@ -210,9 +212,6 @@ class RWKV_TimeMix(JITModClass):
         self.n_embd = n_embd
         self.layer_id = layer_id
 
-        head_size = 64
-        n_head = n_embd // head_size
-        assert n_embd % n_head == 0
         self.n_head = n_head
         self.head_size = head_size
 
@@ -239,8 +238,9 @@ class RWKV_TimeMix(JITModClass):
             self.time_decay = nn.Parameter(decay_speed)
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
-            # time_first (no longer fancy)
-            self.time_first = nn.Parameter(torch.ones(n_head) * (-3.0))
+            # V5-R2 changes
+            self.time_faaaa = nn.Parameter(torch.ones(n_head) * 0.05)
+            # self.time_first = nn.Parameter(torch.ones(n_head) * (-3.0))
 
         # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
@@ -250,11 +250,24 @@ class RWKV_TimeMix(JITModClass):
 
         self.ln_x = nn.GroupNorm(n_head, n_embd)
 
+        # Channel tokenshift
+        shiftamount = pow(2,layer_id)
+        maxshift = pow(2, wavenet_layers)
+        if(shiftamount > maxshift):
+            shiftamount = 1
+        self.time_shift = nn.ZeroPad2d((0, 0, shiftamount, -shiftamount))
+
     # this is based on jit_func(self,x)
     @JITModMethod
     def _forward_rkv_chunk(self, x, B, TT, last_state: TimeMixState):
         # Mix x with the previous timestep to produce xk, xv, xr
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
+
+        # Channel-Mix Tokenshift changes
+        xxx = torch.concat((last_state.shift_state, x), dim=1)
+        xxxx = self.time_shift(xxx)
+        xx = xxxx[:, -x.shape[1]:, :]
+    
+        # xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
         # xx = self.time_shift(x)
 
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
@@ -274,13 +287,16 @@ class RWKV_TimeMix(JITModClass):
         # if v.dtype != torch.bfloat16:
         #     v = v.to(torch.bfloat16)
 
-        return r, k, v
+        return r, k, v, xxx
 
     def _forward_wkbs_chunk(self, T, r, k, v):
         H = self.n_head
 
         w = torch.exp(-torch.exp(self.time_decay.float())).unsqueeze(-1)
-        u = torch.exp(self.time_first.float()).unsqueeze(-1)
+
+        # V5-R2 changes
+        u = self.time_faaaa.float().unsqueeze(-1)
+        # u = torch.exp(self.time_first.float()).unsqueeze(-1)
 
         ws = w.pow(T).reshape(1, H, 1, 1)
         ind = torch.arange(T-1, -1, -1, device=r.device).unsqueeze(0).repeat(H, 1)
@@ -373,13 +389,13 @@ class RWKV_TimeMix(JITModClass):
         TT = torch.tensor(TT, device=x.device, dtype=torch.int32)
 
         # Get r, k, v (self.jit_func(x))
-        r, k, v = self._forward_rkv_chunk(x, B, TT, last_state)
+        r, k, v, xxx = self._forward_rkv_chunk(x, B, TT, last_state)
 
         # Get w, wk, wb, ws (self.jit_func_2)
         w, wk, wb, ws = self._forward_wkbs_chunk(TT, r, k, v)
 
         # Does the state forwarding
-        return self._forward_state_chunk(r, k, v, w, wk, wb, ws, x[:, -1], last_state)
+        return self._forward_state_chunk(r, k, v, w, wk, wb, ws, xxx, last_state)
 
     @TCompileMax
     def forward(self, x, last_state: TimeMixState):
@@ -426,7 +442,8 @@ class RWKV_ChannelMix(JITModClass):
     @JITModMethod
     @TCompileMax
     def forward(self, x, last_state: ChannelMixState):
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
+        # xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
+        xx = torch.concat((last_state.shift_state, x[:, :-1]),
                           dim=1)
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
@@ -443,7 +460,7 @@ class RWKV_ChannelMix(JITModClass):
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, dim_ffn):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, wavenet_layers:int):
         super().__init__()
         self.layer_id = layer_id
 
@@ -453,22 +470,41 @@ class Block(nn.Module):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
 
-        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, dim_att)
+        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att, wavenet_layers)
         self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
+
+        # Setup droupout at block level
+        self.dropout = dropout
+        if dropout > 0:            
+            self.drop0 = nn.Dropout(p = dropout)
+            self.drop1 = nn.Dropout(p = dropout)
 
     def forward(self, x, last_state: BlockState):
         if self.layer_id == 0:
             x = self.ln0(x)
+
         att_out, att_state = self.att(
             self.ln1(x),
             last_state.time_mix_state,
         )
-        x = x + att_out
-        ffn_out, ffn_state = self.ffn(
-            self.ln2(x),
-            last_state.channel_mix_state,
-        )
-        x = x + ffn_out
+
+        if self.dropout > 0.0:
+            # Handle with dropout
+            x = self.drop0(x + att_out)
+            ffn_out, ffn_state = self.ffn(
+                self.ln2(x),
+                last_state.channel_mix_state,
+            )
+            x = self.drop1(x + ffn_out)
+        else:
+            # Handle without dropout
+            x = x + att_out
+            ffn_out, ffn_state = self.ffn(
+                self.ln2(x),
+                last_state.channel_mix_state,
+            )
+            x = x + ffn_out
+        
         return x, BlockState(att_state, ffn_state)
 
 
@@ -527,6 +563,8 @@ class RWKV(L.LightningModule):
                  # Context length schedule
                  ctx_len_cutoffs: List[int] = [],
                  ctx_len_warmup_steps: List[int] = [],
+                 # Wavenet layer count
+                 wavenet_layers: int = -1,
                  # Learning rate schedule
                  # use only target_lr_init / lr_init
                  # to configure a constant learning rate
@@ -534,6 +572,8 @@ class RWKV(L.LightningModule):
                  lr_final: float = -1.0,
                  lr_period: int = -1,
                  lr_period_type: str = 'epoch',
+                 # Dropout rate
+                 dropout: float = 0.0,
                  # Adam optimizer settings
                  beta1: float = 0.9,
                  beta2: float = 0.99,
@@ -608,6 +648,7 @@ class RWKV(L.LightningModule):
         self.lr_final = lr_final
         self.lr_period = lr_period
         self.lr_period_type = lr_period_type
+        self.dropout = dropout
         self.warmup_steps = warmup_steps
         self.beta1 = beta1
         self.beta2 = beta2
@@ -618,6 +659,15 @@ class RWKV(L.LightningModule):
         self.bptt_truncated_learning = bptt_truncated_learning
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
+
+        # Handle wavenet layering
+        if wavenet_layers < 0:
+            # Get from ENV variable
+            if 'RWKV_WAVENET_LAYERS' in os.environ:
+                wavenet_layers = int(os.environ['RWKV_WAVENET_LAYERS'])
+            else:
+                wavenet_layers = 12
+        self.wavenet_layers = wavenet_layers
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or n_embd * 4
@@ -652,11 +702,15 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, n_head, head_size, dim_att, dim_ffn) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, wavenet_layers) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)
         self.head = nn.Linear(n_embd, vocab_size, bias=False)
+
+        # Dropout handling
+        if dropout > 0:
+            self.drop0 = nn.Dropout(p = dropout)
 
         # load the state, and GC the original cpu copy
         if model_weights != None:
@@ -707,8 +761,11 @@ class RWKV(L.LightningModule):
                     lr_1x.add(n)
                 elif "time_decay" in n:
                     lr_2x.add(n)
-                elif "time_first" in n:
-                    lr_3x.add(n)
+                # V5-R2 changes
+                elif "time_faaaa" in n:
+                    lr_2x.add(n)
+                # elif "time_first" in n:
+                #     lr_3x.add(n)
                 else:
                     lr_1x.add(n)
             lr_1x = sorted(list(lr_1x))
@@ -876,26 +933,31 @@ class RWKV(L.LightningModule):
         return -1
 
     @TCompileBaseline
-    def forward(self, idx: torch.Tensor, last_shift_states: torch.Tensor = None,
-                last_wkv_states: torch.Tensor = None):
+    def forward(self, idx: torch.Tensor, last_att_shift_states: torch.Tensor, 
+                last_ffn_shift_states: torch.Tensor, last_wkv_states: torch.Tensor):
         B, T = idx.size()
         assert T <= self.ctx_len, "Cannot forward, model ctx_len is exhausted."
 
         x = self.emb(idx)
 
+        # Handle dropout (input)
+        if self.dropout > 0.0:
+            x = self.drop0(x)
+
         new_states = BlockStateList.empty(self.n_layer, B, self.n_embd, 
                                           self.n_head, self.head_size,
-                                          x.device, x.dtype)
+                                          x.device, x.dtype, self.wavenet_layers)
         
         # last_shift_states can be None, when we are performing direct inference
-        if last_shift_states is None:
+        if last_att_shift_states is None:
             cur_bs_list = BlockStateList.create(
                 self.n_layer, B, self.n_embd, 
                 self.n_head, self.head_size,
-                x.device, x.dtype
+                x.device, x.dtype,
+                self.wavenet_layers
             )
         else:
-            cur_bs_list = BlockStateList(last_shift_states, last_wkv_states)
+            cur_bs_list = BlockStateList(last_att_shift_states, last_ffn_shift_states, last_wkv_states, self.wavenet_layers)
 
         # Avoid using the zip operation, as torch.compile throws an exception on it
         # with `zip not reconized as a valid function`
@@ -918,7 +980,7 @@ class RWKV(L.LightningModule):
 
         x = self.head(x)
 
-        return x, new_states.shift_states, new_states.wkv_states
+        return x, new_states.att_shift_states, new_states.ffn_shift_states, new_states.wkv_states
 
     #
     # Custom overwrite of manual_backwards operation, to skip the "manual_backwards"
@@ -1012,10 +1074,11 @@ class RWKV(L.LightningModule):
         if total_mask_sum == 0:
             return 0
         
-        def checkpointed_step(idx, targets, mask, prev_loss, last_shift_states,
+        def checkpointed_step(idx, targets, mask, prev_loss,
+                              last_att_shift_states, last_ffn_shift_states,
                               last_wkv_states, prev_steps):
-            logits, new_shift_states, new_wkv_states = self(
-                idx, last_shift_states, last_wkv_states)
+            logits, new_att_shift_states, new_ffn_shift_states, new_wkv_states = self(
+                idx, last_att_shift_states, last_ffn_shift_states, last_wkv_states)
             
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
                                     targets.view(-1),
@@ -1028,14 +1091,15 @@ class RWKV(L.LightningModule):
             loss = L2Wrap.apply(loss, logits, total_mask_sum, submask)
             new_steps = prev_steps + submask_sum
             new_loss = prev_loss + loss
-            return new_loss, new_shift_states, new_wkv_states, new_steps
+            return new_loss, new_att_shift_states, new_ffn_shift_states, new_wkv_states, new_steps
 
         total_loss = torch.tensor(
             0, dtype=self.emb.weight.dtype).requires_grad_()
         steps = 0
         states = BlockStateList.create(self.n_layer, B, C, 
                                        self.n_head, self.head_size,
-                                       seq.device, self.emb.weight.dtype)
+                                       seq.device, self.emb.weight.dtype,
+                                       self.wavenet_layers)
         segment_count = math.ceil(T / self.ctx_len)
 
         #
@@ -1101,7 +1165,11 @@ class RWKV(L.LightningModule):
             if self.trainer.num_devices > 1:
                 if self.bptt_learning_range <= 0:
                     # We perform forward/backward on the shared max segment count across all GPUs
-                    forward_segment_count  = self.trainer.strategy.reduce(segment_count, reduce_op="max").item()
+                    forward_segment_count  = self.trainer.strategy.reduce(segment_count, reduce_op="max")
+                    # Convert to int, if its a torch tensor
+                    if isinstance(forward_segment_count, torch.Tensor):
+                        forward_segment_count = forward_segment_count.item()
+                    # We perform as many backward pass as we need to be equal or more then bptt_learning_range
                     backward_segment_count = forward_segment_count
                 else:
                     # We perform as many forward pass as we need to be equal or more then bptt_learning_range
@@ -1135,10 +1203,12 @@ class RWKV(L.LightningModule):
                 # this limits the backprop process, reduces loss learning rate, 
                 # but save vram across extreamly large backpropagation steps
                 if self.bptt_truncated_learning:
-                    prv_shift_states = states.shift_states.clone().detach().requires_grad_(False)
+                    prv_att_shift_states = states.att_shift_states.clone().detach().requires_grad_(False)
+                    prv_ffn_shift_states = states.ffn_shift_states.clone().detach().requires_grad_(False)
                     prv_wkv_states = states.wkv_states.clone().detach().requires_grad_(False)
                 else:
-                    prv_shift_states = states.shift_states
+                    prv_att_shift_states = states.att_shift_states
+                    prv_ffn_shift_states = states.ffn_shift_states
                     prv_wkv_states = states.wkv_states
                 
                 # We use a dummy masked token 0, to do additional dummy checkpoint/forward/backprop when needed
@@ -1153,16 +1223,17 @@ class RWKV(L.LightningModule):
                     cur_msk = dummy_2d_zero
 
                 # Segmented learning, applies the forward/pass over each chunk seperately
-                segment_loss, new_shift_states, new_wkv_states, steps = checkpointed_step(
+                segment_loss, new_att_shift_states, new_ffn_shift_states, new_wkv_states, steps = checkpointed_step(
                     cur_idx,
                     cur_tar,
                     cur_msk,
                     torch.tensor(0, dtype=self.emb.weight.dtype, device=cur_device).requires_grad_(True),
-                    prv_shift_states,
+                    prv_att_shift_states,
+                    prv_ffn_shift_states,
                     prv_wkv_states,
                     steps,
                 )
-                states = BlockStateList(new_shift_states, new_wkv_states)
+                states = BlockStateList(new_att_shift_states, new_ffn_shift_states, new_wkv_states, self.wavenet_layers)
 
                 # # Keep the segment loss (for backpassing in reverse)
                 # segment_loss_arr[i] = segment_loss
@@ -1234,28 +1305,30 @@ class RWKV(L.LightningModule):
             segment_size = self.ctx_len
             for i in range(segment_count):
                 if i < segment_count-1 and is_training_run:
-                    total_loss, new_shift_states, new_wkv_states, steps = deepspeed_checkpoint(
+                    total_loss, new_att_shift_states, new_ffn_shift_states, new_wkv_states, steps = deepspeed_checkpoint(
                         checkpointed_step,
                         idx[:, i * segment_size:(i + 1) * segment_size],
                         targets[:, i * segment_size:(i + 1) * segment_size],
                         seq_mask[:, i * segment_size:(i + 1) * segment_size],
                         total_loss,
-                        states.shift_states,
+                        states.att_shift_states,
+                        states.ffn_shift_states,
                         states.wkv_states,
                         steps,
                     )
                 else:
-                    total_loss, new_shift_states, new_wkv_states, steps = checkpointed_step(
+                    total_loss, new_att_shift_states, new_ffn_shift_states, new_wkv_states, steps = checkpointed_step(
                         idx[:, i * segment_size:(i + 1) * segment_size],
                         targets[:, i * segment_size:(i + 1) * segment_size],
                         seq_mask[:, i * segment_size:(i + 1) * segment_size],
                         total_loss,
-                        states.shift_states,
+                        states.att_shift_states,
+                        states.ffn_shift_states,
                         states.wkv_states,
                         steps,
                     )
 
-                states = BlockStateList(new_shift_states, new_wkv_states)
+                states = BlockStateList(new_att_shift_states, new_ffn_shift_states, new_wkv_states, self.wavenet_layers)
                 gc.collect()
                 # torch.cuda.empty_cache()
 
@@ -1382,7 +1455,8 @@ class SimpleRWKV():
     # Forwarding logic, withoout torch._no_grad() context
     def _forward(
             self, tokens, 
-            stateObj = None
+            stateObj = None,
+            all_logits = False
         ):
 
         logits_arr = None
@@ -1390,35 +1464,54 @@ class SimpleRWKV():
 
         # Get the shift/wkv state
         if stateObj is None:
-            shift_states = None
+            att_shift_state = None
+            ffn_shift_state = None
             wkv_states = None
         else:
-            shift_states = stateObj["shift_states"]
+            att_shift_state = stateObj["att_shift_state"]
+            ffn_shift_state = stateObj["ffn_shift_state"]
             wkv_states = stateObj["wkv_states"]
         
+        # The all_logits array, if requested
+        all_logits_arr = None
+
         # For each token, process the state, in batches up to ctx_len
         for i in range(0, token_len, self.ctx_len):
+            # Token set
+            token_set = tokens[i:i+self.ctx_len]
+
             # Check if tokens are already tensors
             batch_tokens = torch.tensor(
-                tokens[i:i+self.ctx_len], 
+                token_set, 
                 dtype=torch.long, device=self.device
             ).unsqueeze(0)
             
             # Compute the logits and state
-            logits_arr, shift_states, wkv_states = self.model.forward(
-                batch_tokens, shift_states, wkv_states
+            logits_arr, att_shift_state, ffn_shift_state, wkv_states = self.model.forward(
+                batch_tokens, att_shift_state, ffn_shift_state, wkv_states
             )
 
+            # Build the all_logits array
+            if all_logits:
+                if all_logits_arr is None:
+                    all_logits_arr = logits_arr[0]
+                else:
+                    all_logits_arr = torch.cat([all_logits_arr, logits_arr[0]], dim=0)
+
         # Return the logits and state
-        return logits_arr[0][-1], { "shift_states": shift_states, "wkv_states": wkv_states }
+        if all_logits:
+            return all_logits_arr, { "att_shift_state": att_shift_state, "ffn_shift_state":ffn_shift_state, "wkv_states": wkv_states }
+        else:
+            return logits_arr[0][-1], { "att_shift_state": att_shift_state, "ffn_shift_state":ffn_shift_state, "wkv_states": wkv_states }
     
     # Forwarding logic, with torch._no_grad() context
     def forward(
             self, tokens:list, 
-            stateObj = None
+            stateObj = None,
+            all_logits = False
         ):
         with torch.no_grad():
-            return self._forward(tokens, stateObj)
+            return self._forward(tokens, stateObj, all_logits)
 
     # Sampling logits
     def sample_logits(

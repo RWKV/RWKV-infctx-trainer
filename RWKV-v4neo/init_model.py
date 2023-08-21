@@ -15,6 +15,7 @@ def init_model(
     print(f'Output model path: {output_model_path}')
     print(f'Vocab size: {vocab_size}')
     # print(f'Existing model path: {existing_model_path}')
+    print(f'Note: this process takes a significant time (and ram) for large models')
     print(f"---- ----- ----")
 
     # Check if the model exists
@@ -54,7 +55,7 @@ def init_model(
         else:
             if n == "emb.weight":
                 # scale = -1 * self.args.lr_init
-                scale = -1 * 0.1
+                scale = -1 * 0.0001
             else:
                 if shape[0] > shape[1]:
                     gain = math.sqrt(shape[0] / shape[1])
