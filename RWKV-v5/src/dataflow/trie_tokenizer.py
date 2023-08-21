@@ -52,7 +52,7 @@ class TRIE:
 
 class TRIE_TOKENIZER():
     def __init__(self, file_name):
-        self.vocab_size = 65525
+        self.vocab_size = 65529
         self.idx2token = {}
         sorted = [] # must be already sorted
         with open(file_name, "r", encoding="utf-8") as f:
@@ -130,7 +130,14 @@ def get_world_tokenizer():
 
 # Provide a global function for the world tokenizer
 def world_tokenizer_encode(src):
-    return get_world_tokenizer().encode(src)
+    res = get_world_tokenizer().encode(src)
+
+    # Check the result for any null, < 0, or > 65525
+    for i in res:
+        if i < 0 or i > 65529:
+            raise Exception(f"world_tokenizer_encode: Invalid token {i} from: {src}")
+
+    return res
 
 ########################################################################################################
 # Tensor specific tokenizer
