@@ -165,6 +165,9 @@ notebook/scratch/*
 */lightning_logs/
 */config.yaml
 
+# Add back script files used in docker images
+!docker/**/*.sh
+
 # Add .github items
 !.github/
 

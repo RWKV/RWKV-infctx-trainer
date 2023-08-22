@@ -20,3 +20,6 @@ RUN pip3 install lightning==2.0.5 deepspeed==0.10.0 \
 # Install the misc packages we might need for the various experiments
 RUN pip3 install \
     papermill aiocsv aiofiles
+
+# Configure default dir, to the home directory
+WORKDIR /root
