@@ -98,7 +98,7 @@ jobs:
       
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
-      - name: Build and push Docker image
+      - name: Build and push Docker image (env-cuda-11-8)
         id: build-and-push
         uses: docker/build-push-action@v4
         with:
@@ -108,4 +108,18 @@ jobs:
           # tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,src=docker/env-cuda-11-8
+          cache-to: type=gha,mode=max
+
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image (github-worker-cuda-11-8)
+        id: build-and-push
+        uses: docker/build-push-action@v4
+        with:
+          context: "{{defaultContext}}:docker/github-worker-cuda-11-8"
+          push: ${{ github.event_name != 'pull_request' }} # Don't push on PR
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:github-worker-cuda-11-8
+          # tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,src=docker/github-worker-cuda-11-8
           cache-to: type=gha,mode=max
