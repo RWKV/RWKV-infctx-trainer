@@ -127,9 +127,11 @@ You can find the training channel on our discord here: https://discord.com/chann
 
 ## Should I use the official RWKV-LM trainer or the infctx trainer?
 
-Generally if your training a foundation model from scratch - with a fixed context size, and you need the absolute highest throughput across multiple nodes (ie. 10 nodes filled with A100 servers), the [official trainer](https://github.com/BlinkDL/RWKV-LM) should perform better.
+Generally if your training a foundation model from scratch - with a fixed context size, and you need the absolute highest throughput across multiple nodes (ie. 10 nodes filled with A100 servers), the [official trainer](https://github.com/BlinkDL/RWKV-LM) would perform much better (ie 2x faster depending on the settings)
 
-If you need deepspeed 3 support, or you deal with dynamic datasets, this trainer is much more flexible, for most nearly all other use cases.
+If you need deepspeed 3 support, or you deal with dynamic datasets, this trainer is much more flexible, for nearly all other use cases. 
+
+Overtime as we optimize the infctx trainer, the gap to the official trainer should shrink, however this is not the highest priority (infctx working > absolute speed)
 
 ## Some long term architecture goals
 
