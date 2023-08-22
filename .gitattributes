@@ -1,0 +1,2 @@
+# Disable code % attribution of the project from notebooks
+notebook/* linguist-vendored

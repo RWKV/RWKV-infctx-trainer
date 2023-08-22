@@ -170,6 +170,7 @@ notebook/scratch/*
 
 # Add .github items
 !.github/
+!.git*
 
 # Add back requirements.txt
 !requirements.txt
