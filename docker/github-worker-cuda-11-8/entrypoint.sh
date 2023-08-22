@@ -22,11 +22,30 @@ else
 
     # Run it in background, and get the PID
     ./run.sh &
-    RUNNER_PID=$!
+
+    # If lane2 runner is enabled, start it
+    # this is enabled with RUNNER_LANE2=true
+    if [[ -z "${RUNNER_LANE2}" ]]; then
+        echo "# [INFO] lane2 runner is disabled"
+    else
+        echo "# [INFO] lane2 runner is enabled"
+        cd /actions-runner-lane2
+        ./config.sh \
+            --unattended \
+            --url "${RUNNER_REPO_URL}" \
+            --token "${RUNNER_TOKEN}" \
+            --name "${RUNNER_NAME}-lane2" \
+            --replace \
+            --labels "${RUNNER_LABELS},lane2"
+
+        # Run it in background, and get the PID
+        ./run.sh &
+    fi
 fi
 
 # Follow up on any forwarded command args
 if [[ $# -gt 0 ]]; then
+    cd /root
     exec "$@"
 fi
 
