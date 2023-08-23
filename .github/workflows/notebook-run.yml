@@ -36,8 +36,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      - name: Trigger the github-runner notebook
+      - name: Run the notebook, with harness
         run: |
           cd ./notebook/github-runner
           chmod +x ./github-runner.sh
           ./github-runner.sh ${{github.event.inputs.notebookFile}}
+
+      - name: Save output notebok
+        uses: actions/upload-artifact@v3
+        with:
+          name: output-notebook
+          path: |
+            output
