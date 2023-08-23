@@ -3,8 +3,12 @@ name: Notebook-Run
 on:
   workflow_dispatch:
     inputs:
+      notebook:
+        description: 'Notebook to run (inside the notebook folder)'
+        required: true
+        default: 'notebooks/01-EDA.ipynb'
       gpuTarget:
-        description: 'GPU Target (use either 8x12vgb / 1x24vgb)'     
+        description: 'GPU Target (use either 8x12vgb / 1x24vgb)'
         required: true
         default: '1x24vgb'
       cudaVersion:
