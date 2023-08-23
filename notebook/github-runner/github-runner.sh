@@ -14,6 +14,11 @@ if [[ -z "${WANDB_API_KEY}" ]]; then
     exit 1
 fi
 
+# The HF repo directory to use
+if [[ -z "${HF_REPO_SYNC}" ]]; then
+    HF_REPO_SYNC="rwkv-x-dev/rwkv-x-playground"
+fi
+
 # Get the notebook script from the first arg
 NOTEBOOK_FILE=$1
 
@@ -31,7 +36,7 @@ CACHE_DIR="$ACTION_DIR/.cache/"
 mkdir -p "$CACHE_DIR"
 
 # Log the proj dir
-echo "#"
+echo "# ------"
 echo "# Starting github notebook runner"
 echo "#"
 echo "# PROJ_DIR: $PROJ_DIR"
@@ -39,7 +44,7 @@ echo "# NOTEBOOK_DIR: $NOTEBOOK_DIR"
 echo "# NOTEBOOK_FILE: $NOTEBOOK_FILE"
 echo "#"
 echo "# CACHE_DIR: $CACHE_DIR"
-echo "#"
+echo "# ------"
 
 # Check if the notebook file exists, in the notebook directory
 if [[ ! -f "$NOTEBOOK_DIR/$NOTEBOOK_FILE" ]]; then
@@ -128,3 +133,17 @@ cd "$INPUT_FILE_DIR"
 papermill \
     -k python3 --log-output \
     "$INPUT_FILE_PATH" "$OUTPUT_FILE_PATH" 
+
+# -----
+# Upload the output notebook to the github repo
+# -----
+
+# Upload the result files
+echo "# ------"
+echo "# Uploading models & notebooks to HF repo"
+echo "# ------"
+
+# Get $NOTEBOOK_FILE, without the ipynb filetype
+NOTEBOOK_FILE_NOEXT="${NOTEBOOK_FILE%.*}"
+
+python3 ./hf-upload.py "$HF_REPO_SYNC" "$NOTEBOOK_FILE_NOEXT"
