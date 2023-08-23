@@ -3,10 +3,10 @@ name: Notebook-Run
 on:
   workflow_dispatch:
     inputs:
-      notebook:
+      notebookFile:
         description: 'Notebook to run (inside the notebook folder)'
         required: true
-        default: 'notebooks/01-EDA.ipynb'
+        default: 'trainer-v4-unit-test/model-init.ipynb'
       gpuTarget:
         description: 'GPU Target (use either 8x12vgb / 1x24vgb)'
         required: true
@@ -19,11 +19,19 @@ on:
 env:
   gpuTarget: ${{github.event.inputs.gpuTarget}}
   cudaVersion: ${{github.event.inputs.cudaVersion}}
+  notebookFile: ${{github.event.inputs.notebookFile}}
 
 jobs:
   build_env:
     name: Notebook-Run
-    runs-on: cuda-${{github.event.inputs.cudaVersion}},${{github.event.inputs.gpuTarget}}
+    runs-on: 
+      - cuda-${{github.event.inputs.cudaVersion}}
+      - ${{github.event.inputs.gpuTarget}}
     steps:
-    - run: |
-        echo "Cuda Version: ${{github.event.inputs.cudaVersion}}"
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Trigger the github-runner notebook
+        run: |
+          cd ./notebook/github-runner
+          ./github-runner.sh ${{github.event.inputs.notebookFile}}
