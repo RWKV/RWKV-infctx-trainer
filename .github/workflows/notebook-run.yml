@@ -9,11 +9,11 @@ on:
         default: 'trainer-v4-unit-test/model-init.ipynb'
       gpuTarget:
         description: 'GPU Target (use either 8x12vgb / 1x24vgb)'
-        required: true
+        # required: true
         default: '1x24vgb'
       cudaVersion:
         description: 'cuda version'
-        required: true
+        # required: true
         default: '11-8'
 
 env:

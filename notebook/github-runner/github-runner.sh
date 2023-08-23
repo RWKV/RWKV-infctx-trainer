@@ -23,7 +23,7 @@ NOTEBOOK_DIR="$(dirname "$SCRIPT_DIR")"
 PROJ_DIR="$(dirname "$NOTEBOOK_DIR")"
 
 # Assume the ACTION dir, is two dir levels up
-ACTION_DIR="$(dirname "$PROJ_DIR/../")"
+ACTION_DIR="$(dirname "$PROJ_DIR/../../../")"
 CACHE_DIR="$ACTION_DIR/.cache/"
 
 # Log the proj dir
