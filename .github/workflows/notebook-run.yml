@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       notebookFile:
-        description: 'Notebook to run (inside the notebook folder)'
+        description: 'Notebook to run (inside notebook dir)'
         required: true
         default: 'trainer-v4-unit-test/model-init.ipynb'
       gpuTarget:
@@ -34,4 +34,5 @@ jobs:
       - name: Trigger the github-runner notebook
         run: |
           cd ./notebook/github-runner
+          chmod +x ./github-runner.sh
           ./github-runner.sh ${{github.event.inputs.notebookFile}}
