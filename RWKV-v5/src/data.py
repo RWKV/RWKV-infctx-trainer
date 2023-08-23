@@ -7,6 +7,7 @@ from datasets import load_from_disk, load_dataset, Dataset
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
 num_cpus = cpu_count()
+num_workers = cpu_count() if cpu_count() < 8 else 8
 
 # Get the script directory
 import os
@@ -476,9 +477,9 @@ class RWKVDataModule(LightningDataModule):
     # Return the train dataloader
     def train_dataloader(self):
         self._internal_setup()
-        return DataLoader(self._loaded_dataset['train'], num_workers=num_cpus)
+        return DataLoader(self._loaded_dataset['train'], num_workers=num_workers)
     
     # Return the validation dataloader
     def val_dataloader(self):
         self._internal_setup()
-        return DataLoader(self._loaded_dataset['test'], num_workers=num_cpus)
+        return DataLoader(self._loaded_dataset['test'], num_workers=num_workers)
