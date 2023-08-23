@@ -143,7 +143,9 @@ echo "# ------"
 echo "# Uploading models & notebooks to HF repo"
 echo "# ------"
 
+# Get the directory of the notebook file
 # Get $NOTEBOOK_FILE, without the ipynb filetype
+NOTEBOOK_DIR="$(dirname "$INPUT_FILE_PATH")"
 NOTEBOOK_FILE_NOEXT="${NOTEBOOK_FILE%.*}"
 
-python3 ./hf-upload.py "$HF_REPO_SYNC" "$NOTEBOOK_FILE_NOEXT"
+python3 ./hf-upload.py "$HF_REPO_SYNC" "$NOTEBOOK_DIR" "$NOTEBOOK_FILE"
