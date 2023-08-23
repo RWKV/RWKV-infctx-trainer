@@ -38,4 +38,3 @@ api.upload_folder(
     allow_patterns=["*.ipynb"],
     commit_message=f"[GHA] {NOTEBOOK_FILE} result notebooks"
 )
-

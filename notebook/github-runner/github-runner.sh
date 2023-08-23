@@ -148,4 +148,4 @@ echo "# ------"
 NOTEBOOK_DIR="$(dirname "$INPUT_FILE_PATH")"
 NOTEBOOK_FILE_NOEXT="${NOTEBOOK_FILE%.*}"
 
-python3 ./hf-upload.py "$HF_REPO_SYNC" "$NOTEBOOK_DIR" "$NOTEBOOK_FILE"
+python3 "$SCRIPT_DIR/hf-upload.py" "$HF_REPO_SYNC" "$NOTEBOOK_DIR" "$NOTEBOOK_FILE"
