@@ -1,9 +1,11 @@
-# Get the Hugging Face Hub API
+import os
+import sys
 from huggingface_hub import HfApi
+
+# Get the Hugging Face Hub API
 api = HfApi()
 
 # Get the NOTEBOOK_FILE from the script first arg
-import sys
 NOTEBOOK_FILE = sys.argv[2]
 
 # Compute the notebook subdir from the notebook parent
@@ -14,9 +16,6 @@ NOTEBOOK_SUBDIR = os.path.dirname(NOTEBOOK_FILE)
 REPO_URI = sys.argv[1] if len(sys.argv) > 1 else ""
 if REPO_URI == "":
     REPO_URI = "rwkv-x-dev/rwkv-x-playground"
-
-# Get the current script dir
-import os
 
 RUNNER_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NOTEBOOK_DIR = os.path.dirname(RUNNER_SCRIPT_DIR)
