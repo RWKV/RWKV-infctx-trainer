@@ -36,7 +36,7 @@ api.upload_folder(
 
 # Upload the ipynb files
 api.upload_folder(
-    folder_path=f"{OUTPUT_DIR}/${NOTEBOOK_SUBDIR}",
+    folder_path=f"{OUTPUT_DIR}/{NOTEBOOK_SUBDIR}",
     repo_id=REPO_URI,
     path_in_repo=NOTEBOOK_SUBDIR,
     repo_type="model",
