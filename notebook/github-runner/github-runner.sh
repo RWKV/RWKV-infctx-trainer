@@ -14,6 +14,11 @@ if [[ -z "${WANDB_API_KEY}" ]]; then
     exit 1
 fi
 
+# The HF repo directory to use
+if [[ -z "${HF_REPO_SYNC}" ]]; then
+    HF_REPO_SYNC="rwkv-x-dev/rwkv-x-playground"
+fi
+
 # Get the notebook script from the first arg
 NOTEBOOK_FILE=$1
 
@@ -31,7 +36,7 @@ CACHE_DIR="$ACTION_DIR/.cache/"
 mkdir -p "$CACHE_DIR"
 
 # Log the proj dir
-echo "#"
+echo "# ------"
 echo "# Starting github notebook runner"
 echo "#"
 echo "# PROJ_DIR: $PROJ_DIR"
@@ -39,7 +44,7 @@ echo "# NOTEBOOK_DIR: $NOTEBOOK_DIR"
 echo "# NOTEBOOK_FILE: $NOTEBOOK_FILE"
 echo "#"
 echo "# CACHE_DIR: $CACHE_DIR"
-echo "#"
+echo "# ------"
 
 # Check if the notebook file exists, in the notebook directory
 if [[ ! -f "$NOTEBOOK_DIR/$NOTEBOOK_FILE" ]]; then
