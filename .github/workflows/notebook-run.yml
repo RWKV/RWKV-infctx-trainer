@@ -44,6 +44,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+      - name: Download models from HF
+        run: |
+          cd ./notebook/github-runner
+          python3 ./hf-download.py "${{github.event.inputs.notebookFile}}" "${{github.event.inputs.huggingFaceRepo}}"
+          ls -alh ../../model/
       - name: Run the notebook, with harness
         run: |
           cd ./notebook/github-runner
