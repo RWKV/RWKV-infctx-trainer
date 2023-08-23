@@ -383,7 +383,7 @@ def prepare_data_static(**kargs):
         src_dataset = src_dataset.filter(dataset_filter, num_proc=num_cpus)
         
         # Perform a sort by length
-        if kargs["sort_by_length"] is not None and kargs["sort_by_length"] == True:
+        if kargs["sort_by_length"]:
             sort_asc = sort_asc if kargs["sort_asc"] is not None else True
             
             def calculate_length(example):
@@ -443,6 +443,11 @@ class RWKVDataModule(LightningDataModule):
         # Min / Max token size filtering
         min_token_size: int = -1,
         max_token_size: int = -1,
+        
+        # Sort by length
+        sort_by_length: bool = False,
+        sort_asc: bool = True,
+        
         # Custom 'text' column to support, mostly used for dataset where the 
         # desired train data is in another column (eg. 'code')
         custom_text_key: str = None,
