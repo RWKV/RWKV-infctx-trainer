@@ -13,7 +13,8 @@ RUN cd / && mkdir actions-runner && cd actions-runner && \
 RUN cd / && cp -r /actions-runner /actions-runner-lane2
 
 # Install dependencies
-RUN cd actions-runner && ./bin/installdependencies.sh 
+RUN cd /actions-runner && ./bin/installdependencies.sh && \
+    cd /actions-runner-lane2 && ./bin/installdependencies.sh
 
 # Copy the entrypoint script, and set it up
 COPY entrypoint.sh /entrypoint.sh
