@@ -93,7 +93,9 @@ mkdir -p "$HF_HOME"
 # -----
 
 echo "# [NOTE] Ensuring huggingface_hub[cli] / wandb is updated"
-python3 -m pip install huggingface_hub[cli] wandb
+python3 -m pip install huggingface_hub[cli] wandb 
+python3 -m pip install ipython ipykernel
+ipython kernel install --name "python3" --user
 
 # -----
 # Project dir resets setup

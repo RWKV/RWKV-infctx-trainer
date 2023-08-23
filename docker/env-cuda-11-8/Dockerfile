@@ -21,5 +21,9 @@ RUN pip3 install lightning==2.0.5 deepspeed==0.10.0 \
 RUN pip3 install \
     papermill aiocsv aiofiles huggingface_hub[cli]
 
+# Python subkernel stuff (for papermill notebook)
+RUN pip3 install ipython ipykernel
+RUN ipython kernel install --name "python3" --user
+
 # Configure default dir, to the home directory
 WORKDIR /root
