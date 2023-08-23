@@ -3,6 +3,9 @@
 export RUNNER_ALLOW_RUNASROOT="1"
 cd /actions-runner
 
+# CUDA version for label
+CUDA_VER="cuda-11-8"
+
 # Check the URL, token, and name of the runner from the container ENV vars
 # and if they are not set, provide default values
 if [[ -z "${RUNNER_NAME}" ]]; then
@@ -11,24 +14,40 @@ fi
 if [[ -z "${RUNNER_TOKEN}" ]]; then
     echo "# [WARNING] RUNNER_TOKEN is missing, skipping github runner setup"
 else
-    # Configure unattended
-    ./config.sh \
-        --unattended \
-        --url "${RUNNER_REPO_URL}" \
-        --token "${RUNNER_TOKEN}" \
-        --name "${RUNNER_NAME}" \
-        --replace \
-        --labels "${RUNNER_LABELS}"
-
-    # Run it in background, and get the PID
-    ./run.sh &
+    echo "# [INFO] lane1 starting up ... "
 
     # If lane2 runner is enabled, start it
     # this is enabled with RUNNER_LANE2=true
     if [[ -z "${RUNNER_LANE2}" ]]; then
+
+        # Configure unattended
+        ./config.sh \
+            --unattended \
+            --url "${RUNNER_REPO_URL}" \
+            --token "${RUNNER_TOKEN}" \
+            --name "${RUNNER_NAME}" \
+            --replace \
+            --labels "${RUNNER_LABELS},nolane,${CUDA_VER}"
+
+        # Run it in background, and get the PID
+        ./run.sh &
+
         echo "# [INFO] lane2 runner is disabled"
     else
-        echo "# [INFO] lane2 runner is enabled"
+        # Configure unattended
+        ./config.sh \
+            --unattended \
+            --url "${RUNNER_REPO_URL}" \
+            --token "${RUNNER_TOKEN}" \
+            --name "${RUNNER_NAME}-lane1" \
+            --replace \
+            --labels "${RUNNER_LABELS},lane1,${CUDA_VER}"
+
+        # Run it in background, and get the PID
+        ./run.sh &
+
+        echo "# [INFO] lane2 starting up ... "
+
         cd /actions-runner-lane2
         ./config.sh \
             --unattended \
@@ -36,7 +55,7 @@ else
             --token "${RUNNER_TOKEN}" \
             --name "${RUNNER_NAME}-lane2" \
             --replace \
-            --labels "${RUNNER_LABELS},lane2"
+            --labels "${RUNNER_LABELS},lane2,${CUDA_VER}"
 
         # Run it in background, and get the PID
         ./run.sh &
