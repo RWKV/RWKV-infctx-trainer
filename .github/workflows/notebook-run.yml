@@ -17,9 +17,13 @@ on:
         default: '11-8'
 
 env:
+  # Notebook runner settings
   gpuTarget: ${{github.event.inputs.gpuTarget}}
   cudaVersion: ${{github.event.inputs.cudaVersion}}
   notebookFile: ${{github.event.inputs.notebookFile}}
+  # Secrets
+  HUGGING_FACE_HUB_TOKEN: ${{secrets.HUGGING_FACE_HUB_TOKEN}}
+  WANDB_API_KEY: ${{secrets.WANDB_API_KEY}}
 
 jobs:
   build_env:
