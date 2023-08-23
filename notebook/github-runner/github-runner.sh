@@ -38,3 +38,10 @@ mkdir -p $PROJ_DIR/checkpoint
 mkdir -p $PROJ_DIR/datapath
 mkdir -p $PROJ_DIR/output
 mkdir -p $PROJ_DIR/model
+
+# Setup the HF cache
+# mkdir -p $PROJ_DIR/.cache/HF
+
+# Configure HF cache
+
+# Run the notebook
