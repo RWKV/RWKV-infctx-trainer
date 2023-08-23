@@ -18,7 +18,7 @@ else
 
     # If lane2 runner is enabled, start it
     # this is enabled with RUNNER_LANE2=true
-    if [[ -z "${RUNNER_LANE2}" ]]; then
+    if [ "$RUNNER_LANE2" != true ]; then
 
         # Configure unattended
         ./config.sh \
