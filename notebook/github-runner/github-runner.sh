@@ -23,7 +23,7 @@ NOTEBOOK_DIR="$(dirname "$SCRIPT_DIR")"
 PROJ_DIR="$(dirname "$NOTEBOOK_DIR")"
 
 # Assume the ACTION dir, is 4 dir levels up
-ACTION_DIR="$(dirname "$PROJ_DIR/../../../")"
+ACTION_DIR="$(dirname "$PROJ_DIR/../../../../")"
 ACTION_DIR="$(cd "$ACTION_DIR" && pwd)"
 
 # Cache dir to use when possible
@@ -74,7 +74,7 @@ CACHE_SIZE=$(du -sh $CACHE_DIR | awk '{print $1}')
 CACHE_SIZE_BYTES=$(convert_to_bytes $CACHE_SIZE)
 
 # If the cache dir is larger then RUNNER_CACHE_SIZE_LIMIT, then delete the cache dir
-if [[ "$CACHE_SIZE_BYTES" >= "$RUNNER_CACHE_SIZE_LIMIT_BYTES" ]]; then
+if [[ "$CACHE_SIZE_BYTES" -gt "$RUNNER_CACHE_SIZE_LIMIT_BYTES" ]]; then
     echo "# [NOTE] Cache dir size ($CACHE_SIZE) is larger/equal to RUNNER_CACHE_SIZE_LIMIT ($RUNNER_CACHE_SIZE_LIMIT)"
     echo "# [NOTE] Resetting cache dir: $CACHE_DIR"
     rm -rf "$CACHE_DIR"
