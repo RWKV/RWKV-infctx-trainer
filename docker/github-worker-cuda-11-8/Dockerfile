@@ -22,7 +22,7 @@ RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Configure default env variables
-ENV RUNNER_LABELS="cuda-11-8"
+ENV RUNNER_LABELS=""
 ENV RUNNER_NAME=""
 ENV RUNNER_TOKEN=""
 ENV RUNNER_REPO_URL="https://github.com/RWKV/RWKV-infctx-trainer"
