@@ -145,7 +145,7 @@ echo "# ------"
 
 # Get the directory of the notebook file
 # Get $NOTEBOOK_FILE, without the ipynb filetype
-NOTEBOOK_DIR="$(dirname "$INPUT_FILE_PATH")"
+NOTEBOOK_SUBDIR="$(dirname "$NOTEBOOK_FILE")"
 NOTEBOOK_FILE_NOEXT="${NOTEBOOK_FILE%.*}"
 
-python3 "$SCRIPT_DIR/hf-upload.py" "$HF_REPO_SYNC" "$NOTEBOOK_DIR" "$NOTEBOOK_FILE"
+python3 "$SCRIPT_DIR/hf-upload.py" "$HF_REPO_SYNC" "$NOTEBOOK_SUBDIR" "$NOTEBOOK_FILE"
