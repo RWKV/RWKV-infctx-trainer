@@ -37,7 +37,7 @@ jobs:
     # Due to github worker hard limitation, of 24 hours
     # we apply a timeout of 23 hours instead.
     timeout-minutes: 1380
-    name: ${{github.event.inputs.notebookFile}} on ${{github.event.inputs.gpuTarget}} / cuda-${{github.event.inputs.cudaVersion}}
+    name: ${{github.event.inputs.notebookFile}} - ${{github.event.inputs.gpuTarget}} / cuda-${{github.event.inputs.cudaVersion}}
     runs-on: 
       - cuda-${{github.event.inputs.cudaVersion}}
       - ${{github.event.inputs.gpuTarget}}
