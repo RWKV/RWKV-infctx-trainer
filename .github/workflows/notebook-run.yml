@@ -9,6 +9,7 @@ on:
         default: '11-8'
 
 env:
+  cudaVersion: ${{github.event.inputs.cudaVersion}}
 
 jobs:
   build_env:
