@@ -386,9 +386,7 @@ def prepare_data_static(**kargs):
         if kargs["sort_by_length"]:
             sort_asc = kargs["sort_asc"]
             
-            def calculate_length(example):
-                return len(example["input_ids"])
-            lengths = src_dataset.map(calculate_length, batched=True)
+            lengths = src_dataset.map(lambda example: len(example['input_ids']), batched=True)
             src_dataset = src_dataset.add_column("length", lengths)
             
             # sort src dataset by input id length
