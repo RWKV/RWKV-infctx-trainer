@@ -388,9 +388,11 @@ def prepare_data_static(**kargs):
             
             def calculate_length(example):
                 return len(example["input_ids"])
+            lengths = src_dataset.map(calculate_length, batched=True)
+            src_dataset = src_dataset.add_column("length", lengths)
             
             # sort src dataset by input id length
-            src_dataset = src_dataset.sort(calculate_length, reverse=not sort_asc)
+            src_dataset = src_dataset.sort("length", reverse=not sort_asc)
 
         # Perform rechunking after filtering, if source is not a "text" based 
         # dataset and text_rechunk_force is enabled
