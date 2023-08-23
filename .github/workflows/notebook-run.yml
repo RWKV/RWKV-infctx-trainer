@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       gpuTarget:
-        description: 'GPU Target, use either 8x12vgb / 1x24vgb'     
+        description: 'GPU Target (use either 8x12vgb / 1x24vgb)'     
         required: true
         default: '1x24vgb'
       cudaVersion:
