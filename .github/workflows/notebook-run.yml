@@ -26,8 +26,8 @@ env:
   WANDB_API_KEY: ${{secrets.WANDB_API_KEY}}
 
 jobs:
-  build_env:
-    name: Notebook-Run
+  notebook-run:
+    name: ${{github.event.inputs.notebookFile}} on ${{github.event.inputs.gpuTarget}} / cuda-${{github.event.inputs.cudaVersion}}
     runs-on: 
       - cuda-${{github.event.inputs.cudaVersion}}
       - ${{github.event.inputs.gpuTarget}}
