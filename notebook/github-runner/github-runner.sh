@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# -----
+# Required ARGS check
+# -----
+
 # Check if HUGGING_FACE_HUB_TOKEN & WANDB_API_KEY is set
 if [[ -z "${HUGGING_FACE_HUB_TOKEN}" ]]; then
     echo "[ERROR]: HUGGING_FACE_HUB_TOKEN is not set"
@@ -18,6 +22,10 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 NOTEBOOK_DIR="$(dirname "$SCRIPT_DIR")"
 PROJ_DIR="$(dirname "$NOTEBOOK_DIR")"
 
+# Assume the ACTION dir, is two dir levels up
+ACTION_DIR="$(dirname "$PROJ_DIR/../")"
+CACHE_DIR="$ACTION_DIR/.cache/"
+
 # Log the proj dir
 echo "#"
 echo "# Starting github notebook runner"
@@ -26,6 +34,8 @@ echo "# PROJ_DIR: $PROJ_DIR"
 echo "# NOTEBOOK_DIR: $NOTEBOOK_DIR"
 echo "# NOTEBOOK_FILE: $NOTEBOOK_FILE"
 echo "#"
+echo "# CACHE_DIR: $CACHE_DIR"
+echo "#"
 
 # Check if the notebook file exists, in the notebook directory
 if [[ ! -f "$NOTEBOOK_DIR/$NOTEBOOK_FILE" ]]; then
@@ -33,15 +43,71 @@ if [[ ! -f "$NOTEBOOK_DIR/$NOTEBOOK_FILE" ]]; then
     exit 1
 fi
 
-# Setup the common folders
+# -----
+# Cache dir size check
+# -----
+
+# Convert size to bytes
+convert_to_bytes() {
+    local size=$1
+    if [[ $size == *G ]]; then
+        size=${size%G}
+        size=$((size*1073741824)) # 1G = 1073741824 bytes
+    elif [[ $size == *M ]]; then
+        size=${size%M}
+        size=$((size*1048576))    # 1M = 1048576 bytes
+    fi
+    echo $size
+}
+
+if [[ -z "${RUNNER_CACHE_SIZE_LIMIT}" ]]; then
+    RUNNER_CACHE_SIZE_LIMIT="100G"
+fi
+RUNNER_CACHE_SIZE_LIMIT_BYTES=$(convert_to_bytes $RUNNER_CACHE_SIZE_LIMIT)
+
+# Get the cache directory size
+CACHE_SIZE=$(du -sh $CACHE_DIR | awk '{print $1}')
+CACHE_SIZE_BYTES=$(convert_to_bytes $CACHE_SIZE)
+
+# If the cache dir is larger then RUNNER_CACHE_SIZE_LIMIT, then delete the cache dir
+if [[ "$CACHE_SIZE_BYTES" >= "$RUNNER_CACHE_SIZE_LIMIT_BYTES" ]]; then
+    echo "# [NOTE] Cache dir size ($CACHE_SIZE) is larger/equal to RUNNER_CACHE_SIZE_LIMIT ($RUNNER_CACHE_SIZE_LIMIT)"
+    echo "# [NOTE] Resetting cache dir: $CACHE_DIR"
+    rm -rf "$CACHE_DIR"
+    mkdir -p "$CACHE_DIR"
+fi
+
+# Cofigure the HF cache dir
+export HF_HOME="$CACHE_DIR/huggingface"
+mkdir -p "$HF_HOME"
+
+# -----
+# Ensuring HF CLI / wandb is installed
+# -----
+
+echo "# [NOTE] Ensuring huggingface_hub[cli] / wandb is updated"
+python -m pip install huggingface_hub[cli] wandb
+
+# -----
+# Project dir resets setup
+# -----
+
+rm -rf $PROJ_DIR/checkpoint
 mkdir -p $PROJ_DIR/checkpoint
+
+rm -rf $PROJ_DIR/datapath
 mkdir -p $PROJ_DIR/datapath
+
+rm -rf $PROJ_DIR/output
 mkdir -p $PROJ_DIR/output
+
+rm -rf $PROJ_DIR/model
 mkdir -p $PROJ_DIR/model
 
-# Setup the HF cache
-# mkdir -p $PROJ_DIR/.cache/HF
+# -----
+# Run the notebook, and store a copy into the output dir
+# -----
 
-# Configure HF cache
-
-# Run the notebook
+echo "# [NOTE] Running notebook: $NOTEBOOK_FILE"
+cd "$PROJ_DIR"
+papermill "$NOTEBOOK_DIR/$NOTEBOOK_FILE" "$PROJ_DIR/output/$NOTEBOOK_FILE" -k python3 --log-output
