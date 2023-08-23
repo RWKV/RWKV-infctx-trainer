@@ -1,0 +1,19 @@
+name: Notebook-Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      cudaVersion:
+        description: 'cuda version'     
+        required: true
+        default: '11-8'
+
+env:
+
+jobs:
+  build_env:
+    name: Notebook-Run
+    runs-on: cuda-${{github.event.inputs.cudaVersion}}
+    steps:
+    - run: |
+        echo "Cuda Version: ${{github.event.inputs.cudaVersion}}"

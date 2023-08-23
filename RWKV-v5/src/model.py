@@ -1395,7 +1395,7 @@ class SimpleRWKV():
             tokenizer_file = os.path.join(SCRIPT_DIR,"./dataflow/20B_tokenizer.json")
             tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
             self.fastTokenizer = tokenizer
-        elif vocab_size == 65529 or vocab_size == 65536:
+        elif vocab_size == 65536:
             # Use the world tokenizer
             from .dataflow.trie_tokenizer import MT_TRIE_TOKENIZER
             world_tokenizer = MT_TRIE_TOKENIZER(os.path.join(SCRIPT_DIR, "./dataflow/rwkv_vocab_v20230424.txt"))
