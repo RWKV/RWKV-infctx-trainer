@@ -22,9 +22,13 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 NOTEBOOK_DIR="$(dirname "$SCRIPT_DIR")"
 PROJ_DIR="$(dirname "$NOTEBOOK_DIR")"
 
-# Assume the ACTION dir, is two dir levels up
+# Assume the ACTION dir, is 4 dir levels up
 ACTION_DIR="$(dirname "$PROJ_DIR/../../../")"
+ACTION_DIR="$(cd "$ACTION_DIR" && pwd)"
+
+# Cache dir to use when possible
 CACHE_DIR="$ACTION_DIR/.cache/"
+mkdir -p "$CACHE_DIR"
 
 # Log the proj dir
 echo "#"
