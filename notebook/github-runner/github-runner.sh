@@ -118,11 +118,13 @@ mkdir -p $PROJ_DIR/model
 # -----
 
 INPUT_FILE_PATH="$PROJ_DIR/notebook/$NOTEBOOK_FILE"
+INPUT_FILE_DIR="$(dirname "$INPUT_FILE_PATH")"
 OUTPUT_FILE_PATH="$PROJ_DIR/output/$NOTEBOOK_FILE"
-mkdir -p "$(dirname "$OUTPUT_FILE_PATH")"
+OUTPUT_FILE_DIR="$(dirname "$OUTPUT_FILE_PATH")"
+mkdir -p "$OUTPUT_FILE_DIR"
 
 echo "# [NOTE] Running notebook: $NOTEBOOK_FILE"
-cd "$PROJ_DIR"
+cd "$INPUT_FILE_DIR"
 papermill \
     -k python3 --log-output \
     "$INPUT_FILE_PATH" "$OUTPUT_FILE_PATH" 
