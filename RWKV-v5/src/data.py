@@ -386,10 +386,13 @@ def prepare_data_static(**kargs):
         if kargs["sort_by_length"]:
             sort_asc = kargs["sort_asc"]
             
-            lengths = src_dataset.map(lambda example: len(example['input_ids']), batched=True)
-            src_dataset = src_dataset.add_column("length", lengths)
+            def add_length(example):
+                example["length"] = len(example['input_ids'])
+                return example
             
-            # sort src dataset by input id length
+            src_dataset = src_dataset.map(add_length)
+            
+            # sort by length (not sorting the columns, just the rows)
             src_dataset = src_dataset.sort("length", reverse=not sort_asc)
 
         # Perform rechunking after filtering, if source is not a "text" based 
