@@ -23,6 +23,14 @@ PROJ_DIR = os.path.dirname(NOTEBOOK_DIR)
 MODEL_DIR = os.path.join(PROJ_DIR, "model")
 OUTPUT_DIR = os.path.join(PROJ_DIR, "output")
 
+# Generate the URL where all the items will be uploaded
+hf_url = f"https://huggingface.co/{REPO_URI}/tree/main/{NOTEBOOK_SUBDIR}"
+print(f"# ------------------------------------")
+print(f"# Uploading to: {hf_url}")
+print(f"# ------------------------------------")
+
+print("# Uploading the models ... ")
+
 # Upload the models
 api.upload_folder(
     folder_path=MODEL_DIR,
@@ -34,6 +42,8 @@ api.upload_folder(
     commit_message=f"[GHA] {NOTEBOOK_FILE} result models"
 )
 
+print("# Uploading the notebooks ... ")
+
 # Upload the ipynb files
 api.upload_folder(
     folder_path=f"{OUTPUT_DIR}/{NOTEBOOK_SUBDIR}",
@@ -44,3 +54,7 @@ api.upload_folder(
     allow_patterns=["*.ipynb"],
     commit_message=f"[GHA] {NOTEBOOK_FILE} result notebooks"
 )
+
+print(f"# ------------------------------------")
+print(f"# Uploaded to: {hf_url}")
+print(f"# ------------------------------------")
