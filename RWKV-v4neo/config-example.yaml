@@ -343,6 +343,10 @@ data:
   # source_dataset_params:
   #   language: en
 
+  # Sort the dataset by length, useful to reduce gpu waiting time (also useful for RWKV long context coherence)
+  sort_by_length: false
+  sort_asc: true # Sort in ascending order, true = shortest first, false = longest first
+
   # Use data_dir, if you are using source=text/json/etc
   # If using relative path, this should be relative to the trainer script path
   # source_data_dir: ../dataset-text/

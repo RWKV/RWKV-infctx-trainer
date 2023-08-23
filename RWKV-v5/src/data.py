@@ -381,6 +381,16 @@ def prepare_data_static(**kargs):
                 return False
             return True
         src_dataset = src_dataset.filter(dataset_filter, num_proc=num_cpus)
+        
+        # Perform a sort by length
+        if kargs["sort_by_length"] is not None and kargs["sort_by_length"] == True:
+            sort_asc = sort_asc if kargs["sort_asc"] is not None else True
+            
+            def calculate_length(example):
+                return len(example["input_ids"])
+            
+            # sort src dataset by input id length
+            src_dataset = src_dataset.sort(key=calculate_length, num_proc=num_cpus, reverse=not sort_asc)
 
         # Perform rechunking after filtering, if source is not a "text" based 
         # dataset and text_rechunk_force is enabled
