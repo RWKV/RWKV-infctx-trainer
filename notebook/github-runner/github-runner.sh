@@ -119,5 +119,5 @@ mkdir -p "$(dirname "$OUTPUT_FILE_PATH")"
 echo "# [NOTE] Running notebook: $NOTEBOOK_FILE"
 cd "$PROJ_DIR"
 papermill \
-    -k python3 --log-output \
+    -k python --log-output \
     "$INPUT_FILE_PATH" "$OUTPUT_FILE_PATH" 
