@@ -112,6 +112,12 @@ mkdir -p $PROJ_DIR/model
 # Run the notebook, and store a copy into the output dir
 # -----
 
+INPUT_FILE_PATH="$PROJ_DIR/datapath/$NOTEBOOK_FILE"
+OUTPUT_FILE_PATH="$PROJ_DIR/output/$NOTEBOOK_FILE"
+mkdir -p "$(dirname "$OUTPUT_FILE_PATH")"
+
 echo "# [NOTE] Running notebook: $NOTEBOOK_FILE"
 cd "$PROJ_DIR"
-papermill "$NOTEBOOK_DIR/$NOTEBOOK_FILE" "$PROJ_DIR/output/$NOTEBOOK_FILE" -k python3 --log-output
+papermill \
+    -k python3 --log-output \
+    "$INPUT_FILE_PATH" "$OUTPUT_FILE_PATH" 
