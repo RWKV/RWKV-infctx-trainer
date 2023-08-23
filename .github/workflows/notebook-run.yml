@@ -15,12 +15,17 @@ on:
         description: 'cuda version'
         # required: true
         default: '11-8'
+      huggingFaceRepo:
+        description: 'Hugging Face repo to upload to'
+        default: 'rwkv-x-dev/rwkv-x-playground'
 
 env:
   # Notebook runner settings
   gpuTarget: ${{github.event.inputs.gpuTarget}}
   cudaVersion: ${{github.event.inputs.cudaVersion}}
   notebookFile: ${{github.event.inputs.notebookFile}}
+  huggingFaceRepo: ${{github.event.inputs.huggingFaceRepo}}
+  
   # Cache dir size limit
   RUNNER_CACHE_SIZE_LIMIT: 100G
   # Secrets
@@ -43,10 +48,14 @@ jobs:
         run: |
           cd ./notebook/github-runner
           chmod +x ./github-runner.sh
-          ./github-runner.sh ${{github.event.inputs.notebookFile}}
+          ./github-runner.sh "${{github.event.inputs.notebookFile}}"
       - name: Save output notebook
         uses: actions/upload-artifact@v3
         with:
           name: output-notebook
           path: |
             output
+      - name: Upload outputs to HF
+        run: |
+          cd ./notebook/github-runner
+          python3 ./hf-upload.py "${{github.event.inputs.notebookFile}}" "${{github.event.inputs.huggingFaceRepo}}"

@@ -133,19 +133,3 @@ cd "$INPUT_FILE_DIR"
 papermill \
     -k python3 --log-output \
     "$INPUT_FILE_PATH" "$OUTPUT_FILE_PATH" 
-
-# -----
-# Upload the output notebook to the github repo
-# -----
-
-# Upload the result files
-echo "# ------"
-echo "# Uploading models & notebooks to HF repo"
-echo "# ------"
-
-# Get the directory of the notebook file
-# Get $NOTEBOOK_FILE, without the ipynb filetype
-NOTEBOOK_SUBDIR="$(dirname "$NOTEBOOK_FILE")"
-NOTEBOOK_FILE_NOEXT="${NOTEBOOK_FILE%.*}"
-
-python3 "$SCRIPT_DIR/hf-upload.py" "$HF_REPO_SYNC" "$NOTEBOOK_SUBDIR" "$NOTEBOOK_FILE"
