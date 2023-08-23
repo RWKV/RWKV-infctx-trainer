@@ -56,10 +56,13 @@ convert_to_bytes() {
     local size=$1
     if [[ $size == *G ]]; then
         size=${size%G}
-        size=$((size*1073741824)) # 1G = 1073741824 bytes
+        size=$((size*1024*1024*1024)) # 1G = 1073741824 bytes
     elif [[ $size == *M ]]; then
         size=${size%M}
-        size=$((size*1048576))    # 1M = 1048576 bytes
+        size=$((size*1024*1024))    # 1M = 1048576 bytes
+    elif [[ $size == *K ]]; then
+        size=${size%K}
+        size=$((size*1024))       # 1K = 1024 bytes
     fi
     echo $size
 }
@@ -90,7 +93,7 @@ mkdir -p "$HF_HOME"
 # -----
 
 echo "# [NOTE] Ensuring huggingface_hub[cli] / wandb is updated"
-python -m pip install huggingface_hub[cli] wandb
+python3 -m pip install huggingface_hub[cli] wandb
 
 # -----
 # Project dir resets setup
@@ -119,5 +122,5 @@ mkdir -p "$(dirname "$OUTPUT_FILE_PATH")"
 echo "# [NOTE] Running notebook: $NOTEBOOK_FILE"
 cd "$PROJ_DIR"
 papermill \
-    -k python --log-output \
+    -k python3 --log-output \
     "$INPUT_FILE_PATH" "$OUTPUT_FILE_PATH" 
