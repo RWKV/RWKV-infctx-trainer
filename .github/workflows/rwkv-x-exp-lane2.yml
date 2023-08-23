@@ -1,4 +1,4 @@
-name: rwkv-x Experiment Run (lane1)
+name: rwkv-x Experiment Run (secondary-lane2)
 
 on:
   workflow_dispatch:
