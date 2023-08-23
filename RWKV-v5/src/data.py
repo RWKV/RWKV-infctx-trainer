@@ -384,7 +384,7 @@ def prepare_data_static(**kargs):
         
         # Perform a sort by length
         if kargs["sort_by_length"]:
-            sort_asc = sort_asc if kargs["sort_asc"] is not None else True
+            sort_asc = kargs["sort_asc"]
             
             def calculate_length(example):
                 return len(example["input_ids"])
