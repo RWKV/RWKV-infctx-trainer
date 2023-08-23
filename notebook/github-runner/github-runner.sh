@@ -112,7 +112,7 @@ mkdir -p $PROJ_DIR/model
 # Run the notebook, and store a copy into the output dir
 # -----
 
-INPUT_FILE_PATH="$PROJ_DIR/datapath/$NOTEBOOK_FILE"
+INPUT_FILE_PATH="$PROJ_DIR/notebook/$NOTEBOOK_FILE"
 OUTPUT_FILE_PATH="$PROJ_DIR/output/$NOTEBOOK_FILE"
 mkdir -p "$(dirname "$OUTPUT_FILE_PATH")"
 
