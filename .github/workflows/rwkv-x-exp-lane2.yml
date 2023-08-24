@@ -1,17 +1,20 @@
-name: rwkv-x Experiment Run (secondary-lane2)
+name: rwkv-x Experiment Run (sec-lane2)
 
 on:
   workflow_dispatch:
+    # permissions:
+    #   users:
+    #     - picocreator
     inputs:
       notebookFile:
         description: 'Notebook to run (inside `experiment/rwkv-x-exp` dir)'
         required: true
       gpuTarget:
-        description: 'GPU Target (use either 8x12vgb / 1x24vgb)'
+        description: 'GPU Target (use 8x12vgb)'
         # required: true
         default: '8x12vgb'
       lanePrefence:
-        description: 'Lane preferenc (lane2)'
+        description: 'Lane preferenc (lane2,laneX)'
         default: "lane2"
       cudaVersion:
         description: 'cuda version'
@@ -25,11 +28,13 @@ env:
   # Notebook runner settings
   gpuTarget: ${{github.event.inputs.gpuTarget}}
   cudaVersion: ${{github.event.inputs.cudaVersion}}
-  notebookFile: experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}
-  huggingFaceRepo: ${{github.event.inputs.huggingFaceRepo}}
   
+  # HF repo to sync to
+  HF_REPO_SYNC: ${{github.event.inputs.huggingFaceRepo}}
+
   # Cache dir size limit
   RUNNER_CACHE_SIZE_LIMIT: 100G
+
   # Secrets
   HUGGING_FACE_HUB_TOKEN: ${{secrets.HUGGING_FACE_HUB_TOKEN}}
   WANDB_API_KEY: ${{secrets.WANDB_API_KEY}}
@@ -50,20 +55,32 @@ jobs:
       - name: Download models from HF
         run: |
           cd ./notebook/github-runner
-          python3 ./hf-download.py "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" "${{github.event.inputs.huggingFaceRepo}}"
-          ls -alh ../../model/
+          chmod +x ./hf-download-runner.sh
+          ./hf-download-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" 
       - name: Run the notebook, with harness
         run: |
           cd ./notebook/github-runner
           chmod +x ./github-runner.sh
-          ./github-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}"
+          ./github-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" 
       - name: Save output notebook
+        if: always()
         uses: actions/upload-artifact@v3
         with:
           name: output-notebook
           path: |
             output
       - name: Upload outputs to HF
+        if: always()
         run: |
           cd ./notebook/github-runner
-          python3 ./hf-upload.py "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" "${{github.event.inputs.huggingFaceRepo}}"
+          chmod +x ./hf-upload-runner.sh 
+          ./hf-upload-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}"
+      # Note that this is meant to be a contigency measure, in case the HF upload failed
+      - name: Save output models
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: output-models
+          path: |
+            model/*.pth
+          retention-days: 14
