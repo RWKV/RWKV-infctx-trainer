@@ -21,6 +21,7 @@ fi
 
 # Get the notebook script from the first arg
 NOTEBOOK_FILE=$1
+NOTEBOOK_FILE="$(echo -e "${NOTEBOOK_FILE}" | sed -e 's/[[:space:]]*$//')"
 
 # Get the current script directories
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"

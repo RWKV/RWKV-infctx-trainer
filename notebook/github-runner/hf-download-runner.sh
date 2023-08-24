@@ -19,8 +19,9 @@ if [[ -z "${HF_REPO_SYNC}" ]]; then
     HF_REPO_SYNC="rwkv-x-dev/rwkv-x-playground"
 fi
 
-# Get the notebook script from the first arg
+# Get the notebook script from the first arg, trim any trailing whitespace
 NOTEBOOK_FILE=$1
+NOTEBOOK_FILE="$(echo -e "${NOTEBOOK_FILE}" | sed -e 's/[[:space:]]*$//')"
 
 # Get the current script directories
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
