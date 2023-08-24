@@ -83,7 +83,7 @@ if [[ "$CACHE_SIZE_BYTES" -gt "$RUNNER_CACHE_SIZE_LIMIT_BYTES" ]]; then
     rm -rf "$CACHE_DIR"
     mkdir -p "$CACHE_DIR"
 else
-    echo "# [NOTE] Cache dir size currently: ~$CACHE_SIZE"
+    echo "# [NOTE] Cache dir size: ~$CACHE_SIZE"
 fi
 
 # Cofigure the HF cache dir
@@ -93,3 +93,15 @@ mkdir -p "$HF_HOME"
 # Run the python donwloader
 cd "$SCRIPT_DIR"
 python3 ./hf-download.py "$NOTEBOOK_FILE"
+
+# Ensure everythign is properly downloaded in the model dir
+echo "# ------"
+cd ../../model/ && pwd
+echo "# ------"
+chmod 0777 ./*
+ls -alh ./
+echo "# ------"
+
+# Get the cache directory size
+CACHE_SIZE=$(du -sh $CACHE_DIR | awk '{print $1}')
+echo "# [NOTE] Cache dir size: ~$CACHE_SIZE"
