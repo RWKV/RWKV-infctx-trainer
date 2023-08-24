@@ -25,11 +25,13 @@ env:
   # Notebook runner settings
   gpuTarget: ${{github.event.inputs.gpuTarget}}
   cudaVersion: ${{github.event.inputs.cudaVersion}}
-  notebookFile: experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}
-  huggingFaceRepo: ${{github.event.inputs.huggingFaceRepo}}
   
+  # HF repo to sync to
+  HF_REPO_SYNC: ${{github.event.inputs.huggingFaceRepo}}
+
   # Cache dir size limit
   RUNNER_CACHE_SIZE_LIMIT: 100G
+
   # Secrets
   HUGGING_FACE_HUB_TOKEN: ${{secrets.HUGGING_FACE_HUB_TOKEN}}
   WANDB_API_KEY: ${{secrets.WANDB_API_KEY}}
@@ -50,21 +52,23 @@ jobs:
       - name: Download models from HF
         run: |
           cd ./notebook/github-runner
-          python3 ./hf-download.py "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" "${{github.event.inputs.huggingFaceRepo}}"
+          chmod + ./hf-download-runner.sh
+          ./hf-download-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" 
           cd ../../model/ && pwd
           ls -alh ./
-      - name: Run the notebook, with harness
-        run: |
-          cd ./notebook/github-runner
-          chmod +x ./github-runner.sh
-          ./github-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}"
-      - name: Save output notebook
-        uses: actions/upload-artifact@v3
-        with:
-          name: output-notebook
-          path: |
-            output
-      - name: Upload outputs to HF
-        run: |
-          cd ./notebook/github-runner
-          python3 ./hf-upload.py "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" "${{github.event.inputs.huggingFaceRepo}}"
+      # - name: Run the notebook, with harness
+      #   run: |
+      #     cd ./notebook/github-runner
+      #     chmod +x ./github-runner.sh
+      #     ./github-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" 
+      # - name: Save output notebook
+      #   uses: actions/upload-artifact@v3
+      #   with:
+      #     name: output-notebook
+      #     path: |
+      #       output
+      # - name: Upload outputs to HF
+      #   run: |
+      #     cd ./notebook/github-runner
+      #     chmod +x ./hf-upload-runner.sh 
+      #     ./hf-upload-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}"

@@ -170,3 +170,6 @@ node_modules/
 # Keep the memory experiment word list
 !notebook/experiment/*/memory_dataset/*.txt
 !notebook/experiment/*/memory_script/*.txt
+
+# Add back git related files
+!.git*

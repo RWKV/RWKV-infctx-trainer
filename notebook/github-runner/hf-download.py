@@ -12,11 +12,8 @@ NOTEBOOK_FILE = sys.argv[1]
 # Compute the notebook subdir from the notebook parent
 NOTEBOOK_SUBDIR = os.path.dirname(NOTEBOOK_FILE)
 
-# Get the repo ID from the second arg
-# if its not set/blank, defaults to rwkv-x-dev/rwkv-x-playground
-REPO_URI = sys.argv[2] if len(sys.argv) > 1 else ""
-if REPO_URI == "":
-    REPO_URI = "rwkv-x-dev/rwkv-x-playground"
+# Get the repo ID from the HF_REPO_SYNC env var
+REPO_URI = os.getenv("HF_REPO_SYNC", "rwkv-x-dev/rwkv-x-playground")
 
 RUNNER_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NOTEBOOK_DIR = os.path.dirname(RUNNER_SCRIPT_DIR)
@@ -27,6 +24,14 @@ OUTPUT_DIR = os.path.join(PROJ_DIR, "output")
 # Temporary HF download directory within the project (due to API limitation)
 HF_DOWNLOAD_DIR = os.path.join(PROJ_DIR, ".hf-download")
 os.makedirs(HF_DOWNLOAD_DIR, exist_ok=True)
+
+# The HF cache directory for models
+HF_HOME=os.getenv("HF_HOME", ""))
+if HF_HOME == "":
+    raise Exception("HF_HOME is not set")
+# Setup the model cache
+HF_MODEL_CACHE = os.path.join(HF_HOME, f"model_cache/${REPO_URI}/${NOTEBOOK_SUBDIR}")
+os.makedirs(HF_MODEL_CACHE, exist_ok=True)
 
 # Generate the URL where all the items will be uploaded
 hf_url = f"https://huggingface.co/{REPO_URI}/tree/main/{NOTEBOOK_SUBDIR}"
@@ -53,7 +58,8 @@ snapshot_download(
     repo_id=REPO_URI,
     local_dir=HF_DOWNLOAD_DIR,
     local_dir_use_symlinks=False,
-    allow_patterns=[f"{NOTEBOOK_SUBDIR}/*.pth"]
+    allow_patterns=[f"{NOTEBOOK_SUBDIR}/*.pth"],
+    cache_dir=HF_MODEL_CACHE
 )
 
 print(f"# ------------------------------------")
