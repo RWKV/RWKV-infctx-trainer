@@ -30,7 +30,7 @@ HF_HOME=os.getenv("HF_HOME", "")
 if HF_HOME == "":
     raise Exception("HF_HOME is not set")
 # Setup the model cache
-HF_MODEL_CACHE = os.path.join(HF_HOME, f"model_cache/${REPO_URI}/${NOTEBOOK_SUBDIR}")
+HF_MODEL_CACHE = os.path.join(HF_HOME, f"model_cache")
 os.makedirs(HF_MODEL_CACHE, exist_ok=True)
 
 # Generate the URL where all the items will be uploaded

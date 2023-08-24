@@ -96,8 +96,9 @@ cd "$SCRIPT_DIR"
 python3 ./hf-download.py "$NOTEBOOK_FILE"
 
 # Ensure everythign is properly downloaded in the model dir
+cd "$PROJ_DIR"
 echo "# ------------------------------"
-cd ../../model/ && pwd
+cd ./model/ && pwd
 echo "# ------------------------------"
 chmod 0777 ./*
 ls -alh ./
