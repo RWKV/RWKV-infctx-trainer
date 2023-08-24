@@ -27,19 +27,6 @@ print(f"# ------------------------------------")
 print(f"# Uploading to: {hf_url}")
 print(f"# ------------------------------------")
 
-print("# Uploading the notebooks ... ")
-
-# Upload the ipynb files
-api.upload_folder(
-    folder_path=f"{OUTPUT_DIR}/{NOTEBOOK_SUBDIR}",
-    repo_id=REPO_URI,
-    path_in_repo=NOTEBOOK_SUBDIR,
-    repo_type="model",
-    multi_commits=True,
-    allow_patterns=["*.ipynb"],
-    commit_message=f"[GHA] {NOTEBOOK_FILE} result notebooks"
-)
-
 # Upload the models
 print("# Uploading the models ... ")
 try:
@@ -60,6 +47,18 @@ except Exception as e:
     else:
         raise e
     
+# Upload the ipynb files
+print("# Uploading the notebooks ... ")
+api.upload_folder(
+    folder_path=f"{OUTPUT_DIR}/{NOTEBOOK_SUBDIR}",
+    repo_id=REPO_URI,
+    path_in_repo=NOTEBOOK_SUBDIR,
+    repo_type="model",
+    multi_commits=True,
+    allow_patterns=["*.ipynb"],
+    commit_message=f"[GHA] {NOTEBOOK_FILE} result notebooks"
+)
+
 print(f"# ------------------------------------")
 print(f"# Uploaded to: {hf_url}")
 print(f"# ------------------------------------")
