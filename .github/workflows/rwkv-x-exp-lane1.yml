@@ -2,6 +2,9 @@ name: rwkv-x Experiment Run (priority-lane1)
 
 on:
   workflow_dispatch:
+    permissions:
+      users:
+        - picocreator
     inputs:
       notebookFile:
         description: 'Notebook to run (inside `experiment/rwkv-x-exp` dir)'

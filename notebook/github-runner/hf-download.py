@@ -26,7 +26,7 @@ HF_DOWNLOAD_DIR = os.path.join(PROJ_DIR, ".hf-download")
 os.makedirs(HF_DOWNLOAD_DIR, exist_ok=True)
 
 # The HF cache directory for models
-HF_HOME=os.getenv("HF_HOME", ""))
+HF_HOME=os.getenv("HF_HOME", "")
 if HF_HOME == "":
     raise Exception("HF_HOME is not set")
 # Setup the model cache
