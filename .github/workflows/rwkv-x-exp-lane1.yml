@@ -74,10 +74,11 @@ jobs:
           chmod +x ./hf-upload-runner.sh 
           ./hf-upload-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}"
       # Note that this is meant to be a contigency measure, in case the HF upload failed
-      - name: Save output notebook
+      - name: Save output models
         uses: actions/upload-artifact@v3
+        if: failure()
         with:
           name: output-models
           path: |
-            model
+            model/*.pth
           retention-days: 14

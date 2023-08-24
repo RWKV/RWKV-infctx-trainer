@@ -53,8 +53,12 @@ try:
         commit_message=f"[GHA] {NOTEBOOK_FILE} result models"
     )
 except Exception as e:
-    print("# Skipping model upload due to error ... ")
-    print(e)
+    eStr = str(e)
+    if "must have at least 1 commit" in eStr:
+        print("# Skipping model upload due to error ... ")
+        print(e)
+    else:
+        raise e
     
 print(f"# ------------------------------------")
 print(f"# Uploaded to: {hf_url}")
