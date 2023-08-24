@@ -49,6 +49,7 @@ if r.status_code == 404:
 # Start the downloading process
 print(f"# ------------------------------------")
 print(f"# Downloading from: {hf_url}")
+print(f"# To: {HF_DOWNLOAD_DIR}")
 print(f"# ------------------------------------")
 
 # Download the existing models
@@ -63,20 +64,5 @@ snapshot_download(
 )
 
 print(f"# ------------------------------------")
-print(f"# Syncing to model directory: {MODEL_DIR}")
+print(f"# Downloaded to: {HF_DOWNLOAD_DIR}")
 print(f"# ------------------------------------")
-
-# Move the downloaded files the NOTEBOOK_SUBDIR
-# within the HF_DOWNLOAD_DIR to the MODEL_DIR
-import shutil
-
-# Create the MODEL_DIR if it doesn't exists
-os.makedirs(MODEL_DIR, exist_ok=True)
-
-# Move the files from the NOTEBOOK_SUBDIR inside HF_DOWNLOAD_DIR to the MODEL_DIR
-for file in os.listdir(os.path.join(HF_DOWNLOAD_DIR, NOTEBOOK_SUBDIR)):
-    shutil.move(
-        os.path.join(HF_DOWNLOAD_DIR, NOTEBOOK_SUBDIR, file),
-        os.path.join(MODEL_DIR, file)
-    )
-
