@@ -63,12 +63,14 @@ jobs:
           chmod +x ./github-runner.sh
           ./github-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" 
       - name: Save output notebook
+        if: always()
         uses: actions/upload-artifact@v3
         with:
           name: output-notebook
           path: |
             output
       - name: Upload outputs to HF
+        if: always()
         run: |
           cd ./notebook/github-runner
           chmod +x ./hf-upload-runner.sh 
