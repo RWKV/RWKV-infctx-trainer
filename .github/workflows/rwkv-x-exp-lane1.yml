@@ -52,7 +52,7 @@ jobs:
       - name: Download models from HF
         run: |
           cd ./notebook/github-runner
-          chmod + ./hf-download-runner.sh
+          chmod +x ./hf-download-runner.sh
           ./hf-download-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" 
           cd ../../model/ && pwd
           ls -alh ./
