@@ -57,19 +57,19 @@ jobs:
           cd ./notebook/github-runner
           chmod +x ./hf-download-runner.sh
           ./hf-download-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" 
-      # - name: Run the notebook, with harness
-      #   run: |
-      #     cd ./notebook/github-runner
-      #     chmod +x ./github-runner.sh
-      #     ./github-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" 
-      # - name: Save output notebook
-      #   uses: actions/upload-artifact@v3
-      #   with:
-      #     name: output-notebook
-      #     path: |
-      #       output
-      # - name: Upload outputs to HF
-      #   run: |
-      #     cd ./notebook/github-runner
-      #     chmod +x ./hf-upload-runner.sh 
-      #     ./hf-upload-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}"
+      - name: Run the notebook, with harness
+        run: |
+          cd ./notebook/github-runner
+          chmod +x ./github-runner.sh
+          ./github-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" 
+      - name: Save output notebook
+        uses: actions/upload-artifact@v3
+        with:
+          name: output-notebook
+          path: |
+            output
+      - name: Upload outputs to HF
+        run: |
+          cd ./notebook/github-runner
+          chmod +x ./hf-upload-runner.sh 
+          ./hf-upload-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}"

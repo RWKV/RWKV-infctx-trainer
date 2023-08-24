@@ -58,7 +58,10 @@ convert_to_bytes() {
 
 # Get the cache directory size
 CACHE_SIZE=$(du -sh $CACHE_DIR | awk '{print $1}')
+
+echo "# ------------------------------"
 echo "# [NOTE] Cache dir size: ~$CACHE_SIZE"
+echo "# ------------------------------"
 
 # Cofigure the HF cache dir
 export HF_HOME="$CACHE_DIR/huggingface"

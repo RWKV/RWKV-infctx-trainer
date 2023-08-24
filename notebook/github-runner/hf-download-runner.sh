@@ -37,10 +37,10 @@ CACHE_DIR="$ACTION_DIR/.cache/"
 mkdir -p "$CACHE_DIR"
 
 # Log the proj dir
-echo "# ------"
+echo "# ------------------------------"
 echo "# Starting HF cache"
 echo "# CACHE_DIR: $CACHE_DIR"
-echo "# ------"
+echo "# ------------------------------"
 
 # Check if the notebook file exists, in the notebook directory
 if [[ ! -f "$NOTEBOOK_DIR/$NOTEBOOK_FILE" ]]; then
@@ -96,12 +96,12 @@ cd "$SCRIPT_DIR"
 python3 ./hf-download.py "$NOTEBOOK_FILE"
 
 # Ensure everythign is properly downloaded in the model dir
-echo "# ------"
+echo "# ------------------------------"
 cd ../../model/ && pwd
-echo "# ------"
+echo "# ------------------------------"
 chmod 0777 ./*
 ls -alh ./
-echo "# ------"
+echo "# ------------------------------"
 
 # Get the cache directory size
 CACHE_SIZE=$(du -sh $CACHE_DIR | awk '{print $1}')
