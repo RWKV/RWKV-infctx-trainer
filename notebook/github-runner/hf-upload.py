@@ -48,14 +48,14 @@ except Exception as e:
         raise e
     
 # Upload the ipynb files
-print("# Uploading the notebooks ... ")
+print("# Uploading the notebooks / output files ... ")
 api.upload_folder(
     folder_path=f"{OUTPUT_DIR}/{NOTEBOOK_SUBDIR}",
     repo_id=REPO_URI,
     path_in_repo=NOTEBOOK_SUBDIR,
     repo_type="model",
     multi_commits=True,
-    allow_patterns=["*.ipynb"],
+    allow_patterns=["*.ipynb", "*.csv", "**/*.csv"],
     commit_message=f"[GHA] {NOTEBOOK_FILE} result notebooks"
 )
 

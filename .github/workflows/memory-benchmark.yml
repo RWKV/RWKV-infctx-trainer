@@ -1,21 +1,21 @@
-name: rwkv-x Experiment Run (priority-lane1)
+name: rwkv-x Memory Benchmarks
 
 on:
   workflow_dispatch:
-    permissions:
-      users:
-        - picocreator
+    # permissions:
+    #   users:
+    #     - picocreator
     inputs:
       notebookFile:
-        description: 'Notebook to run (inside `experiment/rwkv-x-exp` dir)'
+        description: 'Notebook to run (inside `experiment/memory-bench` dir)'
         required: true
       gpuTarget:
-        description: 'GPU Target (use 8x24vgb)'
+        description: 'GPU Target (use 1x24vgb)'
         # required: true
-        default: '8x24vgb'
+        default: '1x24vgb'
       lanePrefence:
         description: 'Lane preferenc (lane1,laneX)'
-        default: "lane1"
+        default: "laneX"
       cudaVersion:
         description: 'cuda version'
         # required: true
@@ -61,8 +61,12 @@ jobs:
         run: |
           cd ./notebook/github-runner
           chmod +x ./github-runner.sh
-          ./github-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" 
-      - name: Save output notebook
+          ./github-runner.sh "experiment/memory-bench/${{github.event.inputs.notebookFile}}" 
+      - name: Copy the CSV output files, into output folder
+        run: |
+          mkdir -p ./output/logs
+          cp -r ./notebook/experiment/memory-bench/logs/*.csv ./output/logs
+      - name: Save output notebook & CSV files
         if: always()
         uses: actions/upload-artifact@v3
         with:
@@ -74,13 +78,13 @@ jobs:
         run: |
           cd ./notebook/github-runner
           chmod +x ./hf-upload-runner.sh 
-          ./hf-upload-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}"
-      # Note that this is meant to be a contigency measure, in case the HF upload failed
-      - name: Save output models
-        uses: actions/upload-artifact@v3
-        if: failure()
-        with:
-          name: output-models
-          path: |
-            model/*.pth
-          retention-days: 14
+          ./hf-upload-runner.sh "experiment/memory-bench/${{github.event.inputs.notebookFile}}"
+      # # Note that this is meant to be a contigency measure, in case the HF upload failed
+      # - name: Save output models
+      #   uses: actions/upload-artifact@v3
+      #   if: failure()
+      #   with:
+      #     name: output-models
+      #     path: |
+      #       model/*.pth
+      #     retention-days: 14
