@@ -364,7 +364,7 @@ def prepare_data_static(**kargs):
             return ret
 
         # Perform rechunking if needed for "text" based datasets
-        if kargs["source"] == "text" and kargs["text_rechunk_size"] > 0:
+        if kargs["source"] == "text" and kargs["text_rechunk_size"] > 0 and kargs["text_rechunk_force"]:
             src_dataset = src_dataset.map(rechunk_text, batched=True, 
                                         batch_size=kargs["text_rechunk_size"]*10,
                                         num_proc=num_cpus)
