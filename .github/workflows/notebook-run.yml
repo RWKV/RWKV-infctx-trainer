@@ -49,11 +49,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      - name: Download models from HF
-        run: |
-          cd ./notebook/github-runner
-          chmod +x ./hf-download-runner.sh
-          ./hf-download-runner.sh "${{github.event.inputs.notebookFile}}" 
+      # - name: Download models from HF
+      #   run: |
+      #     cd ./notebook/github-runner
+      #     chmod +x ./hf-download-runner.sh
+      #     ./hf-download-runner.sh "${{github.event.inputs.notebookFile}}" 
       - name: Run the notebook, with harness
         run: |
           cd ./notebook/github-runner
