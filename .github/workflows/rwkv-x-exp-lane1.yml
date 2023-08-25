@@ -10,9 +10,9 @@ on:
         description: 'Notebook to run (inside `experiment/rwkv-x-exp` dir)'
         required: true
       gpuTarget:
-        description: 'GPU Target (use 8x12vgb)'
+        description: 'GPU Target (use 8x24vgb)'
         # required: true
-        default: '8x12vgb'
+        default: '8x24vgb'
       lanePrefence:
         description: 'Lane preferenc (lane1,laneX)'
         default: "lane1"
