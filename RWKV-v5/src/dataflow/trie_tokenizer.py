@@ -65,7 +65,8 @@ class TRIE_TOKENIZER():
             assert len(x) == int(l[l.rindex(' '):])
             sorted += [x]
             self.idx2token[idx] = x
-
+            
+        self.idx2token[0] = b'<|endoftext|>'
         self.token2idx = {}
         for k,v in self.idx2token.items():
             self.token2idx[v] = int(k)

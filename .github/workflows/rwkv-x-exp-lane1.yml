@@ -1,16 +1,18 @@
-name: Notebook-Run
+name: rwkv-x Experiment Run (priority-lane1)
 
 on:
   workflow_dispatch:
     inputs:
       notebookFile:
-        description: 'Notebook to run (inside notebook dir)'
+        description: 'Notebook to run (inside `experiment/rwkv-x-exp` dir)'
         required: true
-        default: 'trainer-v4-unit-test/model-init.ipynb'
       gpuTarget:
         description: 'GPU Target (use either 8x12vgb / 1x24vgb)'
         # required: true
-        default: '1x24vgb'
+        default: '8x12vgb'
+      lanePrefence:
+        description: 'Lane preferenc (lane1,laneX)'
+        default: "lane1"
       cudaVersion:
         description: 'cuda version'
         # required: true
@@ -23,7 +25,7 @@ env:
   # Notebook runner settings
   gpuTarget: ${{github.event.inputs.gpuTarget}}
   cudaVersion: ${{github.event.inputs.cudaVersion}}
-  notebookFile: ${{github.event.inputs.notebookFile}}
+  notebookFile: experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}
   huggingFaceRepo: ${{github.event.inputs.huggingFaceRepo}}
   
   # Cache dir size limit
@@ -41,19 +43,20 @@ jobs:
     runs-on: 
       - cuda-${{github.event.inputs.cudaVersion}}
       - ${{github.event.inputs.gpuTarget}}
+      - ${{github.event.inputs.lanePrefence}}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
       - name: Download models from HF
         run: |
           cd ./notebook/github-runner
-          python3 ./hf-download.py "${{github.event.inputs.notebookFile}}" "${{github.event.inputs.huggingFaceRepo}}"
+          python3 ./hf-download.py "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" "${{github.event.inputs.huggingFaceRepo}}"
           ls -alh ../../model/
       - name: Run the notebook, with harness
         run: |
           cd ./notebook/github-runner
           chmod +x ./github-runner.sh
-          ./github-runner.sh "${{github.event.inputs.notebookFile}}"
+          ./github-runner.sh "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}"
       - name: Save output notebook
         uses: actions/upload-artifact@v3
         with:
@@ -63,4 +66,4 @@ jobs:
       - name: Upload outputs to HF
         run: |
           cd ./notebook/github-runner
-          python3 ./hf-upload.py "${{github.event.inputs.notebookFile}}" "${{github.event.inputs.huggingFaceRepo}}"
+          python3 ./hf-upload.py "experiment/rwkv-x-exp/${{github.event.inputs.notebookFile}}" "${{github.event.inputs.huggingFaceRepo}}"
