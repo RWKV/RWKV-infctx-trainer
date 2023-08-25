@@ -1,0 +1,90 @@
+name: rwkv-x Memory Benchmarks
+
+on:
+  workflow_dispatch:
+    # permissions:
+    #   users:
+    #     - picocreator
+    inputs:
+      notebookFile:
+        description: 'Notebook to run (inside `experiment/memory-bench` dir)'
+        required: true
+      gpuTarget:
+        description: 'GPU Target (use 1x24vgb)'
+        # required: true
+        default: '1x24vgb'
+      lanePrefence:
+        description: 'Lane preferenc (lane1,laneX)'
+        default: "laneX"
+      cudaVersion:
+        description: 'cuda version'
+        # required: true
+        default: '11-8'
+      huggingFaceRepo:
+        description: 'Hugging Face repo to upload to'
+        default: 'rwkv-x-dev/rwkv-x-playground'
+
+env:
+  # Notebook runner settings
+  gpuTarget: ${{github.event.inputs.gpuTarget}}
+  cudaVersion: ${{github.event.inputs.cudaVersion}}
+  
+  # HF repo to sync to
+  HF_REPO_SYNC: ${{github.event.inputs.huggingFaceRepo}}
+
+  # Cache dir size limit
+  RUNNER_CACHE_SIZE_LIMIT: 100G
+
+  # Secrets
+  HUGGING_FACE_HUB_TOKEN: ${{secrets.HUGGING_FACE_HUB_TOKEN}}
+  WANDB_API_KEY: ${{secrets.WANDB_API_KEY}}
+
+jobs:
+  notebook-run:
+    # Due to github worker hard limitation, of 24 hours
+    # we apply a timeout of 23 hours instead.
+    timeout-minutes: 1380
+    name: ${{github.event.inputs.notebookFile}} - ${{github.event.inputs.gpuTarget}} / cuda-${{github.event.inputs.cudaVersion}}
+    runs-on: 
+      - cuda-${{github.event.inputs.cudaVersion}}
+      - ${{github.event.inputs.gpuTarget}}
+      - ${{github.event.inputs.lanePrefence}}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Setup HF cache
+        run: |
+          cd ./notebook/github-runner
+          chmod +x ./hf-cache-setup.sh
+          ./hf-cache-setup.sh
+      - name: Run the notebook, with harness
+        run: |
+          cd ./notebook/github-runner
+          chmod +x ./github-runner.sh
+          ./github-runner.sh "experiment/memory-bench/${{github.event.inputs.notebookFile}}" 
+      - name: Copy the CSV output files, into output folder
+        run: |
+          mkdir -p ./output/logs
+          cp -r ./notebook/experiment/memory-bench/logs/*.csv ./output/logs
+      - name: Save output notebook & CSV files
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: output-notebook
+          path: |
+            output
+      - name: Upload outputs to HF
+        if: always()
+        run: |
+          cd ./notebook/github-runner
+          chmod +x ./hf-upload-runner.sh 
+          ./hf-upload-runner.sh "experiment/memory-bench/${{github.event.inputs.notebookFile}}"
+      # # Note that this is meant to be a contigency measure, in case the HF upload failed
+      # - name: Save output models
+      #   uses: actions/upload-artifact@v3
+      #   if: failure()
+      #   with:
+      #     name: output-models
+      #     path: |
+      #       model/*.pth
+      #     retention-days: 14
