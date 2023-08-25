@@ -1,10 +1,5 @@
 #!/bin/bash
 
-#
-#  WARNING - THIS FEATURE HAS BEEN DROPPED FROM THE PROJECT
-#            THIS FILE IS NOT IN USE
-#
-
 # -----
 # Required ARGS check
 # -----
@@ -18,15 +13,6 @@ if [[ -z "${WANDB_API_KEY}" ]]; then
     echo "[ERROR]: WANDB_API_KEY is not set"
     exit 1
 fi
-
-# The HF repo directory to use
-if [[ -z "${HF_REPO_SYNC}" ]]; then
-    HF_REPO_SYNC="rwkv-x-dev/rwkv-x-playground"
-fi
-
-# Get the notebook script from the first arg, trim any trailing whitespace
-NOTEBOOK_FILE=$1
-NOTEBOOK_FILE="$(echo -e "${NOTEBOOK_FILE}" | sed -e 's/[[:space:]]*$//')"
 
 # Get the current script directories
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
@@ -46,12 +32,6 @@ echo "# ------------------------------"
 echo "# Starting HF cache"
 echo "# CACHE_DIR: $CACHE_DIR"
 echo "# ------------------------------"
-
-# Check if the notebook file exists, in the notebook directory
-if [[ ! -f "$NOTEBOOK_DIR/$NOTEBOOK_FILE" ]]; then
-    echo "[ERROR]: Notebook file does not exist ($NOTEBOOK_FILE)"
-    exit 1
-fi
 
 # -----
 # Cache dir size check
@@ -96,19 +76,6 @@ fi
 export HF_HOME="$CACHE_DIR/huggingface"
 mkdir -p "$HF_HOME"
 
-# Run the python donwloader
-cd "$SCRIPT_DIR"
-python3 ./hf-download.py "$NOTEBOOK_FILE"
-
-# Ensure everythign is properly downloaded in the model dir
-cd "$PROJ_DIR"
-echo "# ------------------------------"
-cd ./model/ && pwd
-echo "# ------------------------------"
-chmod 0777 ./*
-ls -alh ./
-echo "# ------------------------------"
-
 # Get the cache directory size
 CACHE_SIZE=$(du -sh $CACHE_DIR | awk '{print $1}')
-echo "# [NOTE] Cache dir size: ~$CACHE_SIZE"
+echo "# [NOTE] Final Cache dir size: ~$CACHE_SIZE"
