@@ -1,3 +1,8 @@
+#
+#  WARNING - THIS FEATURE HAS BEEN DROPPED FROM THE PROJECT
+#            THIS FILE IS NOT IN USE
+#
+
 import os
 import sys
 # from huggingface_hub import HfApi

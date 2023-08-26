@@ -64,8 +64,9 @@ jobs:
           ./github-runner.sh "experiment/memory-bench/${{github.event.inputs.notebookFile}}" 
       - name: Copy the CSV output files, into output folder
         run: |
-          mkdir -p ./output/logs
-          cp -r ./notebook/experiment/memory-bench/logs/*.csv ./output/logs
+          mkdir -p ./output/experiment/memory-bench/logs/
+          cp ./notebook/experiment/memory-bench/logs/*.csv ./output/experiment/memory-bench/logs/
+          ls -lh ./output/logs/
       - name: Save output notebook & CSV files
         if: always()
         uses: actions/upload-artifact@v3
