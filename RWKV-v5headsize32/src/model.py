@@ -608,7 +608,7 @@ class RWKV(L.LightningModule):
         self.dim_ffn = dim_ffn
 
         # Compute the RWKV-v5 n_head / headsize
-        head_size = 128
+        head_size = 32
         n_head = n_embd // head_size
         assert n_embd % n_head == 0 ,  f"n_embd must be divisible by head_size ({self.head_size})"
         self.n_head = n_head
