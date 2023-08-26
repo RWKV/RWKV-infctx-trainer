@@ -19,6 +19,7 @@ Let us facilitate those runs here.
     - note that all followup will be done via discord.
     - We may rename, and reorganize your files, and if we do so, we will keep you updated. 
     - Once completed, all training runs results and output will be uploaded to hugging face. Example: https://huggingface.co/rwkv-x-dev/rwkv-x-playground/tree/main/experiment/rwkv-x-exp/v5-headsize32
+    - for maintainers / users with direct write access, you can probably just skip the PR, and just do the runs from your branch if desired.
 
 # Restrictions on the trianing process
 - Generally, keep your model size <= 1.5B - as we only have up to 3090s currently (not a hard-rule, but anything bigger typically take days)
@@ -29,6 +30,8 @@ Let us facilitate those runs here.
 
 @picocreator - Depending on your model size and dataset size will schedule your runs between downtime of training runs.
 Generally speaking the (1x24vgb) is usually more readily avaliable then the (8x24vgb) training server
+
+If nothing is running/scheduled on the 8x24vgb node, existing maintainers, are permitted to schedule runs on it.
 
 # How to execute a training process (for maintainers / users with direct write access)
 
