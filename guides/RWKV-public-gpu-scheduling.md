@@ -13,6 +13,11 @@ This is made avaliable in 2 major varients
 - [RWKV Community Training](./RWKV-community-training.md): Want to finetune an existing model? For a good use case for the community
 - [RWKV-X playground](./RWKV-x-playground-training.md): Have an experimental idea that can help improve the model? Provide the code change, and we will try to run a 0.1 - 1.5B model for it. To test your hypothesis.
 
+The following is an example of such a run, scheduled via our github actions
+- [Github actions link](https://github.com/RWKV/RWKV-infctx-trainer/actions/runs/5983559635/job/16233828093)
+- [Notebook used](https://huggingface.co/rwkv-x-dev/rwkv-x-playground/blob/main/experiment/rwkv-x-exp/v5-headsize32/v5-L6-D2048-E1e-1-ctx4k-part1.ipynb)
+- [Uploaded models](https://huggingface.co/rwkv-x-dev/rwkv-x-playground/tree/main/experiment/rwkv-x-exp/v5-headsize32)
+
 For most parts community model will be priotised based on
 - Positive impact to the community
 - How short it is expected to be for each part of the run
