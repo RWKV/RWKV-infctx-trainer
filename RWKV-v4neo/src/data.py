@@ -30,6 +30,12 @@ def prepare_data_static(**kargs):
     if kargs["skip_datapath_setup"] == True:
         return
 
+    # Special handling of world_add_endoftext_token (if enabled)
+    if kargs["world_add_endoftext_token"]:
+        world_add_endoftext_token = True
+    else:
+        world_add_endoftext_token = False
+
     # Source data processing
     if kargs["source"] is not None:
         if kargs["tokenizer"] is None:
@@ -144,7 +150,7 @@ def prepare_data_static(**kargs):
                     type_arr = []
                     mask_arr = []
                     for i in range(len(x)):
-                        enc_str = world_tokenizer_encode(x[i])
+                        enc_str = world_tokenizer_encode(x[i], world_add_endoftext_token=world_add_endoftext_token)
                         id_arr.append(enc_str)
                         type_arr.append([0] * len(enc_str))
                         mask_arr.append([1] * len(enc_str))
@@ -157,7 +163,7 @@ def prepare_data_static(**kargs):
                     }
                 
                 # Else we encode the string and return it following the HF tokenizer format
-                enc_str = world_tokenizer_encode(x)
+                enc_str = world_tokenizer_encode(x, world_add_endoftext_token=world_add_endoftext_token)
                 return {
                     'input_ids': enc_str,
                     'token_type_ids': [0] * len(enc_str),
@@ -171,27 +177,32 @@ def prepare_data_static(**kargs):
         if kargs["multi_column_keys"] is None:
             multi_column_keys = ['instruction', 'input', 'output']
             multi_column_prefix = ['Instruction:\n', 'Input:\n', 'Output:\n']
+            multi_column_suffix = ['', '', '']
             multi_column_train_mask = [True, False, True]
             multi_column_separator = '\n\n'
         else:
             multi_column_keys = kargs["multi_column_keys"]
             multi_column_prefix = kargs["multi_column_prefix"]
+            multi_column_suffix = kargs["multi_column_suffix"]
             multi_column_train_mask = kargs["multi_column_train_mask"]
             multi_column_separator = kargs["multi_column_separator"]
         
         # Tokenized encodings for multi column keys
         multi_column_enabled = len(multi_column_keys) > 0
         multi_column_prefix_encodings = []
+        multi_column_suffix_encodings = []
         multi_column_separator_encodings = None
 
         # Process the multi column settings
         if multi_column_enabled:
-            # Check if the multi column keys lengths are valid (only if it is enabled)
-            if len(multi_column_keys) != len(multi_column_prefix) or len(multi_column_keys) != len(multi_column_train_mask):
-                raise ValueError('Multi column keys, prefix and masking must be the same length')
+            
             # Tokenize the multi column strings
             for i in range(len(multi_column_keys)):
-                multi_column_prefix_encodings.append(encodeTokens(multi_column_prefix[i]))
+                if multi_column_prefix is not None and multi_column_prefix[i] is not None:
+                    multi_column_prefix_encodings.append(encodeTokens(multi_column_prefix[i]))
+                if multi_column_suffix is not None and multi_column_suffix[i] is not None:
+                    multi_column_suffix_encodings.append(encodeTokens(multi_column_suffix[i]))    
+            
             # Tokenize the multi column separator
             if multi_column_separator is not None and len(multi_column_separator) > 0:
                 multi_column_separator_encodings = encodeTokens(multi_column_separator)
@@ -242,9 +253,10 @@ def prepare_data_static(**kargs):
                                 attention_mask += multi_column_separator_encodings['attention_mask']
                             
                             # Add the prefix
-                            input_ids += multi_column_prefix_encodings[i]['input_ids']
-                            token_type_ids += multi_column_prefix_encodings[i]['token_type_ids']
-                            attention_mask += multi_column_prefix_encodings[i]['attention_mask']
+                            if multi_column_prefix_encodings[i] is not None:
+                                input_ids += multi_column_prefix_encodings[i]['input_ids']
+                                token_type_ids += multi_column_prefix_encodings[i]['token_type_ids']
+                                attention_mask += multi_column_prefix_encodings[i]['attention_mask']
 
                             # Tokenize the column
                             column_encodings = encodeTokens(x[multi_column_keys[i]])
@@ -253,11 +265,20 @@ def prepare_data_static(**kargs):
                             input_ids += column_encodings['input_ids']
                             token_type_ids += column_encodings['token_type_ids']
 
-                            # Override the attention mask if masking is enabled
-                            if multi_column_train_mask[i]:
-                                attention_mask += ([1] * len(column_encodings['input_ids']))
-                            else:
+                            # Override the training attention mask if masking is set to false
+                            if len(multi_column_train_mask) < i and multi_column_train_mask[i] is False:
                                 attention_mask += ([0] * len(column_encodings['input_ids']))
+                            else:
+                                attention_mask += ([1] * len(column_encodings['input_ids']))
+                                
+                            # Add the suffix
+                            if multi_column_suffix_encodings[i] is not None:
+                                input_ids += multi_column_suffix_encodings[i]['input_ids']
+                                token_type_ids += multi_column_suffix_encodings[i]['token_type_ids']
+                                attention_mask += multi_column_suffix_encodings[i]['attention_mask']
+                            
+                            # Set the first item flag to false
+                            is_first_item = False
                     
                     # Return the merged columns
                     return {
@@ -381,6 +402,19 @@ def prepare_data_static(**kargs):
                 return False
             return True
         src_dataset = src_dataset.filter(dataset_filter, num_proc=num_cpus)
+        
+        # Perform a sort by length
+        if kargs["sort_by_length"]:
+            sort_asc = kargs["sort_asc"]
+            
+            def add_length(example):
+                example["length"] = len(example['input_ids'])
+                return example
+            
+            src_dataset = src_dataset.map(add_length)
+            
+            # sort by length (not sorting the columns, just the rows)
+            src_dataset = src_dataset.sort("length", reverse=not sort_asc)
 
         # Perform rechunking after filtering, if source is not a "text" based 
         # dataset and text_rechunk_force is enabled
@@ -427,12 +461,22 @@ class RWKVDataModule(LightningDataModule):
         # ---
         tokenizer: str = "neox",
         autoTokenizer = None,
+
+        # Add <|endoftext|> string token to the world tokenizer, at index 0
+        # this was missing from the original world trie_tokenizer
+        world_add_endoftext_token: bool = True,
+
         # ---
         # HF dataset conversion helpers
         # ---
         # Min / Max token size filtering
         min_token_size: int = -1,
         max_token_size: int = -1,
+        
+        # Sort by length
+        sort_by_length: bool = False,
+        sort_asc: bool = True,
+        
         # Custom 'text' column to support, mostly used for dataset where the 
         # desired train data is in another column (eg. 'code')
         custom_text_key: str = None,
@@ -441,6 +485,7 @@ class RWKVDataModule(LightningDataModule):
         # and need to be merged
         multi_column_keys: list = None,
         multi_column_prefix: list = None,
+        multi_column_suffix: list = None,
         multi_column_train_mask: list = None,
         multi_column_separator: str = None,
         # prompt/completion format masking support
