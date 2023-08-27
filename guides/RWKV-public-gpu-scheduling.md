@@ -31,6 +31,9 @@ YES! In general if you have a modern GPU (ie. 30XX or 40XX, or better). Your nod
 - Pairs of 24GB GPUs or higher, is very suitible for finetuning 1.5B models experiments
 - Got spare 4-8 x GPUs or >24GB vram GPUS? These are in dire need to help speed up overall experimentation on potentially larger models
 
+> Do allocate atleast 500GB of storage space, as the datasets & checkpoints can get extreamly large especially when stacked up
+> even if we are doing a hard reset between every run. If you have <500GB of space, do let us know and we will adjust the runs accordingly.
+
 As all scheduling of GPU runs will be done via github actions, to contribute your GPU all you need is to contact @picocreator via discord with your specs. And he will provide you the docker command to run on your system. 
 
 Which will end up looking something like this like this
@@ -38,7 +41,7 @@ Which will end up looking something like this like this
 ```bash
 docker run --name rwkv-github-runner \
     --gpus all \
-    --storage-opt size=250G \
+    --storage-opt size=500G \
     --env RUNNER_NAME="picocreator-1x3090" \
     --env RUNNER_LABELS="1x3090,1x24vgb,100GB" \
     --env RUNNER_TOKEN="<SECRET KEY>" \
