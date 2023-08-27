@@ -23,7 +23,7 @@ Let us facilitate those runs here.
     - Once completed, all training runs results and output will be uploaded to hugging face. Example: https://huggingface.co/rwkv-x-dev/rwkv-x-playground/tree/main/experiment/rwkv-x-exp/v5-headsize32
     - for maintainers / users with direct write access, you can probably just skip the PR, and just do the runs from your branch if desired.
 
-# Restrictions on the trianing process
+# Restrictions on the training process
 - Generally, keep your model size <= 1.5B - as we only have up to 3090s currently (not a hard-rule, but anything bigger typically take days)
 - Keep your training runs under 12 hours, we may priotize shorter runs over longer runs (case by case basis)
 - We have the right of refusal, and have no obligations. Existing runs may take priority

@@ -29,7 +29,7 @@ In general, models with a positive impact to RWKV community (eg. specific langua
 > Note: If you intend to use blinks official trainer, in your notebook. Do clone the official trainer, and make sure the output model is saved into the "model" directory.
 > As the github action will **only** be saving the *.pth files inside the "model" directory of this repo.
 
-# Restrictions on the trianing process
+# Restrictions on the training process
 
 - Generally, keep your model size <= 1.5B - as we only have up to 3090s currently (not a hard-rule, but anything bigger typically take days)
     - For 3B/7B models, because there is a huge performance penalty for deepspeed 3, try to keep your dataset conservative in size, to keep the run under 12 hours.
