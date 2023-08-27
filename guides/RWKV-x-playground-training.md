@@ -15,6 +15,8 @@ Let us facilitate those runs here.
     - your dataset should be downloadable via huggingface / a link, do not commit your dataset into the repo
     - any required models should also be donwloaded as part of the notebook
     - use the example settings for datapath & checkpoints
+    - Unless you have a reason to jump straight to 1.5B model size, try to schedule a smaller `L6-D2048` training runs first
+    - for larger runs, split it into chunks with `-part1` to `-partx` suffixes
 6) Perform a pull request to `rwkv-x-playground` with the title `[training request] description`, you must include your RWKV discord handle, and a description of what you are experimenting with, and whats your expected outcome / hypothesis you want test 
     - note that all followup will be done via discord.
     - We may rename, and reorganize your files, and if we do so, we will keep you updated. 
@@ -57,3 +59,4 @@ All RWKV-x-playground community submissions, restrictions
     - have the right to reject your submission
     - have the right to make adjustments, and reschedule your runs accordingly
     - have no obligation to schedule your run immediately (existing experiments typically takes priority)
+- Everything will be done in public. NSFW / trolling runs will not be accepted
