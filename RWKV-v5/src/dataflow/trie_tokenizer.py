@@ -51,7 +51,7 @@ class TRIE:
         return ret
 
 class TRIE_TOKENIZER():
-    def __init__(self, file_name):
+    def __init__(self, file_name, add_endoftext_token=True):
         self.vocab_size = 65536
         self.idx2token = {}
         sorted = [] # must be already sorted
@@ -65,8 +65,11 @@ class TRIE_TOKENIZER():
             assert len(x) == int(l[l.rindex(' '):])
             sorted += [x]
             self.idx2token[idx] = x
-            
-        self.idx2token[0] = b'<|endoftext|>'
+        
+        # Add the <|endoftext|> token overwrite
+        if add_endoftext_token:
+            self.idx2token[0] = b'<|endoftext|>'
+        
         self.token2idx = {}
         for k,v in self.idx2token.items():
             self.token2idx[v] = int(k)
@@ -120,18 +123,24 @@ import os
 DATAFLOW_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # We use this in global, easier for HF to handle for arrow functions ??
-WORLD_TOKENIZER = None
+WORLD_TOKENIZER_WITH_EOT = None
+WORLD_TOKENIZER_NO_EOT = None
 
 # Setup the local world tokenizer if needed and return it
-def get_world_tokenizer():
-    global WORLD_TOKENIZER
-    if WORLD_TOKENIZER is None:
-        WORLD_TOKENIZER = TRIE_TOKENIZER(os.path.join(DATAFLOW_DIR, "./rwkv_vocab_v20230424.txt"))
-    return WORLD_TOKENIZER
+def get_world_tokenizer(world_add_endoftext_token=True):
+    global WORLD_TOKENIZER_WITH_EOT, WORLD_TOKENIZER_NO_EOT
+    if world_add_endoftext_token:
+        if WORLD_TOKENIZER_WITH_EOT is None:
+            WORLD_TOKENIZER_WITH_EOT = TRIE_TOKENIZER(os.path.join(DATAFLOW_DIR, "./rwkv_vocab_v20230424.txt"), add_endoftext_token=True)
+        return WORLD_TOKENIZER_WITH_EOT
+    else:
+        if WORLD_TOKENIZER_NO_EOT is None:
+            WORLD_TOKENIZER_NO_EOT = TRIE_TOKENIZER(os.path.join(DATAFLOW_DIR, "./rwkv_vocab_v20230424.txt"), add_endoftext_token=False)
+        return WORLD_TOKENIZER_NO_EOT
 
 # Provide a global function for the world tokenizer
-def world_tokenizer_encode(src):
-    return get_world_tokenizer().encode(src)
+def world_tokenizer_encode(src, world_add_endoftext_token=True):
+    return get_world_tokenizer(world_add_endoftext_token=world_add_endoftext_token).encode(src)
 
 ########################################################################################################
 # Tensor specific tokenizer

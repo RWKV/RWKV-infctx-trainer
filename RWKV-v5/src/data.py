@@ -30,6 +30,12 @@ def prepare_data_static(**kargs):
     if kargs["skip_datapath_setup"] == True:
         return
 
+    # Special handling of world_add_endoftext_token (if enabled)
+    if kargs["world_add_endoftext_token"]:
+        world_add_endoftext_token = True
+    else:
+        world_add_endoftext_token = False
+
     # Source data processing
     if kargs["source"] is not None:
         if kargs["tokenizer"] is None:
@@ -144,7 +150,7 @@ def prepare_data_static(**kargs):
                     type_arr = []
                     mask_arr = []
                     for i in range(len(x)):
-                        enc_str = world_tokenizer_encode(x[i])
+                        enc_str = world_tokenizer_encode(x[i], world_add_endoftext_token=world_add_endoftext_token)
                         id_arr.append(enc_str)
                         type_arr.append([0] * len(enc_str))
                         mask_arr.append([1] * len(enc_str))
@@ -157,7 +163,7 @@ def prepare_data_static(**kargs):
                     }
                 
                 # Else we encode the string and return it following the HF tokenizer format
-                enc_str = world_tokenizer_encode(x)
+                enc_str = world_tokenizer_encode(x, world_add_endoftext_token=world_add_endoftext_token)
                 return {
                     'input_ids': enc_str,
                     'token_type_ids': [0] * len(enc_str),
@@ -427,6 +433,11 @@ class RWKVDataModule(LightningDataModule):
         # ---
         tokenizer: str = "neox",
         autoTokenizer = None,
+
+        # Add <|endoftext|> string token to the world tokenizer, at index 0
+        # this was missing from the original world trie_tokenizer
+        world_add_endoftext_token: bool = True,
+
         # ---
         # HF dataset conversion helpers
         # ---
