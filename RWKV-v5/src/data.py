@@ -177,9 +177,9 @@ def prepare_data_static(**kargs):
         if kargs["multi_column_keys"] is None:
             multi_column_keys = ['instruction', 'input', 'output']
             multi_column_prefix = ['Instruction:\n', 'Input:\n', 'Output:\n']
-            multi_column_suffix = ['', '\n', '\n']
+            multi_column_suffix = ['', '', '']
             multi_column_train_mask = [True, False, True]
-            multi_column_separator = '\n'
+            multi_column_separator = '\n\n'
         else:
             multi_column_keys = kargs["multi_column_keys"]
             multi_column_prefix = kargs["multi_column_prefix"]
@@ -195,13 +195,13 @@ def prepare_data_static(**kargs):
 
         # Process the multi column settings
         if multi_column_enabled:
-            # Check if the multi column keys lengths are valid (only if it is enabled)
-            if len(multi_column_keys) != len(multi_column_prefix) or len(multi_column_keys) != len(multi_column_train_mask):
-                raise ValueError('Multi column keys, prefix and masking must be the same length')
+            
             # Tokenize the multi column strings
             for i in range(len(multi_column_keys)):
-                multi_column_prefix_encodings.append(encodeTokens(multi_column_prefix[i]))
-                multi_column_suffix_encodings.append(encodeTokens(multi_column_suffix[i]))    
+                if multi_column_prefix is not None and multi_column_prefix[i] is not None:
+                    multi_column_prefix_encodings.append(encodeTokens(multi_column_prefix[i]))
+                if multi_column_suffix is not None and multi_column_suffix[i] is not None:
+                    multi_column_suffix_encodings.append(encodeTokens(multi_column_suffix[i]))    
             
             # Tokenize the multi column separator
             if multi_column_separator is not None and len(multi_column_separator) > 0:
@@ -253,9 +253,10 @@ def prepare_data_static(**kargs):
                                 attention_mask += multi_column_separator_encodings['attention_mask']
                             
                             # Add the prefix
-                            input_ids += multi_column_prefix_encodings[i]['input_ids']
-                            token_type_ids += multi_column_prefix_encodings[i]['token_type_ids']
-                            attention_mask += multi_column_prefix_encodings[i]['attention_mask']
+                            if multi_column_prefix_encodings[i] is not None:
+                                input_ids += multi_column_prefix_encodings[i]['input_ids']
+                                token_type_ids += multi_column_prefix_encodings[i]['token_type_ids']
+                                attention_mask += multi_column_prefix_encodings[i]['attention_mask']
 
                             # Tokenize the column
                             column_encodings = encodeTokens(x[multi_column_keys[i]])
@@ -264,16 +265,17 @@ def prepare_data_static(**kargs):
                             input_ids += column_encodings['input_ids']
                             token_type_ids += column_encodings['token_type_ids']
 
-                            # Override the attention mask if masking is enabled
-                            if multi_column_train_mask[i]:
-                                attention_mask += ([1] * len(column_encodings['input_ids']))
-                            else:
+                            # Override the training attention mask if masking is set to false
+                            if len(multi_column_train_mask) < i and multi_column_train_mask[i] is False:
                                 attention_mask += ([0] * len(column_encodings['input_ids']))
+                            else:
+                                attention_mask += ([1] * len(column_encodings['input_ids']))
                                 
                             # Add the suffix
-                            input_ids += multi_column_suffix_encodings[i]['input_ids']
-                            token_type_ids += multi_column_suffix_encodings[i]['token_type_ids']
-                            attention_mask += multi_column_suffix_encodings[i]['attention_mask']
+                            if multi_column_suffix_encodings[i] is not None:
+                                input_ids += multi_column_suffix_encodings[i]['input_ids']
+                                token_type_ids += multi_column_suffix_encodings[i]['token_type_ids']
+                                attention_mask += multi_column_suffix_encodings[i]['attention_mask']
                             
                             # Set the first item flag to false
                             is_first_item = False
