@@ -108,6 +108,9 @@ def prepare_data_static(**kargs):
             else:
                 raise ValueError('Dataset must have a "train" split')
 
+        if kargs["document_count_limit"] > 0:
+            src_dataset['train'] = src_dataset['train'].select([i for i in range(kargs["document_count_limit"])])
+
         # Tokenizer vars
         hf_tokenizer = None
         world_tokenizer = None
@@ -476,6 +479,8 @@ class RWKVDataModule(LightningDataModule):
         # Sort by length
         sort_by_length: bool = False,
         sort_asc: bool = True,
+
+        document_count_limit: int = -1,
         
         # Custom 'text' column to support, mostly used for dataset where the 
         # desired train data is in another column (eg. 'code')
