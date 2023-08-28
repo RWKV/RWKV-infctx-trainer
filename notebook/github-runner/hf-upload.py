@@ -55,7 +55,7 @@ api.upload_folder(
     path_in_repo=NOTEBOOK_SUBDIR,
     repo_type="model",
     multi_commits=True,
-    allow_patterns=["*.ipynb", "*.csv", "*/*.csv"],
+    allow_patterns=["*.ipynb", "*.csv", "**/*.csv"],
     commit_message=f"[GHA] {NOTEBOOK_FILE} result notebooks"
 )
 
