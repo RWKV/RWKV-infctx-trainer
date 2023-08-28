@@ -1,12 +1,8 @@
 # RWKV community model training
 
-Between major experiment pushes, and interprating of experiment data. And sleep. Time to time we find short burst of time, where the GPU ends up being idle.
+Want to train a new model, or finetune ?
 
-This tends to happen more often then @picocreator would like, especially when a training job is scheduled "as he goes to sleep", and gets an error due to a bug.
-
-As this ends up as wasted capacity, I am opening up access, to help facilitate finetune/training of models generally 1.5B and under, with mini bursts of datasets, which can be completed in under 12 hours on an 8x3090s (or 1x4090s). This will then be scheduled on a lower priority, ready to taking the training slot when its made avaliable
-
-In general, models with a positive impact to RWKV community (eg. specific language models) will be priotised over other models
+In general, models with a positive impact to RWKV community (eg. specific language models), or new unexplored use cases, will be priotised over other models, and scheduled between RWKV-x researchers runs.
 
 # Steps for the process
 
@@ -27,7 +23,7 @@ In general, models with a positive impact to RWKV community (eg. specific langua
     - for maintainers / users with direct write access, you can probably just skip the PR, and just do the runs from your branch if desired.
 
 > Note: If you intend to use blinks official trainer, in your notebook. Do clone the official trainer, and make sure the output model is saved into the "model" directory.
-> As the github action will **only** be saving the *.pth files inside the "model" directory of this repo.
+> As the github action will **only** be saving the `*.pth` files inside the "model" directory of this repo.
 
 # Restrictions on the training process
 
