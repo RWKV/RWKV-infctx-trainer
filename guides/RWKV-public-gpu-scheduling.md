@@ -19,7 +19,7 @@ For most parts these runs will be priotised based on
 - Positive impact to the community
 - How short it is expected to be for each part of the run
 
-Our GPUs in the community pool is sponsors can be found here: [GPU sponsor list](./GPU-sponsor-list.md)
+Our GPUs in the community pool sponsors can be found here: [GPU sponsor list](./GPU-sponsor-list.md)
 
 # Who manages the GPU scheduling?
 
