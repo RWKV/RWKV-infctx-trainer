@@ -2,6 +2,10 @@ import os
 import sys
 from huggingface_hub import HfApi
 
+# This hopefully fix some issues with the HF API
+import os
+os.environ['CURL_CA_BUNDLE'] = ''
+
 # Get the Hugging Face Hub API
 api = HfApi()
 

@@ -52,6 +52,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+      - name: Update external services
+        run: |
+          pip install --upgrade huggingface_hub
+          pip install --upgrade wandb
       - name: Setup HF cache
         run: |
           cd ./notebook/github-runner
