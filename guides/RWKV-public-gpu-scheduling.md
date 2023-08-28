@@ -4,24 +4,22 @@ RWKV is constantly being developed and iterated on. Beyond the large GPU cluster
 
 We have much smaller nodes, used for either experimenting on RWKV model changes, for the next generation model.
 
-In between these iteration, of setting up new training runs, interprating of data, and sometimes just bugs/errors that happens when the writer is asleep (more often then you think). The GPU ends up being idle for short stretches of 2-6 hours while those issues are being sorted out (or until the writer wakes up).
+To help the community and model design moving forward we are opening access for 
+- [RWKV Community Training](./RWKV-community-training.md): training of community models, priotised by positive impact to the community (ie. minority language models), or creative use ideas (ie. music gen)
+- [RWKV-X playground](./RWKV-x-playground-training.md): R&D into the next generation of RWKV ideas. Where code and benchmarks will be the proving ground. To test your hypothesis.
 
-As such we are opening up training notebook submissions (via PR), for queing up lower priority runs within the cluster. To ensure the GPUs is "not wasted".
-
-This is made avaliable in 2 major varients
-
-- [RWKV Community Training](./RWKV-community-training.md): Want to finetune an existing model? For a good use case for the community
-- [RWKV-X playground](./RWKV-x-playground-training.md): Have an experimental idea that can help improve the model? Provide the code change, and we will try to run a 0.1 - 1.5B model for it. To test your hypothesis.
+Most of these runs will be executed between higher priority runs by existing researcher / maintainers.
 
 The following is an example of such a run, scheduled via our github actions
 - [Github actions link](https://github.com/RWKV/RWKV-infctx-trainer/actions/runs/5983559635/job/16233828093)
 - [Notebook used](https://huggingface.co/rwkv-x-dev/rwkv-x-playground/blob/main/experiment/rwkv-x-exp/v5-headsize32/v5-L6-D2048-E1e-1-ctx4k-part1.ipynb)
 - [Uploaded models](https://huggingface.co/rwkv-x-dev/rwkv-x-playground/tree/main/experiment/rwkv-x-exp/v5-headsize32)
 
-For most parts community model will be priotised based on
+For most parts these runs will be priotised based on
 - Positive impact to the community
 - How short it is expected to be for each part of the run
-- Core RWKV-X experiments will typically take priority
+
+Our GPUs in the community pool sponsors can be found here: [GPU sponsor list](./GPU-sponsor-list.md)
 
 # Who manages the GPU scheduling?
 
