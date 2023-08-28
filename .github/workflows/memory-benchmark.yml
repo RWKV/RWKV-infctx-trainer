@@ -57,6 +57,10 @@ jobs:
           cd ./notebook/github-runner
           chmod +x ./hf-cache-setup.sh
           ./hf-cache-setup.sh
+      - name: Update external services
+        run: |
+          pip install --upgrade huggingface_hub
+          pip install --upgrade wandb
       - name: Run the notebook, with harness
         run: |
           cd ./notebook/github-runner

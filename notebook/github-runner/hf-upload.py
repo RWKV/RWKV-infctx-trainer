@@ -61,7 +61,7 @@ def upload_folder_fallback(folder_path, file_type="model"):
         for i in range(3):
             try:
                 api.upload_file(
-                    file_path=os.path.join(folder_path, file),
+                    path_or_fileobj=os.path.join(folder_path, file),
                     repo_id=REPO_URI,
                     path_in_repo=os.path.join(NOTEBOOK_SUBDIR, file),
                     repo_type="model",
