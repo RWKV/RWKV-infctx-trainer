@@ -347,6 +347,9 @@ data:
   sort_by_length: false
   sort_asc: true # Sort in ascending order, true = shortest first, false = longest first
 
+  # Limit the document count
+  document_count_limit: 10000
+
   # Use data_dir, if you are using source=text/json/etc
   # If using relative path, this should be relative to the trainer script path
   # source_data_dir: ../dataset-text/
