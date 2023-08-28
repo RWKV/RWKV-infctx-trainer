@@ -555,11 +555,11 @@ class RWKV(L.LightningModule):
             # Load the model weights
             model_weights = torch.load(load_model, map_location='cpu')
 
-            # Get the model keys
-            model_keys = list(model_weights.keys())
-
         # Lets compute the model various sizes, if they are not provided
         if n_layer < 0:
+            # Get the model keys
+            model_keys = list(model_weights.keys())
+            # And the number of layers (via max block ID)
             max_block_id = 0
             for x in model_keys:
                 if 'blocks.' in x:
