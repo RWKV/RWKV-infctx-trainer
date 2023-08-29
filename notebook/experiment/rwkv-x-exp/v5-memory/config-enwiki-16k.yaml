@@ -17,8 +17,8 @@ trainer:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       name: 'Enwiki foundation (train-ctx=16k)'
-      project: 'RWKV-5X-Experiments'
-      tags: ['RWKV', 'RWKV-5X']
+      project: 'RWKV-X-Experiments'
+      tags: ['RWKV', 'RWKV-X']
   
   # Checkpoint settings for the training process
   callbacks:

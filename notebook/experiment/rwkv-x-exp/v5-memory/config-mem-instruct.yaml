@@ -19,8 +19,8 @@ trainer:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       name: 'Memory Instruct (bs=256, train-ctx=512)'
-      project: 'RWKV-5X-Experiments'
-      tags: ['RWKV', 'RWKV-5X']
+      project: 'RWKV-X-Experiments'
+      tags: ['RWKV', 'RWKV-X']
 
   # Checkpoint settings for the training process
   callbacks:
