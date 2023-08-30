@@ -108,8 +108,32 @@ def prepare_data_static(**kargs):
             else:
                 raise ValueError('Dataset must have a "train" split')
 
-        if kargs["dataset_limit"] > 0:
-            src_dataset['train'] = src_dataset['train'].select([i for i in range(kargs["dataset_limit"])])
+        # If an int value is used, it is interprated as document count
+        # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
+        if kargs["dataset_offset"] > 0 or kargs["dataset_length"] > 0:
+            # src dataset length
+            train_length = len(src_dataset["train"])
+
+            # Compute the offset position
+            offset_val = kargs["dataset_offset"]
+
+            # If offset is a float, we will use it as a percentage
+            if offset_val < 0:
+                offset_val = 0
+            if offset_val > 0 and offset_val < 1.0:
+                offset_val = int(train_length * offset_val) # Rounded down value
+
+            # Compute the length position
+            length_val = kargs["dataset_length"]
+            if length_val < 0:
+                length_val = train_length - offset_val
+            if length_val > 0 and length_val < 1.0:
+                length_val = int(train_length * length_val)
+            if length_val > (train_length - offset_val):
+                length_val = (train_length - offset_val)
+
+            # Get the subset of the dataset
+            src_dataset["train"] = src_dataset["train"].select(range(offset_val, offset_val + length_val))
 
         # Tokenizer vars
         hf_tokenizer = None
@@ -480,7 +504,9 @@ class RWKVDataModule(LightningDataModule):
         sort_by_length: bool = False,
         sort_asc: bool = True,
 
-        dataset_limit: int = -1,
+        # Dataset offset and limit controls
+        dataset_offset: int = -1,
+        dataset_length: int = -1,
         
         # Custom 'text' column to support, mostly used for dataset where the 
         # desired train data is in another column (eg. 'code')
