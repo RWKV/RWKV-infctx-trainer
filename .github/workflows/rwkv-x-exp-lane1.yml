@@ -82,8 +82,8 @@ jobs:
       # Note that this is meant to be a contigency measure, in case the HF upload failed
       - name: Save output models
         uses: actions/upload-artifact@v3
-        if: always()
         # if: failure()
+        if: always()
         with:
           name: output-models
           path: |
