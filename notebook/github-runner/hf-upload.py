@@ -63,7 +63,7 @@ def upload_folder_fallback(folder_path, file_type="model"):
                 api.upload_file(
                     path_or_fileobj=os.path.join(folder_path, file),
                     repo_id=REPO_URI,
-                    path_in_repo=os.path.join(NOTEBOOK_SUBDIR, file),
+                    path_in_repo=f"{NOTEBOOK_SUBDIR}/{file}",
                     repo_type="model",
                     commit_message=f"[GHA] {NOTEBOOK_FILE} result {file_type} (fallback single file upload)"
                 )
