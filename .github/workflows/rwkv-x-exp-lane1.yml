@@ -1,4 +1,4 @@
-name: rwkv-x Experiment Run (priority-lane1)
+name: rwkv-x-exp Run (lane1)
 
 on:
   workflow_dispatch:
