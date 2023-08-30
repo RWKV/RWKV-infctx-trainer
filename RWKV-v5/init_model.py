@@ -51,13 +51,8 @@ def init_model(
         scale = 1.0
 
         if "ln_" in n or ".ln" in n or "time_" in n or "_mask" in n or "pos_emb" in n or '.mask.' in n:
-            # Adding x.weight model init as per: https://github.com/BlinkDL/RWKV-LM/commit/4b8a3aba221b7ee12e9a38ca7e8e0b37857da36c
-            if 'ln_x.weight' in n:
-                layer_scale = (1+int(n.split('.')[1])) / layers
-                m[n] = (p * 0.0) + (layer_scale ** 0.7)
-            else:
-                # Skip custom init for these layers
-                m[n] = p
+            # Skip custom init for these layers
+            m[n] = p
         else:
             if n == "emb.weight":
                 # scale = -1 * self.args.lr_init
