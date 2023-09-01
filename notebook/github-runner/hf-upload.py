@@ -57,18 +57,22 @@ def upload_folder_fallback(folder_path, file_type="model"):
 
     # Upload the files one by one
     for file in file_list:
-        print(f"# Uploading {file_type} file: {file} ... ")
+
+        file_abs = os.path.join(folder_path, file)
+        file_rel = os.path.relpath(file_abs, folder_path)
+        print(f"# Uploading {file_type} file: {file_rel} ... ")
+
         for i in range(3):
             try:
                 api.upload_file(
-                    path_or_fileobj=os.path.join(folder_path, file),
+                    path_or_fileobj=file_abs,
                     repo_id=REPO_URI,
-                    path_in_repo=f"{NOTEBOOK_SUBDIR}/{file}",
+                    path_in_repo=f"{NOTEBOOK_SUBDIR}/{file_rel}",
                     repo_type="model",
                     commit_message=f"[GHA] {NOTEBOOK_FILE} result {file_type} (fallback single file upload)"
                 )
             except Exception as e:
-                print(f"# Error uploading {file_type} file: {file} ... ")
+                print(f"# Error uploading {file_type} file: {file_rel} ... ")
                 print(e)
                 if i == 2:
                     UPLOAD_ERRORS.append(e)
