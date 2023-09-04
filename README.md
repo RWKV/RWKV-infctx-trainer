@@ -1,5 +1,7 @@
 # RWKV Infinite Context trainer
 
+> If you are new to RWKV, it would be better to find out more about us via our wiki first here: https://wiki.rwkv.com/
+
 RWKV trainer with
 - no training context limit (via BPTT)
 - deepspeed 3
