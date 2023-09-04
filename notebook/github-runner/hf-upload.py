@@ -2,6 +2,10 @@ import os
 import sys
 from huggingface_hub import HfApi
 
+# This hopefully fix some issues with the HF API
+import os
+os.environ['CURL_CA_BUNDLE'] = ''
+
 # Get the Hugging Face Hub API
 api = HfApi()
 
@@ -27,38 +31,101 @@ print(f"# ------------------------------------")
 print(f"# Uploading to: {hf_url}")
 print(f"# ------------------------------------")
 
+# ------------------------------------
+# Uploading code, with work around some unstable HF stuff
+# ------------------------------------
+
+# List of errors, to throw at the end of all upload attempts
+UPLOAD_ERRORS = []
+
+# Fallback upload method, upload the files one by one
+# with retry on failure (up to 3 attempts)
+def upload_folder_fallback(folder_path, file_type="model"): 
+    # Get the files to upload in the folder_path, including nested files
+    file_list = []
+
+    # Walk the folder and get all the files
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            file_list.append(os.path.join(root, file))
+
+    # and filter by supported file type
+    file_list = [f for f in file_list if f.endswith(".pth") or f.endswith(".ipynb") or f.endswith(".csv")]
+
+    # Log the fallback logic
+    print(f"# Fallback {file_type} upload method ... ")
+
+    # Upload the files one by one
+    for file in file_list:
+
+        file_abs = os.path.join(folder_path, file)
+        file_rel = os.path.relpath(file_abs, folder_path)
+        print(f"# Uploading {file_type} file: {file_rel} ... ")
+
+        for i in range(3):
+            try:
+                api.upload_file(
+                    path_or_fileobj=file_abs,
+                    repo_id=REPO_URI,
+                    path_in_repo=f"{NOTEBOOK_SUBDIR}/{file_rel}",
+                    repo_type="model",
+                    commit_message=f"[GHA] {NOTEBOOK_FILE} result {file_type} (fallback single file upload)"
+                )
+            except Exception as e:
+                print(f"# Error uploading {file_type} file: {file_rel} ... ")
+                print(e)
+                if i == 2:
+                    UPLOAD_ERRORS.append(e)
+                continue
+            break
+    
+    # Upload finished !
+    print(f"# Upload of {file_type} files, via fallback finished !")
+
+# Because multi-stage upload is "unstable", we try to upload the models with fallback handling
+def upload_folder(folder_path, file_type="model"): 
+    try:
+        api.upload_folder(
+            folder_path=folder_path,
+            repo_id=REPO_URI,
+            path_in_repo=NOTEBOOK_SUBDIR,
+            repo_type="model",
+            multi_commits=True,
+            allow_patterns=["*.pth", "*.ipynb", "*.csv", "*/*.csv"],
+            commit_message=f"[GHA] {NOTEBOOK_FILE} result {file_type}"
+        )
+    except Exception as e:
+        eStr = str(e)
+        if "must have at least 1 commit" in eStr:
+            print("# Skipping {file_type} upload due to error ... ")
+            print(e)
+        else:
+            upload_folder_fallback(folder_path, file_type)
+
+# ------------------------------------
+# Actual upload (and error handling)
+# ------------------------------------
+
 # Upload the models
 print("# Uploading the models ... ")
-try:
-    api.upload_folder(
-        folder_path=MODEL_DIR,
-        repo_id=REPO_URI,
-        path_in_repo=NOTEBOOK_SUBDIR,
-        repo_type="model",
-        multi_commits=True,
-        allow_patterns=["*.pth"],
-        commit_message=f"[GHA] {NOTEBOOK_FILE} result models"
-    )
-except Exception as e:
-    eStr = str(e)
-    if "must have at least 1 commit" in eStr:
-        print("# Skipping model upload due to error ... ")
-        print(e)
-    else:
-        raise e
+upload_folder( MODEL_DIR, file_type="model" )
     
 # Upload the ipynb files
 print("# Uploading the notebooks / output files ... ")
-api.upload_folder(
-    folder_path=f"{OUTPUT_DIR}/{NOTEBOOK_SUBDIR}",
-    repo_id=REPO_URI,
-    path_in_repo=NOTEBOOK_SUBDIR,
-    repo_type="model",
-    multi_commits=True,
-    allow_patterns=["*.ipynb", "*.csv", "*/*.csv"],
-    commit_message=f"[GHA] {NOTEBOOK_FILE} result notebooks"
-)
+upload_folder( f"{OUTPUT_DIR}/{NOTEBOOK_SUBDIR}", file_type="notebook & reports" )
 
 print(f"# ------------------------------------")
-print(f"# Uploaded to: {hf_url}")
+print(f"# Uploaded finished to: {hf_url}")
 print(f"# ------------------------------------")
+
+# Print out the errors, if any
+if len(UPLOAD_ERRORS) > 0:
+    print("# ------------------------------------")
+    print("# Upload errors:")
+    print("# ------------------------------------")
+    for e in UPLOAD_ERRORS:
+        print(e)
+    print("# ------------------------------------")
+    print("# Upload errors, logged - hard exit")
+    print("# ------------------------------------")
+    sys.exit(1)

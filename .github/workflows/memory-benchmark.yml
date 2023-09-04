@@ -57,6 +57,10 @@ jobs:
           cd ./notebook/github-runner
           chmod +x ./hf-cache-setup.sh
           ./hf-cache-setup.sh
+      - name: Update external services
+        run: |
+          pip install --upgrade huggingface_hub
+          pip install --upgrade wandb
       - name: Run the notebook, with harness
         run: |
           cd ./notebook/github-runner
@@ -66,7 +70,7 @@ jobs:
         run: |
           mkdir -p ./output/experiment/memory-bench/logs/
           cp ./notebook/experiment/memory-bench/logs/*.csv ./output/experiment/memory-bench/logs/
-          ls -lh ./output/logs/
+          ls -lh ./output/experiment/memory-bench/logs/
       - name: Save output notebook & CSV files
         if: always()
         uses: actions/upload-artifact@v3

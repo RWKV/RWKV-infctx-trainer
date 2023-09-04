@@ -1,4 +1,4 @@
-name: rwkv-x Experiment Run (lane1)
+name: rwkv-x-exp Run (lane1)
 
 on:
   workflow_dispatch:
@@ -52,6 +52,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+      - name: Update external services
+        run: |
+          pip install --upgrade huggingface_hub
+          pip install --upgrade wandb
       - name: Setup HF cache
         run: |
           cd ./notebook/github-runner
@@ -78,7 +82,8 @@ jobs:
       # Note that this is meant to be a contigency measure, in case the HF upload failed
       - name: Save output models
         uses: actions/upload-artifact@v3
-        if: failure()
+        # if: failure()
+        if: always()
         with:
           name: output-models
           path: |
