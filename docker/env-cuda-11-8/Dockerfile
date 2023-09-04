@@ -6,7 +6,8 @@ RUN apt-get update && \
     apt-get install -y \
         ninja-build \
         htop wget curl git vim \
-        python3.11 python3-pip
+        python3.11 python3-pip \
+        python-is-python3
 
 # Install pytorch
 RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
