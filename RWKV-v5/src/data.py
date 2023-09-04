@@ -280,7 +280,7 @@ def prepare_data_static(**kargs):
                                 attention_mask += multi_column_separator_encodings['attention_mask']
                             
                             # Add the prefix
-                            if multi_column_prefix_encodings[i] is not None:
+                            if len(multi_column_prefix_encodings) > i and multi_column_prefix_encodings[i] is not None:
                                 input_ids += multi_column_prefix_encodings[i]['input_ids']
                                 token_type_ids += multi_column_prefix_encodings[i]['token_type_ids']
                                 attention_mask += multi_column_prefix_encodings[i]['attention_mask']
@@ -299,7 +299,7 @@ def prepare_data_static(**kargs):
                                 attention_mask += ([1] * len(column_encodings['input_ids']))
                                 
                             # Add the suffix
-                            if multi_column_suffix_encodings[i] is not None:
+                            if len(multi_column_suffix_encodings) > i and multi_column_suffix_encodings[i] is not None:
                                 input_ids += multi_column_suffix_encodings[i]['input_ids']
                                 token_type_ids += multi_column_suffix_encodings[i]['token_type_ids']
                                 attention_mask += multi_column_suffix_encodings[i]['attention_mask']

@@ -108,6 +108,33 @@ def prepare_data_static(**kargs):
             else:
                 raise ValueError('Dataset must have a "train" split')
 
+        # If an int value is used, it is interprated as document count
+        # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
+        if kargs["dataset_offset"] > 0 or kargs["dataset_length"] > 0:
+            # src dataset length
+            train_length = len(src_dataset["train"])
+
+            # Compute the offset position
+            offset_val = kargs["dataset_offset"]
+
+            # If offset is a float, we will use it as a percentage
+            if offset_val < 0:
+                offset_val = 0
+            if offset_val > 0 and offset_val < 1.0:
+                offset_val = int(train_length * offset_val) # Rounded down value
+
+            # Compute the length position
+            length_val = kargs["dataset_length"]
+            if length_val < 0:
+                length_val = train_length - offset_val
+            if length_val > 0 and length_val < 1.0:
+                length_val = int(train_length * length_val)
+            if length_val > (train_length - offset_val):
+                length_val = (train_length - offset_val)
+
+            # Get the subset of the dataset
+            src_dataset["train"] = src_dataset["train"].select(range(offset_val, offset_val + length_val))
+
         # Tokenizer vars
         hf_tokenizer = None
         world_tokenizer = None
@@ -253,7 +280,7 @@ def prepare_data_static(**kargs):
                                 attention_mask += multi_column_separator_encodings['attention_mask']
                             
                             # Add the prefix
-                            if multi_column_prefix_encodings[i] is not None:
+                            if len(multi_column_prefix_encodings) > i and multi_column_prefix_encodings[i] is not None:
                                 input_ids += multi_column_prefix_encodings[i]['input_ids']
                                 token_type_ids += multi_column_prefix_encodings[i]['token_type_ids']
                                 attention_mask += multi_column_prefix_encodings[i]['attention_mask']
@@ -272,7 +299,7 @@ def prepare_data_static(**kargs):
                                 attention_mask += ([1] * len(column_encodings['input_ids']))
                                 
                             # Add the suffix
-                            if multi_column_suffix_encodings[i] is not None:
+                            if len(multi_column_suffix_encodings) > i and multi_column_suffix_encodings[i] is not None:
                                 input_ids += multi_column_suffix_encodings[i]['input_ids']
                                 token_type_ids += multi_column_suffix_encodings[i]['token_type_ids']
                                 attention_mask += multi_column_suffix_encodings[i]['attention_mask']
@@ -476,6 +503,10 @@ class RWKVDataModule(LightningDataModule):
         # Sort by length
         sort_by_length: bool = False,
         sort_asc: bool = True,
+
+        # Dataset offset and limit controls
+        dataset_offset: int = -1,
+        dataset_length: int = -1,
         
         # Custom 'text' column to support, mostly used for dataset where the 
         # desired train data is in another column (eg. 'code')
