@@ -51,8 +51,13 @@ def init_model(
         scale = 1.0
 
         if "ln_" in n or ".ln" in n or "time_" in n or "_mask" in n or "pos_emb" in n or '.mask.' in n:
-            # Skip custom init for these layers
-            m[n] = p
+            if 'ln_x.weight' in n:
+                # Special ln_x init
+                layer_scale = (1+int(n.split('.')[1])) / layers
+                m[n] = (p * 0.0) + (layer_scale ** 0.7)
+            else:
+                # Skip custom init for these layers
+                m[n] = p
         else:
             if n == "emb.weight":
                 # scale = -1 * self.args.lr_init
