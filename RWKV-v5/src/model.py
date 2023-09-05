@@ -241,8 +241,7 @@ class RWKV_TimeMix(JITModClass):
         self.key = nn.Linear(n_embd, dim_att, bias=False)
         self.value = nn.Linear(n_embd, dim_att, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
-
-        self.ln_x = nn.GroupNorm(n_head, n_embd)
+        self.ln_x = nn.GroupNorm(n_head, dim_att)
 
     # this is based on jit_func(self,x)
     @JITModMethod
@@ -316,6 +315,8 @@ class RWKV_TimeMix(JITModClass):
         ########################################################################
         
         x = x.transpose(1, 2).contiguous().view(B * TT, H*S) # BHTS -> BTHS -> BTC
+
+        # x = self.ln_x(x/self.head_size_divisor).view(B, TT, H*S)
         x = self.ln_x(x/8).view(B, TT, H*S)
 
         return self.output(x), TimeMixState(x_l, s)
@@ -385,7 +386,7 @@ class RWKV_ChannelMix(JITModClass):
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
         k = self.key(xk)
-        k = torch.square(torch.relu(k))
+        k = torch.relu(k) ** 2
         kv = self.value(k)
         return (torch.sigmoid(self.receptance(xr)) * kv,
                 ChannelMixState(x[:, -1]))
@@ -609,10 +610,17 @@ class RWKV(L.LightningModule):
 
         # Compute the RWKV-v5 n_head / headsize
         head_size = 64
-        n_head = n_embd // head_size
-        assert n_embd % n_head == 0 ,  f"n_embd must be divisible by head_size ({self.head_size})"
-        self.n_head = n_head
         self.head_size = head_size
+        self.head_size_divisor = 8
+
+        n_head = dim_att // head_size
+        self.n_head = n_head
+        assert dim_att % n_head == 0 ,  f"dim_att must be divisible by head_size ({self.head_size})"
+
+        # Validate various sizes
+        assert n_embd  % 32 == 0, f"n_embd must be divisible by 32"
+        assert dim_att % 32 == 0, f"dim_att must be divisible by 32"
+        assert dim_ffn % 32 == 0, f"dim_ffn must be divisible by 32"
         
         # Matmu precision check
         if torch_set_float32_matmul_precision is not None:
