@@ -609,7 +609,7 @@ class RWKV(L.LightningModule):
         self.position_loss_bias_in_validation = position_loss_bias_in_validation
 
         dim_att = dim_att or n_embd
-        dim_ffn = dim_ffn or n_embd * 4
+        dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
         self.dim_att = dim_att
         self.dim_ffn = dim_ffn
 
