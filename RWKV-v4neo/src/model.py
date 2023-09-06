@@ -1021,7 +1021,11 @@ class RWKV(L.LightningModule):
             if self.trainer.num_devices > 1:
                 if self.bptt_learning_range <= 0:
                     # We perform forward/backward on the shared max segment count across all GPUs
-                    forward_segment_count  = self.trainer.strategy.reduce(segment_count, reduce_op="max")
+                    # ---
+                    # we map it to be a tensor, instead of the int directly, as this is more reliable across certain versions of torch/lightning
+                    # https://discord.com/channels/992359628979568762/1148755392638234697/1148821863749931008
+                    forward_segment_count  = self.trainer.strategy.reduce(torch.Tensor([segment_count]).to(torch.int), reduce_op="max")
+                    
                     # Convert to int, if its a torch tensor
                     if isinstance(forward_segment_count, torch.Tensor):
                         forward_segment_count = forward_segment_count.item()
