@@ -343,9 +343,20 @@ data:
   # source_dataset_params:
   #   language: en
 
+  # Sort the dataset by length, useful to reduce gpu waiting time (also useful for RWKV long context coherence)
+  sort_by_length: false
+  sort_asc: true # Sort in ascending order, true = shortest first, false = longest first
+
+  # Limit the document count, to an offset/length limit
+  # If an int value is used, it is interprated as document count
+  # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
+  # ---
+  # dataset_offset: -1
+  # dataset_length: -1
+
   # Use data_dir, if you are using source=text/json/etc
   # If using relative path, this should be relative to the trainer script path
-  source_data_dir: ../dataset-text/
+  # source_data_dir: ../dataset-text/
 
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
@@ -401,6 +412,7 @@ data:
   # ---
   # multi_column_keys: ['instruction', 'input', 'output']
   # multi_column_prefix: ['Instruction:\n', 'Input:\n', 'Output:\n']
+  # multi_column_suffix: ['\n\n', '\n\n', '\n\n']
   # multi_column_train_mask: [true, false, true]
   # multi_column_separator: '\n\n'
 

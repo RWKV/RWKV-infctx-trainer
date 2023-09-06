@@ -225,10 +225,6 @@ class RWKV_TimeMix(JITModClass):
             self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
             self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
 
-            # R3 changes
-            self.time_mix_g = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-            self.gate = nn.Linear(n_embd, dim_att, bias=False)
-
             # fancy time_decay
             decay_speed = torch.ones(n_head)
             for h in range(n_head):
@@ -245,7 +241,8 @@ class RWKV_TimeMix(JITModClass):
         self.key = nn.Linear(n_embd, dim_att, bias=False)
         self.value = nn.Linear(n_embd, dim_att, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
-        self.ln_x = nn.GroupNorm(n_head, dim_att)
+
+        self.ln_x = nn.GroupNorm(n_head, n_embd)
 
     # this is based on jit_func(self,x)
     @JITModMethod
@@ -257,14 +254,12 @@ class RWKV_TimeMix(JITModClass):
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-        xg = x * self.time_mix_g + xx * (1 - self.time_mix_g)
 
         r = self.receptance(xr).view(B, TT, self.n_head, self.head_size).transpose(1, 2)            # BTC -> BHTS
         k = self.key(xk).view(B, TT, self.n_head, self.head_size).transpose(1, 2).transpose(-2, -1) # BTC -> BHTS -> BHST
-        v = self.value(xv).view(B, TT, self.n_head, -1).transpose(1, 2)                             # BTC -> BHTS
-        g = F.silu(self.gate(xg))
+        v = self.value(xv).view(B, TT, self.n_head, self.head_size).transpose(1, 2)                 # BTC -> BHTS
 
-        return r, k, v, g
+        return r, k, v
 
     def _forward_wkbs_chunk(self, T, r, k, v):
         H = self.n_head
@@ -296,12 +291,13 @@ class RWKV_TimeMix(JITModClass):
         return w, wk, wb, ws
 
     @JITModMethod
-    def _forward_state_chunk(self, r, k, v, g, w, wk, wb, ws, x_l, last_state: TimeMixState):
+    def _forward_state_chunk(self, r, k, v, w, wk, wb, ws, x_l, last_state: TimeMixState):
         B, H, TT, S = r.size()
         T = TT
 
         # s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
         s = last_state.wkv_state
+
         if r.dtype == torch.bfloat16 and s.dtype != torch.bfloat16:
             s = s.contiguous().to(torch.bfloat16)
 
@@ -314,14 +310,12 @@ class RWKV_TimeMix(JITModClass):
             kk = k[:, :, :, i*T:i*T+T]
             vv = v[:, :, i*T:i*T+T, :]
 
-            x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv + (rr @ s) * wb
+            x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv  +  (rr @ s) * wb
 
             s = ws * s + (kk * wk) @ vv
         ########################################################################
         
         x = x.transpose(1, 2).contiguous().view(B * TT, H*S) # BHTS -> BTHS -> BTC
-
-        # x = self.ln_x(x/self.head_size_divisor).view(B, TT, H*S)
         x = self.ln_x(x/8).view(B, TT, H*S)
 
         return self.output(x), TimeMixState(x_l, s)
@@ -332,14 +326,14 @@ class RWKV_TimeMix(JITModClass):
         B = torch.tensor(B, device=x.device, dtype=torch.int32)
         TT = torch.tensor(TT, device=x.device, dtype=torch.int32)
 
-        # Get r, k, v, g (self.jit_func(x))
-        r, k, v, g = self._forward_rkv_chunk(x, B, TT, last_state)
+        # Get r, k, v (self.jit_func(x))
+        r, k, v = self._forward_rkv_chunk(x, B, TT, last_state)
 
         # Get w, wk, wb, ws (self.jit_func_2)
         w, wk, wb, ws = self._forward_wkbs_chunk(TT, r, k, v)
 
         # Does the state forwarding
-        return self._forward_state_chunk(r, k, v, g, w, wk, wb, ws, x[:, -1], last_state)
+        return self._forward_state_chunk(r, k, v, w, wk, wb, ws, x[:, -1], last_state)
 
     @TCompileMax
     def forward(self, x, last_state: TimeMixState):
@@ -391,7 +385,7 @@ class RWKV_ChannelMix(JITModClass):
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
         k = self.key(xk)
-        k = torch.relu(k) ** 2
+        k = torch.square(torch.relu(k))
         kv = self.value(k)
         return (torch.sigmoid(self.receptance(xr)) * kv,
                 ChannelMixState(x[:, -1]))
@@ -609,23 +603,16 @@ class RWKV(L.LightningModule):
         self.position_loss_bias_in_validation = position_loss_bias_in_validation
 
         dim_att = dim_att or n_embd
-        dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
+        dim_ffn = dim_ffn or n_embd * 4
         self.dim_att = dim_att
         self.dim_ffn = dim_ffn
 
         # Compute the RWKV-v5 n_head / headsize
         head_size = 64
-        self.head_size = head_size
-        self.head_size_divisor = 8
-
-        n_head = dim_att // head_size
+        n_head = n_embd // head_size
+        assert n_embd % n_head == 0 ,  f"n_embd must be divisible by head_size ({self.head_size})"
         self.n_head = n_head
-        assert dim_att % n_head == 0 ,  f"dim_att must be divisible by head_size ({self.head_size})"
-
-        # Validate various sizes
-        assert n_embd  % 32 == 0, f"n_embd must be divisible by 32"
-        assert dim_att % 32 == 0, f"dim_att must be divisible by 32"
-        assert dim_ffn % 32 == 0, f"dim_ffn must be divisible by 32"
+        self.head_size = head_size
         
         # Matmu precision check
         if torch_set_float32_matmul_precision is not None:
