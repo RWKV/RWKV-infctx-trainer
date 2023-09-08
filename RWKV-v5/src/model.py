@@ -324,7 +324,9 @@ class RWKV_TimeMix(JITModClass):
         # x = self.ln_x(x/self.head_size_divisor).view(B, TT, H*S)
         x = self.ln_x(x/8).view(B, TT, H*S)
 
-        return self.output(x), TimeMixState(x_l, s)
+        # Fix missing *g for output as per :
+        # https://github.com/RWKV/RWKV-infctx-trainer/commit/beb46d599042b77d53db9c7fa59a5966e7d33719#r126730367
+        return self.output(x)*g, TimeMixState(x_l, s)
 
     def _forward_chunk(self, x, last_state: TimeMixState):
         # Forward sizings (Batch, Time/ContextLength, Tokens)
@@ -1150,7 +1152,7 @@ class RWKV(L.LightningModule):
                     # we map it to be a tensor, instead of the int directly, as this is more reliable across certain versions of torch/lightning
                     # https://discord.com/channels/992359628979568762/1148755392638234697/1148821863749931008
                     forward_segment_count  = self.trainer.strategy.reduce(torch.Tensor([segment_count]).to(torch.int), reduce_op="max")
-                    
+
                     # Convert to int, if its a torch tensor
                     if isinstance(forward_segment_count, torch.Tensor):
                         forward_segment_count = forward_segment_count.item()
