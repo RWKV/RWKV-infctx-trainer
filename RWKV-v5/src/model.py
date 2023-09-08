@@ -324,8 +324,10 @@ class RWKV_TimeMix(JITModClass):
         # x = self.ln_x(x/self.head_size_divisor).view(B, TT, H*S)
         x = self.ln_x(x/8).view(B, TT, H*S)
 
-        return self.output(x), TimeMixState(x_l, s)
-
+        # Fix missing *g for output as per :
+        # https://github.com/RWKV/RWKV-infctx-trainer/commit/beb46d599042b77d53db9c7fa59a5966e7d33719#r126730367
+        return self.output(x)*g, TimeMixState(x_l, s)
+        
     def _forward_chunk(self, x, last_state: TimeMixState):
         # Forward sizings (Batch, Time/ContextLength, Tokens)
         B, TT, C = x.size()
