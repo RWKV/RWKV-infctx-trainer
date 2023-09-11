@@ -430,19 +430,6 @@ def prepare_data_static(**kargs):
             return True
         src_dataset = src_dataset.filter(dataset_filter, num_proc=num_cpus)
         
-        # Perform a sort by length
-        if kargs["sort_by_length"]:
-            sort_asc = kargs["sort_asc"]
-            
-            def add_length(example):
-                example["length"] = len(example['input_ids'])
-                return example
-            
-            src_dataset = src_dataset.map(add_length)
-            
-            # sort by length (not sorting the columns, just the rows)
-            src_dataset = src_dataset.sort("length", reverse=not sort_asc)
-
         # Perform rechunking after filtering, if source is not a "text" based 
         # dataset and text_rechunk_force is enabled
         if kargs["source"] != "text" and kargs["text_rechunk_size"] > 0 and kargs["text_rechunk_force"]:
@@ -462,6 +449,19 @@ def prepare_data_static(**kargs):
                 seed=42 #Fixed seed, to prevent train/test reshuffling between test runs
             )
         
+        # Perform a sort by length, only after test split
+        if kargs["sort_by_length"]:
+            sort_asc = kargs["sort_asc"]
+            
+            def add_length(example):
+                example["length"] = len(example['input_ids'])
+                return example
+            
+            src_dataset['train'] = src_dataset['train'].map(add_length)
+            
+            # sort by length (not sorting the columns, just the rows)
+            src_dataset['train'] = src_dataset['train'].sort("length", reverse=not sort_asc)
+
         # Save the dataset to disk
         src_dataset.save_to_disk(kargs["data_path"])
 
