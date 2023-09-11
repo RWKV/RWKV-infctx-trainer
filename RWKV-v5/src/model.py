@@ -209,7 +209,7 @@ class RWKV_TimeMix(JITModClass):
         self.n_head = n_head
         self.head_size = head_size
 
-        # Optimized chunk length is fixed for now
+        # Optimized timemix chunk length is fixed for now
         self.chunk_len = 512
         # assert ctx_len % self.chunk_len == 0
 
@@ -232,12 +232,16 @@ class RWKV_TimeMix(JITModClass):
             # fancy time_decay
             decay_speed = torch.ones(n_head)
             for h in range(n_head):
-                decay_speed[h] = -8 + 7 * (h / (n_head - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
+                decay_speed[h] = -6 + 5 * (h / (n_head - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
             self.time_decay = nn.Parameter(decay_speed)
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
-            # V5-R2 changes
-            self.time_faaaa = nn.Parameter(torch.ones(n_head) * 0.05)
+            # V5-R4 changes
+            # https://github.com/BlinkDL/RWKV-LM/commit/5aab658f945ba80745d36c2ab411fb43df3a74f9
+            tmp = torch.zeros(n_head)
+            for h in range(self.n_head):
+                tmp[h] = ratio_0_to_1 * (1 - (h / (n_head - 1)))
+            self.time_faaaa = nn.Parameter(tmp)
             # self.time_first = nn.Parameter(torch.ones(n_head) * (-3.0))
 
         # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
