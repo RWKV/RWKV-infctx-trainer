@@ -108,33 +108,6 @@ def prepare_data_static(**kargs):
             else:
                 raise ValueError('Dataset must have a "train" split')
 
-        # If an int value is used, it is interprated as document count
-        # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
-        if kargs["dataset_offset"] > 0 or kargs["dataset_length"] > 0:
-            # src dataset length
-            train_length = len(src_dataset["train"])
-
-            # Compute the offset position
-            offset_val = kargs["dataset_offset"]
-
-            # If offset is a float, we will use it as a percentage
-            if offset_val < 0:
-                offset_val = 0
-            if offset_val > 0 and offset_val < 1.0:
-                offset_val = int(train_length * offset_val) # Rounded down value
-
-            # Compute the length position
-            length_val = kargs["dataset_length"]
-            if length_val < 0:
-                length_val = train_length - offset_val
-            if length_val > 0 and length_val < 1.0:
-                length_val = int(train_length * length_val)
-            if length_val > (train_length - offset_val):
-                length_val = (train_length - offset_val)
-
-            # Get the subset of the dataset
-            src_dataset["train"] = src_dataset["train"].select(range(offset_val, offset_val + length_val))
-
         # Tokenizer vars
         hf_tokenizer = None
         world_tokenizer = None
@@ -461,6 +434,33 @@ def prepare_data_static(**kargs):
             
             # sort by length (not sorting the columns, just the rows)
             src_dataset['train'] = src_dataset['train'].sort("length", reverse=not sort_asc)
+
+        # If an int value is used, it is interprated as document count
+        # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
+        if kargs["dataset_offset"] > 0 or kargs["dataset_length"] > 0:
+            # src dataset length
+            train_length = len(src_dataset["train"])
+
+            # Compute the offset position
+            offset_val = kargs["dataset_offset"]
+
+            # If offset is a float, we will use it as a percentage
+            if offset_val < 0:
+                offset_val = 0
+            if offset_val > 0 and offset_val < 1.0:
+                offset_val = int(train_length * offset_val) # Rounded down value
+
+            # Compute the length position
+            length_val = kargs["dataset_length"]
+            if length_val < 0:
+                length_val = train_length - offset_val
+            if length_val > 0 and length_val < 1.0:
+                length_val = int(train_length * length_val)
+            if length_val > (train_length - offset_val):
+                length_val = (train_length - offset_val)
+
+            # Get the subset of the dataset
+            src_dataset["train"] = src_dataset["train"].select(range(offset_val, offset_val + length_val))
 
         # Save the dataset to disk
         src_dataset.save_to_disk(kargs["data_path"])
