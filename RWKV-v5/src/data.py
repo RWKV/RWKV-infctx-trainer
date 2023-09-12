@@ -332,7 +332,7 @@ def prepare_data_static(**kargs):
         src_dataset = src_dataset.remove_columns(list(dataset_features_to_remove.keys()))
         
         # Get the newline token
-        newline_tokenSet = encodeTokens(["\n"])
+        newline_tokenSet = encodeTokens(["\n\n"])
 
         # See if rechunking is needed, this is useful mostly for "text" based datasets
         # where we would need to split them into "digestable" context length sizes 
