@@ -505,8 +505,8 @@ class RWKVDataModule(LightningDataModule):
         sort_asc: bool = True,
 
         # Dataset offset and limit controls
-        dataset_offset: int = -1,
-        dataset_length: int = -1,
+        dataset_offset: float = -1,
+        dataset_length: float = -1,
         
         # Custom 'text' column to support, mostly used for dataset where the 
         # desired train data is in another column (eg. 'code')
