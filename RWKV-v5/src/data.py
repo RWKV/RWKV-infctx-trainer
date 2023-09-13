@@ -332,7 +332,8 @@ def prepare_data_static(**kargs):
         src_dataset = src_dataset.remove_columns(list(dataset_features_to_remove.keys()))
         
         # Get the newline token
-        newline_tokenSet = encodeTokens(["\n\n"])
+        endOfDoc_tokenSet = encodeTokens(["\n"])
+        endOfDoc_tokenSet["input_ids"][0][0] = 0
 
         # See if rechunking is needed, this is useful mostly for "text" based datasets
         # where we would need to split them into "digestable" context length sizes 
@@ -351,9 +352,9 @@ def prepare_data_static(**kargs):
                 # Get the respective values and push them to the 
                 # raw value array, effectively merging the arrays together
                 # with the newline token in between
-                full_input_ids += x["input_ids"][i] + newline_tokenSet["input_ids"][0]
-                full_token_type_ids += x["token_type_ids"][i] + newline_tokenSet["token_type_ids"][0]
-                full_attention_mask += x["attention_mask"][i] + newline_tokenSet["attention_mask"][0]
+                full_input_ids += x["input_ids"][i] + endOfDoc_tokenSet["input_ids"][0]
+                full_token_type_ids += x["token_type_ids"][i] + endOfDoc_tokenSet["token_type_ids"][0]
+                full_attention_mask += x["attention_mask"][i] + endOfDoc_tokenSet["attention_mask"][0]
             
             # Total length, and sample count
             # note that thte "remainder" will be discarded
@@ -427,13 +428,13 @@ def prepare_data_static(**kargs):
             sort_asc = kargs["sort_asc"]
             
             def add_length(example):
-                example["length"] = len(example['input_ids'])
+                example["input_length"] = len(example['input_ids'])
                 return example
             
-            src_dataset['train'] = src_dataset['train'].map(add_length)
+            src_dataset['train'] = src_dataset['train'].map(add_length, batched=False, num_proc=num_cpus)
             
             # sort by length (not sorting the columns, just the rows)
-            src_dataset['train'] = src_dataset['train'].sort("length", reverse=not sort_asc)
+            src_dataset['train'] = src_dataset['train'].sort("input_length", reverse=not sort_asc)
 
         # If an int value is used, it is interprated as document count
         # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
