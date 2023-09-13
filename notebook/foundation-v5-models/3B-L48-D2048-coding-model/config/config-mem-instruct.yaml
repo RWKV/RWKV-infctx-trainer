@@ -57,7 +57,7 @@ trainer:
       # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
       # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
       # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
-      every_n_train_steps: 25
+      every_n_train_steps: 250
       every_n_epochs: null
       save_on_train_epoch_end: true
       train_time_interval: null
@@ -139,7 +139,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/picocreator/experiment/rwkv-x-exp/memory/
+  data_path: ../datapath/memory-tune/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -158,7 +158,7 @@ data:
 
   # Use data_dir, if you are using source=text/json/etc
   # this should be relative to the trainer script path
-  source_data_dir: ../notebook/experiment/rwkv-x-exp/dataset/
+  source_data_dir: ../dataset/memory-tune/
 
   # After loading the dataset, split out test data used for validation, 
   # This process is skipped if the dataset includes a test split
