@@ -5,7 +5,7 @@ The general design of this model, is the 1.5B model upsized to 3B, with extended
 It generally has the following phases
 
 - enwiki_100k
-- memory tuning (2 parts)
+- memory tuning (2 stages)
 - slimpajama
 - starcoder
 
