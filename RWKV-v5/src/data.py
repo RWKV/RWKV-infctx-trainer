@@ -8,7 +8,6 @@ from datasets import load_from_disk, load_dataset, Dataset
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
 num_cpus = cpu_count()
-num_workers = cpu_count() if cpu_count() < 8 else 8
 
 # Get the script directory
 import os
@@ -386,12 +385,6 @@ def prepare_data_static(**kargs):
             }
             return ret
 
-        # Perform rechunking if needed for "text" based datasets
-        if kargs["source"] == "text" and kargs["text_rechunk_size"] > 0:
-            src_dataset = src_dataset.map(rechunk_text, batched=True, 
-                                        batch_size=kargs["text_rechunk_size"]*10,
-                                        num_proc=num_cpus)
-        
         # Remove empty datasets (it causes an error otherwise)
         # and perform min/max length filtering (if configured)
         def dataset_filter(x):
@@ -404,6 +397,12 @@ def prepare_data_static(**kargs):
                 return False
             return True
         src_dataset = src_dataset.filter(dataset_filter, num_proc=num_cpus)
+        
+        # Perform rechunking if needed for "text" based datasets
+        if kargs["source"] == "text" and kargs["text_rechunk_size"] > 0 and kargs["text_rechunk_auto"]:
+            src_dataset = src_dataset.map(rechunk_text, batched=True, 
+                                        batch_size=kargs["text_rechunk_size"]*10,
+                                        num_proc=num_cpus)
         
         # Perform rechunking after filtering, if source is not a "text" based 
         # dataset and text_rechunk_force is enabled
@@ -485,6 +484,7 @@ class RWKVDataModule(LightningDataModule):
         # Text rechunking size
         text_rechunk_size: int = 4096,
         text_rechunk_force: bool = False,
+        text_rechunk_auto: bool = True,
         # ---
         # Tokenizer settings
         # ---
@@ -505,6 +505,9 @@ class RWKVDataModule(LightningDataModule):
         # Sort by length
         sort_by_length: bool = False,
         sort_asc: bool = True,
+
+        # Dataloader shuffling, you should disable this if you are using "sort_by_length"
+        training_dataloader_shuffle: bool = True,
 
         # Dataset offset and limit controls
         dataset_offset: float = -1,
@@ -534,6 +537,7 @@ class RWKVDataModule(LightningDataModule):
         super().__init__()
         self.data_path = data_path
         self._loaded_dataset = None
+        self.training_dataloader_shuffle = training_dataloader_shuffle
 
         # Log to wandb
         if wandb.run is not None:
@@ -558,11 +562,23 @@ class RWKVDataModule(LightningDataModule):
         dataset = self._loaded_dataset['train'];
         sampler = DistributedSampler(
             dataset, 
-            shuffle=False, 
+            shuffle=self.training_dataloader_shuffle, 
             num_replicas=self.trainer.world_size,
             rank=self.trainer.global_rank,
         )
-        return DataLoader(dataset, num_workers=num_workers, batch_size=1, sampler=sampler)
+        return DataLoader(
+            dataset, 
+            sampler=sampler,
+            shuffle=False,
+            # 4 prefetch workers per GPU
+            num_workers=4, 
+            # Prefetching 8 batches
+            prefetch_factor=8,
+            # Of batch size 1 datasets
+            batch_size=1, 
+            # Pinned in GPU memory
+            pin_memory=True
+        )
     
     # Return the validation dataloader
     def val_dataloader(self):
@@ -574,4 +590,16 @@ class RWKVDataModule(LightningDataModule):
             num_replicas=self.trainer.world_size,
             rank=self.trainer.global_rank,
         )
-        return DataLoader(dataset, num_workers=num_workers, batch_size=1, sampler=sampler)
+        return DataLoader(
+            dataset, 
+            sampler=sampler,
+            shuffle=False,
+            # 4 prefetch workers per GPU
+            num_workers=4, 
+            # Prefetching 8 batches
+            prefetch_factor=8,
+            # Of batch size 1 datasets
+            batch_size=1, 
+            # Pinned in GPU memory
+            pin_memory=True
+        )
