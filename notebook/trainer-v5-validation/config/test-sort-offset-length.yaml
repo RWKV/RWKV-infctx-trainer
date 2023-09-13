@@ -237,7 +237,7 @@ data:
   # Offset the dataset by a certain number of datasamples
   # Floating point values, means percentage offset/length
   dataset_offset: 0.2
-  dataset_length: 0.4
+  dataset_length: 0.1
 
   # Apply text rechunk to the dataset, even if its not a 'text' source
   # This is done only after dataset filtering, and if source is not 'text'

@@ -483,8 +483,8 @@ class RWKVDataModule(LightningDataModule):
         test_split_shuffle: bool = False,
         # Text rechunking size
         text_rechunk_size: int = 4096,
-        text_rechunk_force: bool = False,
         text_rechunk_auto: bool = True,
+        text_rechunk_force: bool = False,
         # ---
         # Tokenizer settings
         # ---
@@ -506,8 +506,8 @@ class RWKVDataModule(LightningDataModule):
         sort_by_length: bool = False,
         sort_asc: bool = True,
 
-        # Dataloader shuffling, you should disable this if you are using "sort_by_length"
-        training_dataloader_shuffle: bool = True,
+        # Dataloader shuffling, disabled if "sort_by_length" is enabled
+        training_dataloader_shuffle_auto: bool = True,
 
         # Dataset offset and limit controls
         dataset_offset: float = -1,
@@ -537,7 +537,8 @@ class RWKVDataModule(LightningDataModule):
         super().__init__()
         self.data_path = data_path
         self._loaded_dataset = None
-        self.training_dataloader_shuffle = training_dataloader_shuffle
+        self.sort_by_length = sort_by_length
+        self.training_dataloader_shuffle_auto = training_dataloader_shuffle_auto
 
         # Log to wandb
         if wandb.run is not None:
@@ -562,7 +563,7 @@ class RWKVDataModule(LightningDataModule):
         dataset = self._loaded_dataset['train'];
         sampler = DistributedSampler(
             dataset, 
-            shuffle=self.training_dataloader_shuffle, 
+            shuffle=self.training_dataloader_shuffle_auto and not self.sort_by_length,
             num_replicas=self.trainer.world_size,
             rank=self.trainer.global_rank,
         )
