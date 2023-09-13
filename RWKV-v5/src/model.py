@@ -1318,18 +1318,20 @@ class RWKV(L.LightningModule):
                 gc.collect()
                 # torch.cuda.empty_cache()
 
-        # Wandb logging only, if an active run exists
-        if wandb.run is not None:
+        # Wandb logging only, if an active run exists (only applies for training)
+        if wandb.run is not None and is_training_run:
             global_rank = self.global_rank
             global_device_count = self.trainer.num_devices * self.trainer.num_nodes
+
+            # Log the line values
             wandb.log({
-                'substep': batch_idx * global_device_count + global_rank,
-                'batchidx': batch_idx,
                 'global_rank': global_rank, 
                 'real_ctx_len': T, 
                 'train/loss': total_loss,
+                'substep': (self.global_step * global_device_count + global_rank),
                 'trainer/global_step':self.global_step,
-                'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr']
+                'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
+                'batchidx': batch_idx
             })
 
         return total_loss
