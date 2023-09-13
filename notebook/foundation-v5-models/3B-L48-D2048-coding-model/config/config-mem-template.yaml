@@ -4,7 +4,7 @@ trainer:
   # Configure the number of GPU, avaliable on your machine
   accelerator: gpu
   devices: auto
-  num_nodes: 64
+  num_nodes: 256
 
   # Configure the deepspeed strategy
   strategy: deepspeed_stage_1
@@ -88,7 +88,7 @@ trainer:
   #
   # You are also recommended to configure this to a large enough number to fully utilize
   # your GPU processing time %, and avoid idle time for the GPU between batches
-  target_batch_size: 512
+  target_batch_size: 2048
 
 ########################################
 ## Training model settings
@@ -117,7 +117,7 @@ model:
   #
   # NOTE: lr_final / lr_period does not work with warmup_steps
   #       and will be ignored (or replaced) with the warmup_steps logic instead
-  lr_final: 4e-4
+  lr_final: 2e-4
 
   # Number of epoch to reduce the learning rate from lr_init to lr_final
   #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)

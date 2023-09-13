@@ -4,7 +4,7 @@ trainer:
   # Configure the number of GPU, avaliable on your machine
   accelerator: gpu
   devices: auto
-  num_nodes: 64
+  num_nodes: 256
 
   # Configure the deepspeed strategy, 
   strategy: deepspeed_stage_1
@@ -88,7 +88,7 @@ trainer:
   #
   # You are also recommended to configure this to a large enough number to fully utilize
   # your GPU processing time %, and avoid idle time for the GPU between batches
-  target_batch_size: 512
+  target_batch_size: 2048
 
 ########################################
 ## Training model settings
