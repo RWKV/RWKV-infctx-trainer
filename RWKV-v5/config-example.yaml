@@ -189,7 +189,7 @@ trainer:
   # deterministic: null
   # benchmark: null
   # inference_mode: true
-  # use_distributed_sampler: true
+  # use_distributed_sampler: false
   # profiler: null
   # detect_anomaly: false
   # barebones: false

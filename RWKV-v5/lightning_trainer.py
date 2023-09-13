@@ -244,7 +244,11 @@ def cli_main():
             # num_sanity_val_steps is disabled, as they seem
             # to hang during initial sanity check for unknown reasons
             # for larger model sizes randomly on multi-gpus
-            "num_sanity_val_steps": 0
+            "num_sanity_val_steps": 0,
+
+            # Disable default distributed sampler, 
+            # so that we can control shuffle logic on our side instead
+            "use_distributed_sampler": False
         },
         seed_everything_default=True,
         args=PYTORCH_CLI_ARGV

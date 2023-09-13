@@ -1,6 +1,7 @@
 from lightning import LightningDataModule
 
 from torch.utils.data import DataLoader
+from torch.utils.data import DistributedSampler
 
 import wandb
 from datasets import load_from_disk, load_dataset, Dataset
@@ -554,9 +555,23 @@ class RWKVDataModule(LightningDataModule):
     # Return the train dataloader
     def train_dataloader(self):
         self._internal_setup()
-        return DataLoader(self._loaded_dataset['train'], num_workers=num_workers)
+        dataset = self._loaded_dataset['train'];
+        sampler = DistributedSampler(
+            dataset, 
+            shuffle=False, 
+            num_replicas=self.trainer.world_size,
+            rank=self.trainer.global_rank,
+        )
+        return DataLoader(dataset, num_workers=num_workers, batch_size=1, sampler=sampler)
     
     # Return the validation dataloader
     def val_dataloader(self):
         self._internal_setup()
-        return DataLoader(self._loaded_dataset['test'], num_workers=num_workers)
+        dataset = self._loaded_dataset['test'];
+        sampler = DistributedSampler(
+            dataset, 
+            shuffle=False, 
+            num_replicas=self.trainer.world_size,
+            rank=self.trainer.global_rank,
+        )
+        return DataLoader(dataset, num_workers=num_workers, batch_size=1, sampler=sampler)
