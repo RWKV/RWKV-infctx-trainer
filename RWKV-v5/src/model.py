@@ -4,6 +4,7 @@
 
 import gc, math, os
 from random import randint
+import time
 from typing import List, Optional
 
 import numpy as np
@@ -990,6 +991,13 @@ class RWKV(L.LightningModule):
     # Main compute_loss function, this is called by the trainer loop
     #
     def compute_loss(self, batch, batch_idx, is_training_run: bool):
+
+        # Used for token/second performance tracking
+        if self._counting_tokens is None or batch_idx == 0:
+            self._counting_tokens = 0
+        if self._counting_time_start is None or batch_idx == 0:
+            self._counting_time_start = time.time()
+            
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
         ori_seq_mask = batch['attention_mask']
@@ -1323,11 +1331,16 @@ class RWKV(L.LightningModule):
             global_rank = self.global_rank
             global_device_count = self.trainer.num_devices * self.trainer.num_nodes
 
+            # Increment the counting tokens, and log it accordingly
+            self._counting_tokens += T
+
             # Log the line values
             wandb.log({
                 'global_rank': global_rank, 
                 'real_ctx_len': T, 
                 'train/loss': total_loss,
+                f'perf/tokens_total/gpu{global_rank}': self._counting_tokens,
+                f'perf/tokens_per_sec/gpu{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
                 'substep': (batch_idx * global_device_count + global_rank),
                 'trainer/global_step':self.global_step,
                 'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
