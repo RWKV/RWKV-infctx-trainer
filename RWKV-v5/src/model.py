@@ -1328,7 +1328,7 @@ class RWKV(L.LightningModule):
                 'global_rank': global_rank, 
                 'real_ctx_len': T, 
                 'train/loss': total_loss,
-                'substep': (self.global_step * global_device_count + global_rank),
+                'substep': (batch_idx * global_device_count + global_rank),
                 'trainer/global_step':self.global_step,
                 'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
                 'batchidx': batch_idx
