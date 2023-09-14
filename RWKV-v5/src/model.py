@@ -671,6 +671,10 @@ class RWKV(L.LightningModule):
             del model_weights
             gc.collect()
 
+        # Training based timings to track, and initialize
+        self._counting_tokens = 0
+        self._counting_time_start = 0
+
     def configure_optimizers(self):
         if self.bptt_learning == False:
             if self.deepspeed_stage >= 2 or self.deepspeed_offload:
