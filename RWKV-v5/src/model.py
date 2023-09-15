@@ -266,7 +266,7 @@ class RWKV_TimeMix(JITModClass):
 
         r = self.receptance(xr).view(B, TT, self.n_head, self.head_size).transpose(1, 2)            # BTC -> BHTS
         k = self.key(xk).view(B, TT, self.n_head, self.head_size).transpose(1, 2).transpose(-2, -1) # BTC -> BHTS -> BHST
-        v = self.value(xv).view(B, TT, self.n_head, -1).transpose(1, 2)                             # BTC -> BHTS
+        v = F.silu(self.value(xv)).view(B, TT, self.n_head, -1).transpose(1, 2)                             # BTC -> BHTS
         g = F.silu(self.gate(xg))
 
         return r, k, v, g
