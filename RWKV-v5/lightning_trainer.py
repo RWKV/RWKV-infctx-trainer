@@ -134,17 +134,40 @@ def process_auto_resume_ckpt():
     # Handle auto_resume_ckpt_dir if its true or auto
     if auto_resume_ckpt_dir.lower() == "true" or auto_resume_ckpt_dir.lower() == "auto":
         print(f"[RWKV.lightning_trainer.py] Extracting checkpoint dir from config, for --auto-resume-ckpt-dir={auto_resume_ckpt_dir}")
-        auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", [{}])[0].get("init_args", {}).get("dirpath", None)
+        #print(LIGHTNING_CONFIG)
+        #auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", [{}])[0].get("init_args", {}).get("dirpath", None)
+        # I have to change this becose of this error:
+	# KeyError: 0
+    	# auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", [{}])[0].get("init_args", {}).get("dirpath", None)
+                           #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
+	# KeyError: 0
+        auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", {}).get("init_args", {}).get("dirpath", None)
+
         assert auto_resume_ckpt_dir is not None, "Failed to extract checkpoint dir from config, for --auto-resume-ckpt-dir=True"
         
     # Log the setting flag
     print(f"[RWKV.lightning_trainer.py] Enabling --auto-resume-ckpt-dir={auto_resume_ckpt_dir} --auto-resume-ckpt-mode={auto_resume_ckpt_mode}")
 
     # Check if the --auto-resume-ckpt-dir exists, if it does not initialize it and return
+    
+    # I have to change this because this error
+    # RWKV-v5/lightning_trainer.py", line 147, in process_auto_resume_ckpt
+    # os.makedirs(auto_resume_ckpt_dir)
+    # File "<frozen os>", line 225, in makedirs
+    # FileExistsError: [Errno 17] File exists: '../checkpoint/V5-ref-model-enwiki-4k/'	 	
     if not os.path.exists(auto_resume_ckpt_dir):
-        os.makedirs(auto_resume_ckpt_dir)
-        print(f"[RWKV.lightning_trainer.py] Created '{auto_resume_ckpt_dir}' directory (did not exist previously)")
+        try:
+            os.makedirs(auto_resume_ckpt_dir)
+            print(f"[RWKV.lightning_trainer.py] Created '{auto_resume_ckpt_dir}' directory (did not exist previously)")
+        except FileExistsError:
+            print(f"[RWKV.lightning_trainer.py] Directory '{auto_resume_ckpt_dir}' already exists.")
         return
+
+
+  #  if not os.path.exists(auto_resume_ckpt_dir):
+  #      os.makedirs(auto_resume_ckpt_dir)
+  #      print(f"[RWKV.lightning_trainer.py] Created '{auto_resume_ckpt_dir}' directory (did not exist previously)")
+  #      return
     
     # Get the list of directories in the --auto-resume-ckpt-dir
     auto_resume_ckpt_dir_list = os.listdir(auto_resume_ckpt_dir)
