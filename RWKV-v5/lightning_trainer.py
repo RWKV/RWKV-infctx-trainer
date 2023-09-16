@@ -134,27 +134,24 @@ def process_auto_resume_ckpt():
     # Handle auto_resume_ckpt_dir if its true or auto
     if auto_resume_ckpt_dir.lower() == "true" or auto_resume_ckpt_dir.lower() == "auto":
         print(f"[RWKV.lightning_trainer.py] Extracting checkpoint dir from config, for --auto-resume-ckpt-dir={auto_resume_ckpt_dir}")
-        #print(LIGHTNING_CONFIG)
-        #auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", [{}])[0].get("init_args", {}).get("dirpath", None)
-        # I have to change this becose of this error:
-	# KeyError: 0
-    	# auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", [{}])[0].get("init_args", {}).get("dirpath", None)
-                           #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^
-	# KeyError: 0
-        auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", {}).get("init_args", {}).get("dirpath", None)
 
+        # Handle the auto resume overwrite, via CLI
+        if CLI_ARGS_MAP["--trainer.callbacks.init_args.dirpath"] is not None:
+            auto_resume_ckpt_dir = CLI_ARGS_MAP["--trainer.callbacks.init_args.dirpath"]
+        else:
+            # Try to get as an object, then an object in an array
+            auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", {}).get("init_args", {}).get("dirpath", None)
+            if auto_resume_ckpt_dir is None:
+                auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", [{}])[0].get("init_args", {}).get("dirpath", None)
+
+        # Safety check on the dir
         assert auto_resume_ckpt_dir is not None, "Failed to extract checkpoint dir from config, for --auto-resume-ckpt-dir=True"
         
     # Log the setting flag
     print(f"[RWKV.lightning_trainer.py] Enabling --auto-resume-ckpt-dir={auto_resume_ckpt_dir} --auto-resume-ckpt-mode={auto_resume_ckpt_mode}")
 
     # Check if the --auto-resume-ckpt-dir exists, if it does not initialize it and return
-    
-    # I have to change this because this error
-    # RWKV-v5/lightning_trainer.py", line 147, in process_auto_resume_ckpt
-    # os.makedirs(auto_resume_ckpt_dir)
-    # File "<frozen os>", line 225, in makedirs
-    # FileExistsError: [Errno 17] File exists: '../checkpoint/V5-ref-model-enwiki-4k/'	 	
+    # In some rare cases, path can "not exists" but exists when "created" 	
     if not os.path.exists(auto_resume_ckpt_dir):
         try:
             os.makedirs(auto_resume_ckpt_dir)
