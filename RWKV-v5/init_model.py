@@ -8,7 +8,7 @@ def init_model(
         skip_if_exists=False, safe_init=False, emb_scale=0.0001
         # existing_model_path=None
         ):
-    # Insert your own function behavior here
+    # Log the parameters
     print(f"---- Initializing model ----")
     print(f'No of layers: {layers}')
     print(f'Embedding size: {embedding_size}')
