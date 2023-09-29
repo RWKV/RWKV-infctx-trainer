@@ -448,17 +448,19 @@ def prepare_data_static(**kargs):
             # If offset is a float, we will use it as a percentage
             if offset_val < 0:
                 offset_val = 0
-            if offset_val > 0 and offset_val < 1.0:
+            if offset_val > 0.0 and offset_val < 1.0:
                 offset_val = int(train_length * offset_val) # Rounded down value
+            else:
+                offset_val = int(offset_val) # Round to int
 
             # Compute the length position
             length_val = kargs["dataset_length"]
-            if length_val < 0:
+            if length_val < 0.0:
                 length_val = train_length - offset_val
-            if length_val > 0 and length_val < 1.0:
+            if length_val > 0.0 and length_val < 1.0:
                 length_val = int(train_length * length_val)
             if length_val > (train_length - offset_val):
-                length_val = (train_length - offset_val)
+                length_val = int(train_length - offset_val)
 
             # Get the subset of the dataset
             src_dataset["train"] = src_dataset["train"].select(range(offset_val, offset_val + length_val))
