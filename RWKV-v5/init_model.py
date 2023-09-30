@@ -5,7 +5,7 @@ from src.model import RWKV
 
 def init_model(
         layers, embedding_size, vocab_size, output_model_path, 
-        skip_if_exists=False, safe_init=False, emb_scale=0.0001
+        skip_if_exists=False, safe_init=True, emb_scale=0.0001
         # existing_model_path=None
         ):
     # Log the parameters
@@ -88,8 +88,7 @@ def init_model(
                 nn.init.orthogonal_(m[n], gain=gain * scale)
 
         # Ensure its mapped as a CPU & BF16
-        m[n] = m[n].cpu()
-        m[n] = m[n].bfloat16()
+        m[n] = m[n].cpu().bfloat16()
     
     # Save the model
     if safe_init:
