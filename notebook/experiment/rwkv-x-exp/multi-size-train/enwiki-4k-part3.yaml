@@ -192,7 +192,7 @@ data:
   text_rechunk_force: True
 
   # Offset and length of the dataset to use
-  dataset_offset: 0.5
+  dataset_offset: 0.75
   dataset_length: 0.25
 
   # Custom text column to use, useful for dataset with alternative training columns labels
