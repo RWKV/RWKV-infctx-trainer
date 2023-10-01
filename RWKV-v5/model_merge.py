@@ -1,7 +1,7 @@
 import argparse, math, os
 import torch.nn as nn
 import torch
-from src.model import RWKV 
+# from src.model import RWKV 
 
 def model_merge(
         baseline_model_path,
@@ -13,6 +13,13 @@ def model_merge(
         # The merging mode
         merge_mode="overwrite"
     ):
+
+    # Check for baseline / source model path exists
+    if not os.path.exists(baseline_model_path):
+        raise Exception(f"Baseline model path does not exist: {baseline_model_path}")
+    if not os.path.exists(source_model_path):
+        raise Exception(f"Source model path does not exist: {source_model_path}")
+
     # Log the parameters
     print(f"---- Merging model ----")
     print(f'Baseline model path: {baseline_model_path}')
@@ -51,6 +58,10 @@ def model_merge(
         # Operations that are handled if params does not exist in baseline model
         if n not in model_weights:
             print(f"Warning: {n} does not exist in baseline model, skipping")
+            continue
+
+        # Log the merge operation
+        print(f"Merging {n} ...")
 
         # Perform the simple overwrite operation
         if merge_mode == "overwrite":
