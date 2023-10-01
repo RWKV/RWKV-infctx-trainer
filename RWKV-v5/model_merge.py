@@ -63,7 +63,6 @@ def model_merge(
         # Ensure values are mapped to CPU & bf16
         model_weights[n] = model_weights[n].cpu().bfloat16()
 
-
     # Save the merged model
     if safe_merge:
         # Save as tmp file, then move to the output path
@@ -72,3 +71,32 @@ def model_merge(
     else:
         # Save directly
         torch.save(model_weights, output_model_path)
+
+def main():
+    parser = argparse.ArgumentParser(description='CLI tool for model merging')
+
+    # Optional args
+    parser.add_argument('--skip-if-exists', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Skip the merge if the model already exists, enables --safe-merge if set')
+    parser.add_argument('--safe-merge', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Merge in safe mode, where the model is first merged as a tmp file, before overwritting/moving to the output path')
+    parser.add_argument('--merge-mode', type=str, default="overwrite", help='The merge mode, either "overwrite" or "average"')
+
+    # Parse the args
+    parser.add_argument('baseline_model_path', type=str, help='Baseline model file path')
+    parser.add_argument('source_model_path', type=str, help='Source model file path')
+    parser.add_argument('output_model_path', type=str, default=None, help='Output model file path')
+
+    # Parse the args
+    args = parser.parse_args()
+
+    # Merge the model
+    model_merge(
+        args.baseline_model_path,
+        args.source_model_path,
+        args.output_model_path,
+        skip_if_exists=args.skip_if_exists,
+        safe_merge=args.safe_merge,
+        merge_mode=args.merge_mode
+    )
+
+if __name__ == "__main__":
+    main()
