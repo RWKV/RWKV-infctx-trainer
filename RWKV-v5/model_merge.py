@@ -85,7 +85,7 @@ def model_merge(
             model_weights[n] = source_weights[n]
         elif merge_mode == "average":
             model_weights[n] = (model_weights[n] + source_weights[n]) / 2
-        elif model_merge == "layer_expansion":
+        elif merge_mode == "layer_expansion":
             # Layer expension mode, means we overwrite all layer except
             # the source last layer, which is moved to the model last layer instead
             #
