@@ -67,7 +67,7 @@ def model_merge(
         if merge_mode == "overwrite":
             model_weights[n] = source_weights[n]
         elif merge_mode == "average":
-            model_weights[n] = (model_weights[n] / 2 + source_weights[n] / 2)
+            model_weights[n] = (model_weights[n] + source_weights[n]) / 2
         else:
             raise Exception(f"Unknown merge mode: {merge_mode}")
         
