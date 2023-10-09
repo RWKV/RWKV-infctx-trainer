@@ -3,6 +3,21 @@ import torch.nn as nn
 import torch
 # from src.model import RWKV 
 
+# Extract the layer count given the model state
+# using the `blocks.X.*` format
+#
+# Note that this is 1 indexed,
+# While the block naming is 0 indexed
+def extract_layer_count(model_state):
+    max_layer=0
+    for n in model_state:
+        if n.startswith("blocks."):
+            layer = int(n.split(".")[1])
+            max_layer = max(max_layer, layer)
+    return max_layer+1
+
+
+# Perform the model merge accordingly
 def model_merge(
         baseline_model_path,
         source_model_path,
@@ -46,11 +61,13 @@ def model_merge(
     if not os.path.exists(parent_dir):
         os.makedirs(parent_dir)
     
-    # Load baseline model
+    # Load baseline and source models
     model_weights = torch.load(baseline_model_path, map_location='cpu')
-
-    # Load the source model
     source_weights = torch.load(source_model_path, map_location='cpu')
+
+    # Get the last layer ID for each model respecitvely
+    model_last_layer = extract_layer_count(model_weights) - 1
+    source_last_layer = extract_layer_count(source_weights) - 1
 
     # Iterate through each parameter group in the source model
     # and merge it into the baseline model, if it exists
@@ -68,6 +85,19 @@ def model_merge(
             model_weights[n] = source_weights[n]
         elif merge_mode == "average":
             model_weights[n] = (model_weights[n] + source_weights[n]) / 2
+        elif model_merge == "layer_expansion":
+            # Layer expension mode, means we overwrite all layer except
+            # the source last layer, which is moved to the model last layer instead
+            #
+            # we detrimine this by checking for *.layerID.* in the name
+            # and only move the last layer
+            if n.count(f".{source_last_layer}.") > 0:
+                # Rename to model last layer
+                new_n = n.replace(f".{source_last_layer}.", f".{model_last_layer}.")
+                model_weights[new_n] = source_weights[n]
+            else:
+                # Overwrite
+                model_weights[n] = source_weights[n]
         else:
             raise Exception(f"Unknown merge mode: {merge_mode}")
         
