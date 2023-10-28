@@ -1,5 +1,7 @@
 # RWKV Infinite Context trainer
 
+**IMPORTANT NOTE: The infctx trainer is broken for the current v5 r4 changes:** (which is what the 1b5 model is trained on)
+
 > If you are new to RWKV, it would be better to find out more about us via our wiki first here: https://wiki.rwkv.com/
 
 RWKV trainer with
