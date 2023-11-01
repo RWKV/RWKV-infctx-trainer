@@ -42,7 +42,7 @@ def is_torch_version_above(required_version):
 IS_TORCH_2_1 = is_torch_version_above("2.0.9999")
 
 # Get the JIT / torch compile option flags from the environment
-RWKV_JIT_ON        = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
+RWKV_JIT_ON        = os.getenv("RWKV_JIT_ON", "0").lower() in ("1", "true", "yes")
 RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
 RWKV_TORCH_RUN_MODE = None
 

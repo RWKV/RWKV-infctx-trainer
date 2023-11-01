@@ -978,6 +978,8 @@ class SimpleRWKV():
         # and set it to run as eval/inference mode
         self.model.to(device)
         self.model.eval()
+        self.model.float()
+        self.model.requires_grad_(False)
 
         # Get the model detected vocab size
         vocab_size = self.model.vocab_size
@@ -1134,6 +1136,7 @@ class SimpleRWKV():
 
         # For each token, process the state
         logits, stateObj = self.forward(enc, stateObj)
+        
 
         # # Garbage collect
         # gc.collect()
@@ -1142,6 +1145,8 @@ class SimpleRWKV():
         # Generate each token
         out_tokens = []
         for i in range(max_tokens):
+            logits[0] = -9999
+            print(logits)
             ttt = self.sample_logits(
                 logits, 
                 # prv_tokens=full_tokens,

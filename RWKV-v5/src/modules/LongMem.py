@@ -4,8 +4,10 @@ from .States import TimeMixState
 
 wkv5_cuda = None
 class RWKV_TimeMix(JITModClass):
+    global wkv5_cuda
 
     def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att):
+        global wkv5_cuda
         super().__init__()
         
         self.dim_att = dim_att
@@ -52,13 +54,15 @@ class RWKV_TimeMix(JITModClass):
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
         self.key = nn.Linear(n_embd, dim_att, bias=False)
         self.value = nn.Linear(n_embd, dim_att, bias=False)
+        self.gate = nn.Linear(n_embd, n_embd, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
         self.ln_x = nn.GroupNorm(n_head, dim_att)
 
     # this is based on jit_func(self,x)
         if wkv5_cuda is None:
             from torch.utils.cpp_extension import load
-            wkv5_cuda = load(name="wkv5", sources=["./src/modules/cuda/wkv5.cpp", f"./src/modules/cuda/wkv5.cu"],
+            loc = __file__[:__file__.rindex('/')] + '/'
+            wkv5_cuda = load(name="wkv5", sources=[loc+"cuda/wkv.cpp", loc + f"cuda/wkv.cu"],
                             verbose=True, extra_cuda_cflags=["-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization", f"-D_N_={head_size}"])
                 
         class WKV_5(torch.autograd.Function):
@@ -140,7 +144,7 @@ class RWKV_TimeMix(JITModClass):
     def jit_func(self, x, state):
         B, T, C = x.size()
 
-        xx = state
+        xx = torch.cat((state.unsqueeze(1).clone(),x[:,:-1]),1)
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
@@ -151,13 +155,13 @@ class RWKV_TimeMix(JITModClass):
         v = self.value(xv)
         g = F.silu(self.gate(xg))
 
-        return r, k, v, g, xx
+        return r, k, v, g, x[:,-1].clone()
 
     def jit_func_2(self, x, g):
         B, T, C = x.size()
         x = x.view(B * T, C)
         
-        x = self.ln_x(x / self.head_size_divisor).view(B, T, C)
+        x = self.ln_x(x / 8).view(B, T, C)
         x = self.output(x * g)
         return x
 
@@ -169,17 +173,19 @@ class RWKV_TimeMix(JITModClass):
 
         if self.training:
             state = last_state.wkv_state
+            
             x = self.WKV_5.apply(B, T, C, H, r, k, v, self.time_decay, self.time_faaaa)
-            at = k.view(B,T,H,C//H,1)@v.view(B,T,H,1,C//H)
+            at = k.reshape(B,T,H,-1,1)@v.reshape(B,T,H,1,-1)
             p0 = torch.arange(T-1, -1, -1, device=r.device, dtype=torch.float32)
-            p1 = self.time_decay.reshape(1,1, H, C//H, 1).repeat(1, T, 1, 1, 1).pow(p0.reshape(1, T, 1, 1, 1))    
+            p1 = self.time_decay.float().exp().neg().exp().reshape(1,1, H, C//H, 1).repeat(1, T, 1, 1, 1).pow(p0.reshape(1, T, 1, 1, 1))    
             # state at final step
-            wkvstate = (at*p1).sum(1) + state*(self.time_decay.reshape(H, C//H).pow(T))
-            # wkvstate = 
+            wkvstate = (at*p1).sum(1) + state*(self.time_decay.time_decay.float().exp().neg().exp().reshape(1,H, C//H,-1).pow(T))
+            
         else:
-            state = wkvstate.to(x.device, torch.float32)
-            x, wkvstate = self.RWKV_5.apply(B, T, C, H, state, r.float(), k.float(), v.float(), self.time_decay.float().exp().neg().exp().reshape(self.n_head,-1,1), self.time_faaaa.float().reshape(self.n_head, -1, 1))
+            state = last_state.wkv_state.to(x.device, torch.float32).reshape(H,C//H,C//H)
+           
+            x, wkvstate = self.RWKV_5.apply(B, T, C, H, state, r.float(), k.float(), v.float(), self.time_decay.double().exp().neg().exp().float().reshape(self.n_head,-1,1), self.time_faaaa.float().reshape(self.n_head, -1, 1))
             
         x = x.reshape(B, T, C)
         out = self.jit_func_2(x.to(g.dtype), g)
-        return out, TimeMixState(xx, wkvstate)
+        return out, TimeMixState(xx, wkvstate.reshape(*last_state.wkv_state.shape))
