@@ -165,30 +165,26 @@ class RWKV_TimeMix(JITModClass):
         x = self.output(x * g)
         return x
     
+    @torch.compile
+    def cumsumwdecay(self,x,a,d,dim=1):
+        x = torch.cat((a.unsqueeze(dim),x),dim)
+        for i in range(1,x.shape[dim]):
+            x[:,i] = x[:,i] + x[:,i-1]*d
+
+        return x
+    
     def torchwise(self, B, T, C, H, s, r, k, v, w, u):
         out = torch.empty((B, T, H, C//H), dtype=r.dtype, device=r.device)
-        p0 = torch.arange(T-1, -1, -1, device=r.device, dtype=torch.float32)
-        p1 = w.reshape(1,1, H, C//H, 1).repeat(1, T, 1, 1, 1).pow(p0.reshape(1, T, 1, 1, 1))    
         at = k@v
-        att = at*u
-        # state at last position
-        ss = (at*p1).sum(1) + s*(w.pow(T))
+        
+        ss = self.cumsumwdecay(at,s,w)
 
-        for t in range(T):
-   
-            
-            premat = (att[:,t] + s)
-            # print(premat.shape, rt.shape)        
-            rt = r[:,:,t:t+1,:].float()
-            
-            out[:,t] = ((rt @ premat)).reshape(out[:,t].shape)
-            
-            s = at[:,t] + w * s
+        att = at*u + ss[:,:-1]
 
-          
-
+        out = r @ att
+            
         out = out.reshape(B, T, C)  
-        return out, ss
+        return out, ss[:,-1]
 
     def forward(self, x, last_state:TimeMixState):
         B, T, C = x.size()
@@ -208,7 +204,7 @@ class RWKV_TimeMix(JITModClass):
             
         # else:
         state = last_state.wkv_state.to(x.device, torch.float32)
-        x, wkvstate = self.torchwise(B, T, C, H, state, r.view(B, T, H, C//H).transpose(1, 2), k.view(B, T, H, C//H, 1), v.view(B, T, H, 1, C//H), self.time_decay.double().exp().neg().exp().reshape(1,self.n_head,-1,1).to(x.dtype), self.time_faaaa.reshape(1,1,self.n_head, -1, 1).to(x.dtype))
+        x, wkvstate = self.torchwise(B, T, C, H, state, r.view(B, T, H, 1, C//H), k.view(B, T, H, C//H, 1), v.view(B, T, H, 1, C//H), self.time_decay.double().exp().neg().exp().reshape(1,self.n_head,-1,1).to(x.dtype), self.time_faaaa.reshape(1,1,self.n_head, -1, 1).to(x.dtype))
 
         x = x.reshape(B, T, C)
         out = self.jit_func_2(x.to(g.dtype), g)
