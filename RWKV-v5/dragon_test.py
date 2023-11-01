@@ -24,6 +24,7 @@ IS_REF_RUN = False
 if DEVICE == "ref":
     IS_REF_RUN = True
 
+
 if DEVICE is None:
     DEVICE = 'cuda'
 
@@ -40,7 +41,7 @@ else:
 
 # REF run overwrite
 if IS_REF_RUN:
-    DEVICE = "cpu"
+    DEVICE = "cuda"
 
 # # Tokenizer settings
 # TOKENIZER="neox"

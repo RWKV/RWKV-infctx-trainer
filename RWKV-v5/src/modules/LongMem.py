@@ -62,8 +62,8 @@ class RWKV_TimeMix(JITModClass):
         if wkv5_cuda is None:
             from torch.utils.cpp_extension import load
             loc = __file__[:__file__.rindex('/')] + '/'
-            wkv5_cuda = load(name="wkv5", sources=[loc+"cuda/wkv.cpp", loc + f"cuda/wkv.cu"],
-                            verbose=True, extra_cuda_cflags=["-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization", f"-D_N_={head_size}"])
+            # wkv5_cuda = load(name="wkv5", sources=[loc+"cuda/wkv.cpp", loc + f"cuda/wkv.cu"],
+            #                 verbose=True, extra_cuda_cflags=["-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3", "--extra-device-vectorization", f"-D_N_={head_size}"])
                 
         class WKV_5(torch.autograd.Function):
         
@@ -164,6 +164,31 @@ class RWKV_TimeMix(JITModClass):
         x = self.ln_x(x / 8).view(B, T, C)
         x = self.output(x * g)
         return x
+    
+    def torchwise(self, B, T, C, H, s, r, k, v, w, u):
+        out = torch.empty((B, T, H, C//H), dtype=r.dtype, device=r.device)
+        p0 = torch.arange(T-1, -1, -1, device=r.device, dtype=torch.float32)
+        p1 = w.reshape(1,1, H, C//H, 1).repeat(1, T, 1, 1, 1).pow(p0.reshape(1, T, 1, 1, 1))    
+        at = k@v
+        att = at*u
+        # state at last position
+        ss = (at*p1).sum(1) + s*(w.pow(T))
+
+        for t in range(T):
+   
+            
+            premat = (att[:,t] + s)
+            # print(premat.shape, rt.shape)        
+            rt = r[:,:,t:t+1,:].float()
+            
+            out[:,t] = ((rt @ premat)).reshape(out[:,t].shape)
+            
+            s = at[:,t] + w * s
+
+          
+
+        out = out.reshape(B, T, C)  
+        return out, ss
 
     def forward(self, x, last_state:TimeMixState):
         B, T, C = x.size()
@@ -171,21 +196,20 @@ class RWKV_TimeMix(JITModClass):
 
         r, k, v, g, xx = self.jit_func(x, last_state.shift_state)
 
-        if self.training:
-            state = last_state.wkv_state
+        # if self.training:
+        #     state = last_state.wkv_state
             
-            x = self.WKV_5.apply(B, T, C, H, r, k, v, self.time_decay, self.time_faaaa)
-            at = k.reshape(B,T,H,-1,1)@v.reshape(B,T,H,1,-1)
-            p0 = torch.arange(T-1, -1, -1, device=r.device, dtype=torch.float32)
-            p1 = self.time_decay.float().exp().neg().exp().reshape(1,1, H, C//H, 1).repeat(1, T, 1, 1, 1).pow(p0.reshape(1, T, 1, 1, 1))    
-            # state at final step
-            wkvstate = (at*p1).sum(1) + state*(self.time_decay.time_decay.float().exp().neg().exp().reshape(1,H, C//H,-1).pow(T))
+        #     x = self.WKV_5.apply(B, T, C, H, r, k, v, self.time_decay, self.time_faaaa)
+        #     at = k.reshape(B,T,H,-1,1)@v.reshape(B,T,H,1,-1)
+        #     p0 = torch.arange(T-1, -1, -1, device=r.device, dtype=torch.float32)
+        #     p1 = self.time_decay.float().exp().neg().exp().reshape(1,1, H, C//H, 1).repeat(1, T, 1, 1, 1).pow(p0.reshape(1, T, 1, 1, 1))    
+        #     # state at final step
+        #     wkvstate = (at*p1).sum(1) + state*(self.time_decay.time_decay.float().exp().neg().exp().reshape(1,H, C//H,-1).pow(T))
             
-        else:
-            state = last_state.wkv_state.to(x.device, torch.float32).reshape(H,C//H,C//H)
-           
-            x, wkvstate = self.RWKV_5.apply(B, T, C, H, state, r.float(), k.float(), v.float(), self.time_decay.double().exp().neg().exp().float().reshape(self.n_head,-1,1), self.time_faaaa.float().reshape(self.n_head, -1, 1))
-            
+        # else:
+        state = last_state.wkv_state.to(x.device, torch.float32)
+        x, wkvstate = self.torchwise(B, T, C, H, state, r.view(B, T, H, C//H).transpose(1, 2), k.view(B, T, H, C//H, 1), v.view(B, T, H, 1, C//H), self.time_decay.double().exp().neg().exp().reshape(1,self.n_head,-1,1).to(x.dtype), self.time_faaaa.reshape(1,1,self.n_head, -1, 1).to(x.dtype))
+
         x = x.reshape(B, T, C)
         out = self.jit_func_2(x.to(g.dtype), g)
-        return out, TimeMixState(xx, wkvstate.reshape(*last_state.wkv_state.shape))
+        return out, TimeMixState(xx, wkvstate)
