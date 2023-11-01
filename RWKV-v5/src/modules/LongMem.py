@@ -1,7 +1,7 @@
 from .JitModClass import JITModClass, torch, nn, JITModMethod, F, TCompileMax
 from .States import TimeMixState
 # RWKV5 attention
-
+from .cumsumwithdecay.cumsumwithdecay import discounted_cumsum_left
 wkv5_cuda = None
 class RWKV_TimeMix(JITModClass):
     global wkv5_cuda
@@ -165,16 +165,26 @@ class RWKV_TimeMix(JITModClass):
         x = self.output(x * g)
         return x
     
+    
     # @torch.compile
     def cumsumwdecay(self,x,a,d,dim=1):
         x = torch.cat((a.unsqueeze(dim),x),dim)
-        out = torch.empty_like(x)
-        last = torch.zeros_like(x[:,0])
-        for i in torch.arange(x.shape[dim]):
-            last = x[:,i] + last*d
-            out[:,i] = last
 
-        return x
+        x = x.transpose(0,1)
+        T,*O = x.shape
+        x = x.reshape(T,-1)
+        d = d.reshape(self.n_head,-1,1).repeat(1,1,self.n_embd//self.n_head)
+        dd = d.reshape(-1)
+        dd = dd.repeat(x.shape[1]//dd.shape[0])
+        # print(dd.shape,x.shape)
+        return discounted_cumsum_left(x.transpose(0,1).float(),dd.float()).transpose(0,1).reshape(T,*O).transpose(0,1)
+        # out = torch.empty_like(x)
+        # last = torch.zeros_like(x[:,0])
+        # for i in torch.arange(x.shape[dim]):
+        #     last = x[:,i] + last*d
+        #     out[:,i] = last
+
+        # return out
     
     def torchwise(self, B, T, C, H, s, r, k, v, w, u):
         out = torch.empty((B, T, H, C//H), dtype=r.dtype, device=r.device)

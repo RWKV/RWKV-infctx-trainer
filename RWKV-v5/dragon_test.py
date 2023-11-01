@@ -41,7 +41,7 @@ else:
 
 # REF run overwrite
 if IS_REF_RUN:
-    DEVICE = "cuda"
+    DEVICE = "cpu"
 
 # # Tokenizer settings
 # TOKENIZER="neox"
