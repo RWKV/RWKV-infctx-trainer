@@ -166,29 +166,17 @@ class RWKV_TimeMix(JITModClass):
         return x
     
     def torchwise(self, B, T, C, H, s, r, k, v, w, u):
-        out = torch.empty((B, T, H, C//H), dtype=r.dtype, device=r.device)
-        p0 = torch.arange(T-1, -1, -1, device=r.device, dtype=torch.float32)
-        p1 = w.reshape(1,1, H, C//H, 1).repeat(1, T, 1, 1, 1).pow(p0.reshape(1, T, 1, 1, 1))    
+        
         at = k@v
-        att = at*u
-        # state at last position
-        ss = (at*p1).sum(1) + s*(w.pow(T))
-
+        out = (u*r)@at
+        
         for t in range(T):
    
+            out[:,t] += r[:,t] @ s
+            s *= w
+            s += at[:,t]
             
-            premat = (att[:,t] + s)
-            # print(premat.shape, rt.shape)        
-            rt = r[:,:,t:t+1,:].float()
-            
-            out[:,t] = ((rt @ premat)).reshape(out[:,t].shape)
-            
-            s = at[:,t] + w * s
-
-          
-
-        out = out.reshape(B, T, C)  
-        return out, ss
+        return out.reshape(B, T, C), s
 
     def forward(self, x, last_state:TimeMixState):
         B, T, C = x.size()
@@ -196,20 +184,9 @@ class RWKV_TimeMix(JITModClass):
 
         r, k, v, g, xx = self.jit_func(x, last_state.shift_state)
 
-        # if self.training:
-        #     state = last_state.wkv_state
-            
-        #     x = self.WKV_5.apply(B, T, C, H, r, k, v, self.time_decay, self.time_faaaa)
-        #     at = k.reshape(B,T,H,-1,1)@v.reshape(B,T,H,1,-1)
-        #     p0 = torch.arange(T-1, -1, -1, device=r.device, dtype=torch.float32)
-        #     p1 = self.time_decay.float().exp().neg().exp().reshape(1,1, H, C//H, 1).repeat(1, T, 1, 1, 1).pow(p0.reshape(1, T, 1, 1, 1))    
-        #     # state at final step
-        #     wkvstate = (at*p1).sum(1) + state*(self.time_decay.time_decay.float().exp().neg().exp().reshape(1,H, C//H,-1).pow(T))
-            
-        # else:
         state = last_state.wkv_state.to(x.device, torch.float32)
-        x, wkvstate = self.torchwise(B, T, C, H, state, r.view(B, T, H, C//H).transpose(1, 2), k.view(B, T, H, C//H, 1), v.view(B, T, H, 1, C//H), self.time_decay.double().exp().neg().exp().reshape(1,self.n_head,-1,1).to(x.dtype), self.time_faaaa.reshape(1,1,self.n_head, -1, 1).to(x.dtype))
-
+        x, wkvstate = self.torchwise(B, T, C, H, state, r.view(B, T, H, 1, -1).float(), k.view(B, T, H, -1, 1).float(), v.view(B, T, H, 1, -1).float(), self.time_decay.double().exp().neg().exp().reshape(1,self.n_head,-1,1).float(), self.time_faaaa.reshape(1,1,self.n_head, 1, -1).float())
+            
         x = x.reshape(B, T, C)
         out = self.jit_func_2(x.to(g.dtype), g)
         return out, TimeMixState(xx, wkvstate)
