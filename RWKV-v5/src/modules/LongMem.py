@@ -169,7 +169,7 @@ class RWKV_TimeMix(JITModClass):
     def cumsumwdecay(self,x,a,d,dim=1):
         x = torch.cat((a.unsqueeze(dim),x),dim)
         last = torch.zeros_like(x[:,0])
-        for i in range(x.shape[dim]):
+        for i in torch.arange(x.shape[dim]):
             x[:,i] = x[:,i] + last*d
             last = x[:,i]
 
@@ -183,7 +183,7 @@ class RWKV_TimeMix(JITModClass):
 
         att = at*u + ss[:,:-1]
 
-        out = r @ att
+        out = r.float() @ att
             
         out = out.reshape(B, T, C)  
         return out, ss[:,-1]
