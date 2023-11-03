@@ -1,6 +1,6 @@
-########################################################################################################
+### ---
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
-########################################################################################################
+### ---
 
 import gc, math, os
 from random import randint
@@ -29,9 +29,9 @@ from torch.utils.cpp_extension import load
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 CUDA_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../cuda"))
 
-########################################################################################################
+### ---
 # JIT / torch compile special handling
-########################################################################################################
+### ---
 
 # Currently the features we need for torch compile, is avaliable only in
 # 2.1 nightly build (and is expected to be in 2.1 official release)
@@ -132,9 +132,9 @@ print(f"[RWKV.model] Running RWKV model using '{RWKV_TORCH_RUN_MODE}' with torch
 def deepspeed_checkpoint(*args, **kwargs):
     return deepspeed.checkpointing.checkpoint(*args, **kwargs)
 
-########################################################################################################
+### ---
 # RWKV: State Blocks
-########################################################################################################
+### ---
 
 class TimeMixState:
 
@@ -193,9 +193,9 @@ class BlockStateList:
         self.wkv_states[layer] = state.time_mix_state.wkv_state
         self.shift_states[layer, 1] = state.channel_mix_state.shift_state
 
-########################################################################################################
+### ---
 # RWKV: RWKV Time-mix + RWKV Channel-mix
-########################################################################################################
+### ---
 
 class RWKV_TimeMix(JITModClass):
 
@@ -371,7 +371,7 @@ class RWKV_TimeMix(JITModClass):
         return x_logits, last_state
 
 
-########################################################################################################
+### ---
 
 
 class RWKV_ChannelMix(JITModClass):
@@ -405,9 +405,9 @@ class RWKV_ChannelMix(JITModClass):
                 ChannelMixState(x[:, -1]))
 
 
-########################################################################################################
+### ---
 # The RWKV Model blocks
-########################################################################################################
+### ---
 
 class Block(nn.Module):
 
@@ -488,17 +488,17 @@ class L2Wrap(torch.autograd.Function):
         gy = gy * ctx.currentMask[:, None][None, :]
         return (grad_output, gy, None, None)
 
-########################################################################################################
+### ---
 # Static optimized functions
-########################################################################################################
+### ---
 
 # @ TCompileMax (no speed improvement)
 # def F_cross_entropy_reduction_none_optimized(logits, targets):
 #     return F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction="none")
 
-########################################################################################################
+### ---
 # Core RWKV module
-########################################################################################################
+### ---
 class RWKV(L.LightningModule):
 
     def __init__(self,
@@ -1375,9 +1375,9 @@ class RWKV(L.LightningModule):
         self.log('validation/loss', total_loss, prog_bar=True, sync_dist=True)
         return total_loss
 
-########################################################################################################
+### ---
 # SimpleRWKV, a wrapper for RWKV that allows for simple usage of the model
-########################################################################################################
+### ---
 
 # SimpleRWKV specific imports
 from transformers import PreTrainedTokenizerFast
