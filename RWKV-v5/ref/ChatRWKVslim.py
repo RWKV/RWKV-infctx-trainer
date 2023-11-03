@@ -8,6 +8,7 @@
 # What was done
 # - CUDA / cuBLAS was dropped
 # - Branching code to v4 / v5 / v5.1 was dropped
+# - Dropping of conversion logic
 #### ---
 
 from typing import Optional
@@ -33,103 +34,12 @@ else:
     MyFunction = __nop
     MyStatic = __nop
 
-if os.environ.get('RWKV_CUDA_ON') == '1':
-    from torch.utils.cpp_extension import load
-    try:
-        load(
-            name=f"wkv_cuda",
-            sources=[f"{current_path}/cuda/wrapper.cpp", f"{current_path}/cuda/operators.cu", f"{current_path}/cuda/gemm_fp16_cublas.cpp"],
-            verbose=True,
-            extra_ldflags=["cublas.lib" if os.name == "nt" else ""],
-            extra_cuda_cflags=["--use_fast_math", "-O3", "--extra-device-vectorization"],
-            is_python_module=False)
-        DISABLE_CUBLAS_GEMM = False
-    except:
-        print("Failed to build cuBLAS matmul, falling back to torch.matmul. Small model with fp16 will overflow.")
-        load(
-            name=f"wkv_cuda",
-            sources=[f"{current_path}/cuda/wrapper.cpp", f"{current_path}/cuda/operators.cu"],
-            verbose=True,
-            extra_cuda_cflags=["--use_fast_math", "-O3", "--extra-device-vectorization"],
-            extra_cflags=["-DDISABLE_CUBLAS_GEMM"],
-            is_python_module=False)
-        DISABLE_CUBLAS_GEMM = True
-
-    @MyStatic
-    def cuda_wkv(T: int, C: int, w, u, k, v, aa, bb, pp):
-        assert 1 * C % min(C, 32) == 0
-        assert k.dtype == v.dtype == torch.float16 or k.dtype == v.dtype == torch.float32
-        assert w.dtype == u.dtype == aa.dtype == bb.dtype == pp.dtype == torch.float32
-        w = w.contiguous()
-        u = u.contiguous()
-        k = k.contiguous()
-        v = v.contiguous()
-        y = torch.empty((T, C), device=w.device, memory_format=torch.contiguous_format, dtype=k.dtype)
-        torch.ops.rwkv.wkv_forward(1, T, C, w, u, k, v, y, aa, bb, pp)
-        return y, aa, bb, pp
-    @MyStatic
-    def cuda_mm8_seq(B: int, N: int, M: int, x, w, mx, rx, my, ry):
-        assert x.dtype == mx.dtype == rx.dtype == my.dtype == ry.dtype
-        assert x.dtype == torch.float32 or x.dtype == torch.float16
-        assert w.dtype == torch.uint8
-        assert x.shape == (B, N)
-        assert w.shape == (N, M)
-        assert rx.shape == mx.shape == (M,)
-        assert ry.shape == my.shape == (N, 1)
-        y = torch.empty((B, M), device=w.device, dtype=x.dtype)
-        torch.ops.rwkv.mm8_seq(B, N, M, x, w, mx, rx, my, ry, y)
-        return y
-    @MyStatic
-    def cuda_mm8_one(N: int, M: int, x, w, mx, rx, my, ry):
-        assert x.dtype == mx.dtype == rx.dtype == my.dtype == ry.dtype
-        assert x.dtype == torch.float32 or x.dtype == torch.float16
-        assert w.dtype == torch.uint8
-        assert x.shape == (N,)
-        assert w.shape == (N, M)
-        assert rx.shape == mx.shape == (M,)
-        assert ry.shape == my.shape == (N, 1)
-        y = torch.zeros((M,), device=w.device, dtype=torch.float32)
-        torch.ops.rwkv.mm8_one(N, M, x, w, mx, rx, my, ry, y)
-        return y.to(dtype=x.dtype)
-else:
-    os.environ["RWKV_CUDA_ON"] = '0'
-
+# NO CUDA
+os.environ["RWKV_CUDA_ON"] = '0'
 
 @MyStatic
-def torch_mm8_seq(x, w, mx, rx, my, ry):
-    return x @ ((w.to(dtype=x.dtype) + 0.5) * ry * rx + my + mx)
-
-@MyStatic
-def torch_mm8_one(x, w, mx, rx, my, ry):
-    return x @ ((w.to(dtype=x.dtype) + 0.5) * ry * rx + my + mx)
-
-if os.environ.get('RWKV_CUDA_ON') == '1':
-    @MyStatic
-    def mm8_seq(x, w, mx, rx, my, ry):
-        if w.device.type == 'cuda' and x.dtype == torch.float16:
-            B, N, M = x.shape[0], w.shape[0], w.shape[1]
-            return cuda_mm8_seq(B, N, M, x, w, mx, rx, my, ry)
-        else:
-            return torch_mm8_seq(x, w, mx, rx, my, ry)
-    @MyStatic
-    def mm8_one(x, w, mx, rx, my, ry):
-        if w.device.type == 'cuda':
-            N, M = w.shape[0], w.shape[1]
-            return cuda_mm8_one(N, M, x, w, mx, rx, my, ry)
-        else:
-            return torch_mm8_one(x, w, mx, rx, my, ry)
-else:
-    @MyStatic
-    def mm8_seq(x, w, mx, rx, my, ry):
-        return torch_mm8_seq(x, w, mx, rx, my, ry)
-    @MyStatic
-    def mm8_one(x, w, mx, rx, my, ry):
-        return torch_mm8_one(x, w, mx, rx, my, ry)
-
 def mm8(x: torch.Tensor, w: torch.Tensor, mx: torch.Tensor, rx: torch.Tensor, my: torch.Tensor, ry: torch.Tensor):
-    if len(x.shape) == 1:
-        return mm8_one(x, w, mx, rx, my, ry)
-    return mm8_seq(x, w, mx, rx, my, ry)
+    return x @ ((w.to(dtype=x.dtype) + 0.5) * ry * rx + my + mx)
 
 def matmul(a, b, mx: Optional[torch.Tensor]=None, rx: Optional[torch.Tensor]=None, my: Optional[torch.Tensor]=None, ry: Optional[torch.Tensor]=None, output_dtype: Optional[torch.dtype]=None) -> torch.Tensor:
     if output_dtype is None:
@@ -147,37 +57,17 @@ def matmul(a, b, mx: Optional[torch.Tensor]=None, rx: Optional[torch.Tensor]=Non
         raise ValueError("Unsupported dtype")
 
 
-if os.environ.get('RWKV_CUDA_ON') == '1' and not DISABLE_CUBLAS_GEMM:
-    def matmul_float(a, b, output_dtype: Optional[torch.dtype]=None):
-        if output_dtype is None:
-            output_dtype = a.dtype
-        if a.dtype == b.dtype == torch.float16 and a.device.type == 'cuda':
-            if len(a.shape) == 1:
-                assert len(b.shape) == 2
-                c = torch.empty((b.shape[-1],), dtype=output_dtype, device=a.device)
-                a = a.unsqueeze(0)
-            else:
-                assert len(a.shape) == len(b.shape)
-                assert len(a.shape) == 2 or len(a.shape) == 3
-                # torch.empty((*a.shape[:-1], b.shape[-1])) doesn't work with jit
-                if len(a.shape) == 2:
-                    c = torch.empty((a.shape[0], b.shape[-1]), dtype=output_dtype, device=a.device)
-                else:
-                    c = torch.empty((a.shape[0], a.shape[1], b.shape[-1]), dtype=output_dtype, device=a.device)
-            torch.ops.rwkv.gemm_fp16_cublas(a, b, c)
-            return c
-        else:
-            return (a @ b).to(output_dtype)
+def matmul_float(a, b, output_dtype: Optional[torch.dtype]=None):
+    if output_dtype is None:
+        output_dtype = a.dtype
+    return (a @ b).to(output_dtype)
 
-else:
-    def matmul_float(a, b, output_dtype: Optional[torch.dtype]=None):
-        return (a @ b).to(output_dtype)
-
-
-if os.environ.get('RWKV_DML_ON') == '1':
-    import torch_directml
-    print("PyTorch with DirectML Enabled")
-
+#### ---
+# Should we consider support?
+#### ---
+# if os.environ.get('RWKV_DML_ON') == '1':
+#     import torch_directml
+#     print("PyTorch with DirectML Enabled")
 #### ---
 
 class RWKV(MyModule):
