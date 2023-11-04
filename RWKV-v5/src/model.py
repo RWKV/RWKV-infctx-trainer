@@ -258,100 +258,136 @@ class RWKV_TimeMix(JITModClass):
         # Get the x sizing
         B, TT, C = x.size()
 
-        # Chunk length to split by, 
-        # we probably can reoptimize this at some point
-        chunk_len = self.chunk_len
-
-        # Logits to return
-        x_logits = torch.zeros(B, TT, C, device=x.device, dtype=x.dtype)
-
-        # Get the rkvg
-        r, k, v, g = self._get_rwkvg(x, last_state)  
-
-        # Split the input by TT chunks, and process it
-        for i in range(0, TT, chunk_len):
-            x_chunk = x[:, i:i+chunk_len, :]
-
-            r_chunk = r[:, i:i+chunk_len, :]
-            k_chunk = k[:, i:i+chunk_len, :]
-            v_chunk = v[:, i:i+chunk_len, :]
-            g_chunk = g[:, i:i+chunk_len, :]
-
-            chunk_logits, last_state = self._forward_chunk(x_chunk, last_state, r_chunk, k_chunk, v_chunk, g_chunk)
-            x_logits[:, i:i+chunk_len, :] = chunk_logits
-
-        # Return the logits and the state
-        return x_logits, last_state
-
-    # this is based on jit_func(self,x)
-    @JITModMethod
-    def _get_rwkvg(self, x, last_state: TimeMixState):
-        # Mix x with the previous timestep to produce xk, xv, xr
+        # Perform the tokenshift, and get the respective state
         xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
-        # xx = self.time_shift(x)
 
+        # Get the xk, xv, xr, xg
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
         xg = x * self.time_mix_g + xx * (1 - self.time_mix_g)
 
-        r = self.receptance(xr)
-        k = self.key(xk)
-        v = self.value(xv)
+        r = self.receptance(xr).view(B, TT, self.n_head, 1, -1)
+        k = self.key(xk).view(B, TT, self.n_head, -1, 1)
+        v = self.value(xv).view(B, TT, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
-        return r, k, v, g
 
-    def _forward_chunk(self, x_chunk, last_state: TimeMixState, r, k, v, g):
-        B, T_chunk, C = x_chunk.size()
-        H = self.n_head  # Number of heads
-        head_size = self.head_size
+        # Logits to return
+        x_logits = torch.zeros(B, TT, C, device=x.device, dtype=x.dtype)
 
-        # Ensure r, k, v, g are properly reshaped to 4D tensors for multi-head processing
-        # They should have dimensions [B, T_chunk, H, head_size]
-        r = r.view(B, T_chunk, H, head_size)
-        k = k.view(B, T_chunk, H, head_size)
-        v = v.view(B, T_chunk, H, head_size)
-        g = g.view(B, T_chunk, H, head_size)
+        # # Get the rkvg
+        # r, k, v, g = self._get_rwkvg(x, last_state, B, TT, C)  
 
-        # Expand time decay and time factor for each head
-        w_expanded = self.time_decay.view(1, 1, H, head_size).expand(B, T_chunk, H, head_size)
-        u_expanded = self.time_faaaa.view(1, 1, H, head_size).expand(B, T_chunk, H, head_size)
+        # Compute attent and the initial output tensor
+        at = k @ v
+        u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
+        out = (u * r) @ at
+        w = self.time_decay.double().exp().neg().exp().reshape(1, self.n_head,-1,1).to(x.dtype)
 
-        # Initialize the state if it's the first chunk or if the size doesn't match
-        if last_state.wkv_state is None or last_state.wkv_state.size(1) != T_chunk:
-            last_state.wkv_state = torch.zeros((B, T_chunk, H, head_size), device=x_chunk.device, dtype=x_chunk.dtype)
+        # The WKV state to update
+        wkv_state = last_state.wkv_state
+        if wkv_state is None:
+            wkv_state = torch.zeros((B, self.n_head, self.n_head), device=x.device, dtype=x.dtype)
 
-        # Clone the state to avoid modifying the last_state in-place
-        state = last_state.wkv_state.clone()
+        # Slightly inefficent, but it works, lets compute all the tokens
+        for t in range(TT):
+            out[:,t] += r[:,t] @ last_state.wkv_state
+            wkv_state *= w
+            wkv_state += at[:,t]
 
-        # We will perform operations as done in the CUDA kernel
-        y = torch.zeros_like(x_chunk).view(B, T_chunk, H, head_size)
+        # Compute the final x output
+        x_logits = out.view(-1, C)
+        x_logits = self.ln_x(x_logits / 8).view(B, TT, C)
+        x_logits = self.output(x_logits * g)
 
-        print("k shape", k.shape)
-        print("u_expanded shape", u_expanded.shape)
-        print("state shape", state.shape)
-        print("v shape", v.shape)
-        print("y shape", y.shape)
+        # Update the last state
+        last_state.wkv_state = wkv_state
 
-        for t in range(T_chunk):
-            # Update the state
-            state[:, t, :, :] = state[:, t, :, :] * torch.exp(-w_expanded[:, t, :, :]) + v[:, t, :, :]
+        # Return the logits and the state
+        return x_logits, last_state
+    
+        # print(f"B: {B}, TT: {TT}, C: {C}, chunk_len: {chunk_len}")
+        # print(f"Original Shapes - r: {r.shape}, k: {k.shape}, v: {v.shape}, g: {g.shape}, x: {x.shape}")
 
-            # Perform element-wise multiplication and sum over the head_size dimension
-            y[:, t, :] = torch.sum(k[:, t, :, :] * (u_expanded[:, t, :, :] * state[:, t, :, :] + v[:, t, :, :]), dim=-1)
+        # # Split the input by TT chunks, and process it
+        # for i in range(0, TT, chunk_len):
+        #     x_chunk = x[:, i:i+chunk_len, :]
+        #     r_chunk = r[:, i:i+chunk_len, :]
+        #     k_chunk = k[:, i:i+chunk_len, :]
+        #     v_chunk = v[:, i:i+chunk_len, :]
+        #     g_chunk = g[:, i:i+chunk_len, :]
 
-        # Reshape `y` back to the original dimensions [B, T_chunk, C]
-        y = y.view(B, T_chunk, C)
+        #     print(f"Chunked shapes - r: {r_chunk.shape}, k: {k_chunk.shape}, v: {v_chunk.shape}, g: {g_chunk.shape}, x: {x_chunk.shape}")
+        #     print(f"WKV state size : {last_state.wkv_state.shape}")
+        #     print(f"X logits size : {x_logits.shape}")
+        #     print(f"X chunk size : {x_chunk.shape}")
 
-        # Apply gating and output transformations if needed
-        y = self.output(y * g.view(B, T_chunk, C))
-        y = self.ln_x(y)
+        #     chunk_logits, last_state = self._forward_chunk(x_chunk, last_state, r_chunk, k_chunk, v_chunk, g_chunk)
+        #     x_logits[:, i:i+chunk_len, :] = chunk_logits
 
-        # Update the state for the next chunk
-        last_state.wkv_state = state
+        # # Chunk length to split by, 
+        # # we probably can reoptimize this at some point
+        # chunk_len = self.chunk_len
 
-        return y, last_state
+
+    # # this is based on jit_func(self,x)
+    # @JITModMethod
+    # def _get_rwkvg(self, x, last_state: TimeMixState, B:int, TT:int, C:int):
+    #     # Mix x with the previous timestep to produce xk, xv, xr
+    #     # this is the token shift
+    #     xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
+
+    #     xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
+    #     xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
+    #     xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
+    #     xg = x * self.time_mix_g + xx * (1 - self.time_mix_g)
+
+    #     r = self.receptance(xr).view(B, TT, self.n_head, 1, -1)
+    #     k = self.key(xk).view(B, TT, self.n_head, -1, 1)
+    #     v = self.value(xv).view(B, TT, self.n_head, -1, 1)
+    #     g = F.silu(self.gate(xg))
+
+    #     return r, k, v, g
+
+    # def _forward_chunk(self, x_chunk, last_state: TimeMixState, r, k, v, g):
+    #     B, T_chunk, C = x_chunk.size()
+    #     H = self.n_head  # Number of heads
+    #     head_size = self.head_size
+
+    #     # If last_state.wkv_state is not provided or its shape doesn't match, initialize it
+    #     if last_state.wkv_state is None or last_state.wkv_state.size() != (B, H, self.n_head):
+    #         wkv_state = torch.zeros((B, H, self.n_head), device=x_chunk.device, dtype=x_chunk.dtype)
+    #     else:
+    #         # Or clone the state accordingly
+    #         wkv_state = last_state.wkv_state.clone()
+
+    #     # Compute the attention k/v
+    #     at = k @ v
+
+    #     # Compute u expended, and the initial output tensor
+    #     u_expanded = self.time_faaaa.view(1,1,self.n_head, 1, -1)
+    #     out = (u_expanded * r) @ at
+
+    #     # Update the output with r @ wkv_state
+    #     w_expanded = self.time_decay.double().exp().neg().exp().reshape(1, self.n_head,-1,1)
+
+    #     # Compute the full output tensor
+    #     for t in range(T_chunk):
+    #         out[:,t] += r[:,t] @ wkv_state
+    #         wkv_state *= w_expanded
+    #         wkv_state += at[:,t]
+
+    #     # Compute the final x_chunk output
+    #     x_chunk = out.view(-1, C)
+    #     x_chunk = self.ln_x(x_chunk / 8).view(B, T_chunk, C)
+    #     x_chunk = self.output(x_chunk * g)
+
+    #     # Save the updated state back to last_state.wkv_state for the next chunk
+    #     last_state.wkv_state = wkv_state
+
+    #     # Return with x distribution logits, and last state
+    #     return x_chunk, last_state
 
 
 

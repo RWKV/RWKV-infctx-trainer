@@ -56,7 +56,6 @@ def matmul(a, b, mx: Optional[torch.Tensor]=None, rx: Optional[torch.Tensor]=Non
     else:
         raise ValueError("Unsupported dtype")
 
-
 def matmul_float(a, b, output_dtype: Optional[torch.dtype]=None):
     if output_dtype is None:
         output_dtype = a.dtype
