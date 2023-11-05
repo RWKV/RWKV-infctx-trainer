@@ -260,7 +260,7 @@ class RWKV_TimeMix(JITModClass):
 
         # Perform the tokenshift, and get the respective state
         xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
-
+    
         # Get the xk, xv, xr, xg
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
@@ -272,8 +272,6 @@ class RWKV_TimeMix(JITModClass):
         v = self.value(xv).view(B, TT, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
-        # Logits to return
-        x_logits = torch.zeros(B, TT, C, dtype=x.dtype)
 
         # Compute attent and the initial output tensor
         at = k @ v
@@ -283,14 +281,14 @@ class RWKV_TimeMix(JITModClass):
 
         # The WKV state to update
         if last_state.wkv_state is None:
-            wkv_state = torch.zeros((B, self.n_head, self.n_head))
+            wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
         else:
             # Clone is required, due to the way backprop works
-            wkv_state = last_state.wkv_state.clone()
+            wkv_state = last_state.wkv_state.clone().to(r.dtype)
 
         # Slightly inefficent, but it works, lets compute all the tokens
         for t in range(TT):
-            out[:,t] += r[:,t] @ last_state.wkv_state.to(r.dtype)
+            out[:,t] += r[:,t] @ wkv_state
             wkv_state *= w
             wkv_state += at[:,t]
 
@@ -299,11 +297,9 @@ class RWKV_TimeMix(JITModClass):
         x_logits = self.ln_x(x_logits / 8).view(B, TT, C)
         x_logits = self.output(x_logits * g)
 
-        # Update the last state
-        last_state.wkv_state = wkv_state
-
+        
         # Return the logits and the state
-        return x_logits, last_state
+        return x_logits, TimeMixState(x[:,-1],wkv_state)
     
         # print(f"B: {B}, TT: {TT}, C: {C}, chunk_len: {chunk_len}")
         # print(f"Original Shapes - r: {r.shape}, k: {k.shape}, v: {v.shape}, g: {g.shape}, x: {x.shape}")
