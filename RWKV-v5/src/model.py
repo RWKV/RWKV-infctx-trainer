@@ -274,7 +274,7 @@ class RWKV_TimeMix(JITModClass):
 
 
         u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
-        w = self.time_decay.double().exp().neg().exp().reshape(1,1, self.n_head,-1,1)
+        w = self.time_decay.exp().neg().exp().reshape(1,1, self.n_head,-1,1)
         # The WKV state to update
         if last_state.wkv_state is None:
             wkv_state = torch.zeros((B, 1, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
@@ -287,11 +287,11 @@ class RWKV_TimeMix(JITModClass):
         
          
         # Slightly inefficent, but it works, lets compute all the tokens
-        ms = [wkv_state,*at.split(1,1)]
+        ms = [wkv_state]
         
-
+        
         for t in range(1,TT+1):
-            ms[t] += ms[t-1] * w
+            ms = ms + [at[:,t-1] + ms[t-1] * w]
             
         
         out = (u * r ) @ at + (r @ torch.cat(ms[:-1],1))
