@@ -46,15 +46,13 @@ sudo apt-get install ninja-build
 # Update conda & its package listings
 conda update conda
 
-# Virtual env, with python 3.10
-# python 3.11 have issues with torch.compile / h100s
-# and if you want to use 3.11, you will need to do a nightly build install
+# Virtual env, with python 3.11
 conda create -n rwkv-infctx python=3.11 pip
 conda activate rwkv-infctx
 
-# Install pytorch (>=2.0.1)
-conda install -y pytorch==2.0.1 torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-python -m pip install lightning==2.0.5 deepspeed==0.10.0
+# Install pytorch (>=2.1)
+conda install -y pytorch==2.1 torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+python3 -m pip install lightning==2.1 deepspeed==0.12
 
 # Currently for torch.compile + 3.11 to work, for some platform, you will need the nightly build
 # if so you may need to try the following instead - this is considered "unstable"
@@ -63,16 +61,16 @@ python -m pip install lightning==2.0.5 deepspeed==0.10.0
 # python -m pip install lightning==2.0.5 deepspeed==0.10.0
 
 # Verify your pytorch version 
-python -c "import torch; print(torch.__version__)"
+python3 -c "import torch; print(torch.__version__)"
 
 # Install all the other various dependencies
 # PS: We use python -m pip, instead of pip directly, as it resolve issues with venv not loading the right pip
-python -m pip install datasets transformers 
-python -m pip install ninja numexpr jsonargparse 'jsonargparse[signatures]'
-python -m pip install lm-dataformat ftfy sentencepiece tokenizers wandb
+python3 -m pip install datasets transformers 
+python3 -m pip install ninja numexpr jsonargparse 'jsonargparse[signatures]'
+python3 -m pip install lm-dataformat ftfy sentencepiece tokenizers wandb
 
 # Optional dependencies, useful for running notebooks, etc
-python -m pip install papermill
+python3 -m pip install papermill
 ```
 
 Alternatively you could use the requirements.txt (this may not install pytorch-cuda properly)

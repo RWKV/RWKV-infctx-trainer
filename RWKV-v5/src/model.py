@@ -33,22 +33,23 @@ CUDA_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../cuda"))
 # JIT / torch compile special handling
 ### ---
 
-# Currently the features we need for torch compile, is avaliable only in
-# 2.1 nightly build (and is expected to be in 2.1 official release)
-#
-# However because the nightly build torch.compile behaviour has been unstable
-# the versioning code to check for enabling toch compile will not be used, 
-# until we confirm a stable version of torch.compile
+# Because we are using APIs avaliable only to pytorch 2.1.0
+# We will throw an error if the user is using a lower version
 from packaging import version
 def is_torch_version_above(required_version):
     torch_version = version.parse(torch.__version__.split('+')[0])
     return torch_version >= version.parse(required_version)
-IS_TORCH_2_1 = is_torch_version_above("2.0.9999")
+IS_TORCH_2_1_COMPATIBLE = is_torch_version_above("2.0.9999")
 
 # Get the JIT / torch compile option flags from the environment
-RWKV_JIT_ON        = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
-RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
+# This default is FOR inference mode, the trainer mode default is configured in the lightning_trainer.py
+RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
+RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
 RWKV_TORCH_RUN_MODE = None
+
+# Disable torch compile if its not atleast v2.1
+if not IS_TORCH_2_1_COMPATIBLE:
+    RWKV_TORCH_COMPILE = False
 
 # We enable JITMod*/Function when supporting torch.jit
 # We use TorchCompile* when supporting torch compile
@@ -176,6 +177,7 @@ class BlockStateList:
     @staticmethod
     def empty(N, B, C, n_head, head_size, device, dtype):
         # @TODO: confirm if dtype can be changed from .flaot to dtype=dtype (when bf16)
+        # wkv_states = torch.empty((N, B, n_head, head_size, head_size),
         wkv_states = torch.empty((N, B, 1, n_head, head_size, head_size),
                                  device=device,
                                 #  dtype=dtype)
@@ -253,7 +255,7 @@ class RWKV_TimeMix(JITModClass):
         self.gate = nn.Linear(n_embd, dim_att, bias=False)
         self.ln_x = nn.GroupNorm(n_head, dim_att)
 
-    @TCompileMax
+    # @TCompileMax
     def forward(self, x, last_state: TimeMixState):
         # Get the x sizing
         B, TT, C = x.size()
@@ -272,201 +274,46 @@ class RWKV_TimeMix(JITModClass):
         v = self.value(xv).view(B, TT, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
-
+        # Compute attent and the initial output tensor
+        at = k @ v
         u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
         w = self.time_decay.exp().neg().exp().reshape(1,1, self.n_head,-1,1)
         # The WKV state to update
         if last_state.wkv_state is None:
+            # wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
             wkv_state = torch.zeros((B, 1, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
         else:
             # Clone is required, due to the way backprop works
             wkv_state = last_state.wkv_state.clone().to(r.dtype)
-
-        # Compute attent and the initial output tensor
-        at = k @ v
         
-         
         # Slightly inefficent, but it works, lets compute all the tokens
         ms = [wkv_state]
-        
         
         for t in range(1,TT+1):
             ms = ms + [at[:,t-1] + ms[t-1] * w]
             
-        
         out = (u * r ) @ at + (r @ torch.cat(ms[:-1],1))
+        
+        # for t in range(TT):
+        #     # We intentionally do not use the following ...
+        #     # out[:,t] += r[:,t] @ wkv_state
+        # 
+        #     # As the wkv_state object will be modified, and we need to apply @
+        #     # to a constant value, or it will cuase backprop errors
+        #     out[:,t] += r[:,t] @ last_state.wkv_state.to(r.dtype)
+        # 
+        #     wkv_state *= w
+        #     wkv_state += at[:,t]
+
         # Compute the final x output
         x_logits = out.view(-1, C)
         x_logits = self.ln_x(x_logits / 8).view(B, TT, C)
         x_logits = self.output(x_logits * g)
 
-        
         # Return the logits and the state
+        # return x_logits, TimeMixState(x[:,-1].clone(),wkv_state)
         return x_logits, TimeMixState(x[:,-1],ms[-1])
     
-        # print(f"B: {B}, TT: {TT}, C: {C}, chunk_len: {chunk_len}")
-        # print(f"Original Shapes - r: {r.shape}, k: {k.shape}, v: {v.shape}, g: {g.shape}, x: {x.shape}")
-
-        # # Split the input by TT chunks, and process it
-        # for i in range(0, TT, chunk_len):
-        #     x_chunk = x[:, i:i+chunk_len, :]
-        #     r_chunk = r[:, i:i+chunk_len, :]
-        #     k_chunk = k[:, i:i+chunk_len, :]
-        #     v_chunk = v[:, i:i+chunk_len, :]
-        #     g_chunk = g[:, i:i+chunk_len, :]
-
-        #     print(f"Chunked shapes - r: {r_chunk.shape}, k: {k_chunk.shape}, v: {v_chunk.shape}, g: {g_chunk.shape}, x: {x_chunk.shape}")
-        #     print(f"WKV state size : {last_state.wkv_state.shape}")
-        #     print(f"X logits size : {x_logits.shape}")
-        #     print(f"X chunk size : {x_chunk.shape}")
-
-        #     chunk_logits, last_state = self._forward_chunk(x_chunk, last_state, r_chunk, k_chunk, v_chunk, g_chunk)
-        #     x_logits[:, i:i+chunk_len, :] = chunk_logits
-
-        # # Chunk length to split by, 
-        # # we probably can reoptimize this at some point
-        # chunk_len = self.chunk_len
-
-
-    # # this is based on jit_func(self,x)
-    # @JITModMethod
-    # def _get_rwkvg(self, x, last_state: TimeMixState, B:int, TT:int, C:int):
-    #     # Mix x with the previous timestep to produce xk, xv, xr
-    #     # this is the token shift
-    #     xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
-
-    #     xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
-    #     xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
-    #     xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-    #     xg = x * self.time_mix_g + xx * (1 - self.time_mix_g)
-
-    #     r = self.receptance(xr).view(B, TT, self.n_head, 1, -1)
-    #     k = self.key(xk).view(B, TT, self.n_head, -1, 1)
-    #     v = self.value(xv).view(B, TT, self.n_head, -1, 1)
-    #     g = F.silu(self.gate(xg))
-
-    #     return r, k, v, g
-
-    # def _forward_chunk(self, x_chunk, last_state: TimeMixState, r, k, v, g):
-    #     B, T_chunk, C = x_chunk.size()
-    #     H = self.n_head  # Number of heads
-    #     head_size = self.head_size
-
-    #     # If last_state.wkv_state is not provided or its shape doesn't match, initialize it
-    #     if last_state.wkv_state is None or last_state.wkv_state.size() != (B, H, self.n_head):
-    #         wkv_state = torch.zeros((B, H, self.n_head), device=x_chunk.device, dtype=x_chunk.dtype)
-    #     else:
-    #         # Or clone the state accordingly
-    #         wkv_state = last_state.wkv_state.clone()
-
-    #     # Compute the attention k/v
-    #     at = k @ v
-
-    #     # Compute u expended, and the initial output tensor
-    #     u_expanded = self.time_faaaa.view(1,1,self.n_head, 1, -1)
-    #     out = (u_expanded * r) @ at
-
-    #     # Update the output with r @ wkv_state
-    #     w_expanded = self.time_decay.double().exp().neg().exp().reshape(1, self.n_head,-1,1)
-
-    #     # Compute the full output tensor
-    #     for t in range(T_chunk):
-    #         out[:,t] += r[:,t] @ wkv_state
-    #         wkv_state *= w_expanded
-    #         wkv_state += at[:,t]
-
-    #     # Compute the final x_chunk output
-    #     x_chunk = out.view(-1, C)
-    #     x_chunk = self.ln_x(x_chunk / 8).view(B, T_chunk, C)
-    #     x_chunk = self.output(x_chunk * g)
-
-    #     # Save the updated state back to last_state.wkv_state for the next chunk
-    #     last_state.wkv_state = wkv_state
-
-    #     # Return with x distribution logits, and last state
-    #     return x_chunk, last_state
-
-
-
-
-
-
-
-    # def _forward_chunk(self, x, last_state: TimeMixState, r, k, v, g):
-    #     # Forward sizings (Batch, Time/ContextLength, Tokens)
-    #     B, TT, C = x.size()
-    #     B = torch.tensor(B, device=x.device, dtype=torch.int32)
-    #     TT = torch.tensor(TT, device=x.device, dtype=torch.int32)
-
-    #     # Get w, wk, wb, ws (self.jit_func_2)
-    #     w, wk, wb, ws = self._forward_wkbs_chunk(TT, r, k, v)
-
-    #     # Does the state forwarding
-    #     return self._forward_state_chunk(r, k, v, g, w, wk, wb, ws, x[:, -1], last_state)
-
-    # @JITModMethod
-    # def _forward_state_chunk(self, r, k, v, g, w, wk, wb, ws, x_l, last_state: TimeMixState):
-    #     B, H, TT, S = r.size()
-    #     T = TT
-
-    #     # s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
-    #     s = last_state.wkv_state
-    #     if r.dtype == torch.bfloat16 and s.dtype != torch.bfloat16:
-    #         s = s.contiguous().to(torch.bfloat16)
-
-    #     x = torch.zeros(B, H, TT, S, device=r.device, dtype=r.dtype) # output
-
-    #     ########################################################################
-    #     for i in range(TT // T):
-        
-    #         rr = r[:, :, i*T:i*T+T, :]
-    #         kk = k[:, :, :, i*T:i*T+T]
-    #         vv = v[:, :, i*T:i*T+T, :]
-
-    #         x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv + (rr @ s) * wb
-
-    #         s = ws * s + (kk * wk) @ vv
-    #     ########################################################################
-        
-    #     x = x.transpose(1, 2).contiguous().view(B * TT, H*S) # BHTS -> BTHS -> BTC
-
-    #     # x = self.ln_x(x/self.head_size_divisor).view(B, TT, H*S)
-    #     x = self.ln_x(x/8).view(B, TT, H*S)
-
-    #     # Fix missing *g for output as per :
-    #     # https://github.com/RWKV/RWKV-infctx-trainer/commit/beb46d599042b77d53db9c7fa59a5966e7d33719#r126730367
-    #     return self.output(x*g), TimeMixState(x_l, s)
-
-    # def _forward_wkbs_chunk(self, T, r, k, v):
-    #     H = self.n_head
-
-    #     w = torch.exp(-torch.exp(self.time_decay.float())).unsqueeze(-1)
-
-    #     # V5-R2 changes
-    #     u = self.time_faaaa.float().unsqueeze(-1)
-    #     # u = torch.exp(self.time_first.float()).unsqueeze(-1)
-
-    #     ws = w.pow(T).reshape(1, H, 1, 1)
-    #     ind = torch.arange(T-1, -1, -1, device=r.device).unsqueeze(0).repeat(H, 1)
-    #     w = w.repeat(1, T).pow(ind)
-
-    #     wk = w.reshape(1, H, 1, T)
-    #     wb = wk.transpose(-2, -1).flip(2)
-
-    #     w = torch.cat([w[:, 1:], u], dim=1)
-    #     w = F.pad(w, (0, T))
-    #     w = torch.tile(w, [T])
-    #     w = w[:, :-T].reshape(-1, T, 2 * T - 1)
-    #     w = w[:, :, T-1:].reshape(1, H, T, T)
-
-    #     w = w.to(dtype=r.dtype)
-    #     wk = wk.to(dtype=r.dtype)
-    #     wb = wb.to(dtype=r.dtype)
-    #     ws = ws.to(dtype=r.dtype)
-
-    #     return w, wk, wb, ws
-
-
 ### ---
 
 
@@ -665,7 +512,10 @@ class RWKV(L.LightningModule):
                 raise ValueError(f"load_model file '{load_model}' does not exist")
 
             # Load the model weights
-            model_weights = torch.load(load_model, map_location='cpu')
+            if IS_TORCH_2_1_COMPATIBLE:
+                model_weights = torch.load(load_model, map_location='cpu', weights_only=True, mmap=True)
+            else:
+                model_weights = torch.load(load_model, map_location='cpu')
 
             # Get the model keys
             model_keys = list(model_weights.keys())
