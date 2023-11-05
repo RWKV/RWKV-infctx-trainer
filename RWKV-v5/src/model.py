@@ -272,7 +272,6 @@ class RWKV_TimeMix(JITModClass):
         v = self.value(xv).view(B, TT, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
-
         # Compute attent and the initial output tensor
         at = k @ v
         u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
@@ -499,7 +498,7 @@ class RWKV(L.LightningModule):
 
             # Load the model weights
             if IS_TORCH_2_1_COMPATIBLE:
-                model_weights = torch.load(load_model, map_location='cpu', wegihts_only=True, mmap=True)
+                model_weights = torch.load(load_model, map_location='cpu', weights_only=True, mmap=True)
             else:
                 model_weights = torch.load(load_model, map_location='cpu')
 
