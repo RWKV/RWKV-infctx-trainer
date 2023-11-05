@@ -176,7 +176,7 @@ class BlockStateList:
     @staticmethod
     def empty(N, B, C, n_head, head_size, device, dtype):
         # @TODO: confirm if dtype can be changed from .flaot to dtype=dtype (when bf16)
-        wkv_states = torch.empty((N, B, n_head, head_size, head_size),
+        wkv_states = torch.empty((N, B, 1, n_head, head_size, head_size),
                                  device=device,
                                 #  dtype=dtype)
                                  dtype=torch.float)
@@ -273,25 +273,27 @@ class RWKV_TimeMix(JITModClass):
         g = F.silu(self.gate(xg))
 
 
-        # Compute attent and the initial output tensor
-        at = k @ v
         u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
-        out = (u * r) @ at
         w = self.time_decay.double().exp().neg().exp().reshape(1, self.n_head,-1,1)
-
         # The WKV state to update
         if last_state.wkv_state is None:
-            wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
+            wkv_state = torch.zeros((B, 1, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
         else:
             # Clone is required, due to the way backprop works
             wkv_state = last_state.wkv_state.clone().to(r.dtype)
 
+        # Compute attent and the initial output tensor
+        at = k @ v
+        
+         
         # Slightly inefficent, but it works, lets compute all the tokens
-        for t in range(TT):
-            out[:,t] += r[:,t] @ wkv_state
-            wkv_state *= w
-            wkv_state += at[:,t]
-
+        ms = torch.cat((wkv_state,at),1)
+        
+        for t in range(1,TT+1):
+            ms[:,t] += ms[:,t-1] * w
+            
+        
+        out = (u * r ) @ at + (r @ ms[:,:-1])
         # Compute the final x output
         x_logits = out.view(-1, C)
         x_logits = self.ln_x(x_logits / 8).view(B, TT, C)
@@ -299,7 +301,7 @@ class RWKV_TimeMix(JITModClass):
 
         
         # Return the logits and the state
-        return x_logits, TimeMixState(x[:,-1],wkv_state)
+        return x_logits, TimeMixState(x[:,-1],ms[:,-1:])
     
         # print(f"B: {B}, TT: {TT}, C: {C}, chunk_len: {chunk_len}")
         # print(f"Original Shapes - r: {r.shape}, k: {k.shape}, v: {v.shape}, g: {g.shape}, x: {x.shape}")
