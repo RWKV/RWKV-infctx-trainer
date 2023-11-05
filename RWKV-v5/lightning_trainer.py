@@ -17,6 +17,11 @@ import sys, os, yaml
 # os.environ["PYTORCH_CUDA_ALLOC_CONF"] = PYTORCH_CUDA_ALLOC_CONF
 # print(f"[RWKV.lightning_trainer.py] Running with PYTORCH_CUDA_ALLOC_CONF={PYTORCH_CUDA_ALLOC_CONF}")
 
+# Get the JIT / torch compile option flags default specific for lightning training mode
+# This enables torch compile by default
+RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
+RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"1").lower() in ("1", "true", "yes")
+
 # Parse the global args, we have to do this manually
 # because argparse do not support --trainer.strategy
 # ---
@@ -66,6 +71,8 @@ def disable_jit_if_deepspeed_3():
     if "deepspeed_stage_3" in assumed_deepspeed_strategy:
         print(f"[RWKV.lightning_trainer.py] Detected {assumed_deepspeed_strategy}, disabling JIT using RWKV_JIT_ON=0")
         os.environ["RWKV_JIT_ON"] = "0"
+        os.environ["RWKV_TORCH_COMPILE"] = "0"
+        
 
 # Perform the deepspeed 3 check
 disable_jit_if_deepspeed_3()
@@ -134,17 +141,37 @@ def process_auto_resume_ckpt():
     # Handle auto_resume_ckpt_dir if its true or auto
     if auto_resume_ckpt_dir.lower() == "true" or auto_resume_ckpt_dir.lower() == "auto":
         print(f"[RWKV.lightning_trainer.py] Extracting checkpoint dir from config, for --auto-resume-ckpt-dir={auto_resume_ckpt_dir}")
-        auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", [{}])[0].get("init_args", {}).get("dirpath", None)
+
+        # Handle the auto resume overwrite, via CLI
+        if CLI_ARGS_MAP["--trainer.callbacks.init_args.dirpath"] is not None:
+            auto_resume_ckpt_dir = CLI_ARGS_MAP["--trainer.callbacks.init_args.dirpath"]
+        else:
+            # Try to get as an object, then an object in an array
+            auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", {}).get("init_args", {}).get("dirpath", None)
+            if auto_resume_ckpt_dir is None:
+                auto_resume_ckpt_dir = LIGHTNING_CONFIG.get("trainer", {}).get("callbacks", [{}])[0].get("init_args", {}).get("dirpath", None)
+
+        # Safety check on the dir
         assert auto_resume_ckpt_dir is not None, "Failed to extract checkpoint dir from config, for --auto-resume-ckpt-dir=True"
         
     # Log the setting flag
     print(f"[RWKV.lightning_trainer.py] Enabling --auto-resume-ckpt-dir={auto_resume_ckpt_dir} --auto-resume-ckpt-mode={auto_resume_ckpt_mode}")
 
     # Check if the --auto-resume-ckpt-dir exists, if it does not initialize it and return
+    # In some rare cases, path can "not exists" but exists when "created" 	
     if not os.path.exists(auto_resume_ckpt_dir):
-        os.makedirs(auto_resume_ckpt_dir)
-        print(f"[RWKV.lightning_trainer.py] Created '{auto_resume_ckpt_dir}' directory (did not exist previously)")
+        try:
+            os.makedirs(auto_resume_ckpt_dir)
+            print(f"[RWKV.lightning_trainer.py] Created '{auto_resume_ckpt_dir}' directory (did not exist previously)")
+        except FileExistsError:
+            print(f"[RWKV.lightning_trainer.py] Directory '{auto_resume_ckpt_dir}' already exists.")
         return
+
+
+  #  if not os.path.exists(auto_resume_ckpt_dir):
+  #      os.makedirs(auto_resume_ckpt_dir)
+  #      print(f"[RWKV.lightning_trainer.py] Created '{auto_resume_ckpt_dir}' directory (did not exist previously)")
+  #      return
     
     # Get the list of directories in the --auto-resume-ckpt-dir
     auto_resume_ckpt_dir_list = os.listdir(auto_resume_ckpt_dir)
@@ -244,7 +271,11 @@ def cli_main():
             # num_sanity_val_steps is disabled, as they seem
             # to hang during initial sanity check for unknown reasons
             # for larger model sizes randomly on multi-gpus
-            "num_sanity_val_steps": 0
+            "num_sanity_val_steps": 0,
+
+            # Disable default distributed sampler, 
+            # so that we can control shuffle logic on our side instead
+            "use_distributed_sampler": False
         },
         seed_everything_default=True,
         args=PYTORCH_CLI_ARGV
