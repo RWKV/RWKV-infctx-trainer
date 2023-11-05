@@ -49,12 +49,15 @@ elif RAW_DEVICE.find('bf16') != -1:
 elif RAW_DEVICE.find('fp32') != -1:
     DTYPE = "fp32"
 
+# Disable torch compile for dragon test
+os.environ["RWKV_TORCH_COMPILE"] = "0"
+
 # Setup the model
 from src.model import SimpleRWKV
 model = SimpleRWKV(MODEL_PATH, device=DEVICE, dtype=DTYPE)
 
 # Dummy forward, used to trigger any warning / optimizations / etc
-model.completion("\n", max_tokens=1, temperature=1.0, top_p=0.7)
+model.completion("\nIn a shocking finding", max_tokens=1, temperature=1.0, top_p=0.7)
 
 # And perform the dragon prompt
 prompt = "\nIn a shocking finding, scientist discovered a herd of dragons living in a remote, previously unexplored valley, in Tibet. Even more surprising to the researchers was the fact that the dragons spoke perfect Chinese."
