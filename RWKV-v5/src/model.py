@@ -272,27 +272,23 @@ class RWKV_TimeMix(JITModClass):
         v = self.value(xv).view(B, TT, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
-
         # Logits to return
-        x_logits = torch.zeros(B, TT, C, device=x.device, dtype=x.dtype)
-
-        # # Get the rkvg
-        # r, k, v, g = self._get_rwkvg(x, last_state, B, TT, C)  
+        x_logits = torch.zeros(B, TT, C, dtype=x.dtype)
 
         # Compute attent and the initial output tensor
         at = k @ v
         u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
         out = (u * r) @ at
-        w = self.time_decay.double().exp().neg().exp().reshape(1, self.n_head,-1,1).to(x.dtype)
+        w = self.time_decay.double().exp().neg().exp().reshape(1, self.n_head,-1,1)
 
         # The WKV state to update
         wkv_state = last_state.wkv_state
         if wkv_state is None:
-            wkv_state = torch.zeros((B, self.n_head, self.n_head), device=x.device, dtype=x.dtype)
+            wkv_state = torch.zeros((B, self.n_head, self.n_head))
 
         # Slightly inefficent, but it works, lets compute all the tokens
         for t in range(TT):
-            out[:,t] += r[:,t] @ last_state.wkv_state
+            out[:,t] += r[:,t] @ last_state.wkv_state.to(r.dtype)
             wkv_state *= w
             wkv_state += at[:,t]
 
