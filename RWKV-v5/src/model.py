@@ -41,14 +41,15 @@ def is_torch_version_above(required_version):
     return torch_version >= version.parse(required_version)
 IS_TORCH_2_1_COMPATIBLE = is_torch_version_above("2.0.9999")
 
-# # Throw if not at least torch 2.1.0 (should we be enforcing?)
-# if not IS_TORCH_2_1_COMPATIBLE:
-#     raise ValueError(f"RWKV infctx requires torch 2.1.0 or above, but found '{torch.__version__}'")
-
 # Get the JIT / torch compile option flags from the environment
-RWKV_JIT_ON        = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
-RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
+# This default is FOR inference mode, the trainer mode default is configured in the lightning_trainer.py
+RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
+RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
 RWKV_TORCH_RUN_MODE = None
+
+# Disable torch compile if its not atleast v2.1
+if not IS_TORCH_2_1_COMPATIBLE:
+    RWKV_TORCH_COMPILE = False
 
 # We enable JITMod*/Function when supporting torch.jit
 # We use TorchCompile* when supporting torch compile
