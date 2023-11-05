@@ -122,7 +122,7 @@ model:
   # This allows the training of extreamly large context length (eg. 100k),
   # without eating up too much vram by keeping the training context length
   # to a resonable number sutible to the current GPU setup
-  ctx_len: 4096
+  ctx_len: 32
   
   # Data samples would be cut down to the respective max ctx_len_cutoffs
   # values if its larger then ctx_len. If the data sample is larger then
@@ -172,7 +172,7 @@ model:
   # Segmented range to performing backprop learning on
   # 1 means to apply only for the last segment
   # -1 means to apply for all segments
-  bptt_learning_range: 1
+  bptt_learning_range: -1
 
 data:
   # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
