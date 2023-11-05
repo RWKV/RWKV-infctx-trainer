@@ -17,15 +17,20 @@ if len(sys.argv) < 2:
 MODEL_PATH=sys.argv[1]
 
 # If model device is not specified, use 'cuda' as default
-DEVICE=None
-if len(sys.argv) >= 3:
-    DEVICE=sys.argv[2]
-IS_REF_RUN = False
-if DEVICE == "ref":
-    IS_REF_RUN = True
+RAW_DEVICE = "cpu fp32"
+DEVICE = "cuda"
+DTYPE  = "bf16"
 
-if DEVICE is None:
-    DEVICE = 'cuda'
+# Get the raw device settings (if set)
+if len(sys.argv) >= 3:
+    RAW_DEVICE = sys.argv[2]
+
+# Check if we are running a reference run
+IS_REF_RUN = False
+if RAW_DEVICE == "ref":
+    DEVICE = "cpu"
+    DTYPE  = "fp32"
+    IS_REF_RUN = True
 
 # Get the output length
 LENGTH=200
@@ -33,26 +38,26 @@ if len(sys.argv) >= 4:
     LENGTH=int(sys.argv[3])
 
 # Backward support for older format, we extract only cuda/cpu if its contained in the string
-if DEVICE.find('cuda') != -1:
-    DEVICE = 'cuda'
-else:
-    DEVICE = 'cpu'
+if RAW_DEVICE.find('cuda') != -1:
+    RAW_DEVICE = 'cuda'
+    
+# The DTYPE setting
+if RAW_DEVICE.find('fp16') != -1:
+    DTYPE = "fp16"
+elif RAW_DEVICE.find('bf16') != -1:
+    DTYPE = "bf16"
+elif RAW_DEVICE.find('fp32') != -1:
+    DTYPE = "fp32"
 
-# REF run overwrite
-if IS_REF_RUN:
-    DEVICE = "cpu"
-
-# # Tokenizer settings
-# TOKENIZER="neox"
-# if len(sys.argv) >= 4:
-#     TOKENIZER=sys.argv[3]
+# Disable torch compile for dragon test
+os.environ["RWKV_TORCH_COMPILE"] = "0"
 
 # Setup the model
 from src.model import SimpleRWKV
-model = SimpleRWKV(MODEL_PATH, device=DEVICE)
+model = SimpleRWKV(MODEL_PATH, device=DEVICE, dtype=DTYPE)
 
 # Dummy forward, used to trigger any warning / optimizations / etc
-model.completion("\n", max_tokens=1, temperature=1.0, top_p=0.7)
+model.completion("\nIn a shocking finding", max_tokens=1, temperature=1.0, top_p=0.7)
 
 # And perform the dragon prompt
 prompt = "\nIn a shocking finding, scientist discovered a herd of dragons living in a remote, previously unexplored valley, in Tibet. Even more surprising to the researchers was the fact that the dragons spoke perfect Chinese."
