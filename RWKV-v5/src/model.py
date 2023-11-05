@@ -282,9 +282,11 @@ class RWKV_TimeMix(JITModClass):
         w = self.time_decay.double().exp().neg().exp().reshape(1, self.n_head,-1,1)
 
         # The WKV state to update
-        wkv_state = last_state.wkv_state
-        if wkv_state is None:
+        if last_state.wkv_state is None:
             wkv_state = torch.zeros((B, self.n_head, self.n_head))
+        else:
+            # Clone is required, due to the way backprop works
+            wkv_state = last_state.wkv_state.clone()
 
         # Slightly inefficent, but it works, lets compute all the tokens
         for t in range(TT):
