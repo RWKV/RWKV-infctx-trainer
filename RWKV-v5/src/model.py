@@ -254,7 +254,7 @@ class RWKV_TimeMix(JITModClass):
         self.gate = nn.Linear(n_embd, dim_att, bias=False)
         self.ln_x = nn.GroupNorm(n_head, dim_att)
 
-    @TCompileMax
+    # @TCompileMax
     def forward(self, x, last_state: TimeMixState):
         # Get the x sizing
         B, TT, C = x.size()
@@ -282,13 +282,20 @@ class RWKV_TimeMix(JITModClass):
         # The WKV state to update
         if last_state.wkv_state is None:
             wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
-        else:
-            # Clone is required, due to the way backprop works
-            wkv_state = last_state.wkv_state.clone().to(r.dtype)
+        
+        # Clone is required, due to the way backprop works, to isolate the 2
+        wkv_state = last_state.wkv_state.clone().to(r.dtype)
 
         # Slightly inefficent, but it works, lets compute all the tokens
         for t in range(TT):
-            out[:,t] += r[:,t] @ wkv_state
+
+            # We intentionally do not use the following ...
+            # out[:,t] += r[:,t] @ wkv_state
+
+            # As the wkv_state object will be modified, and we need to apply @
+            # to a constant value, or it will cuase backprop errors
+            out[:,t] += r[:,t] @ last_state.wkv_state.to(r.dtype)
+
             wkv_state *= w
             wkv_state += at[:,t]
 
@@ -298,7 +305,7 @@ class RWKV_TimeMix(JITModClass):
         x_logits = self.output(x_logits * g)
 
         # Return the logits and the state
-        return x_logits, TimeMixState(x[:,-1],wkv_state)
+        return x_logits, TimeMixState(x[:,-1].clone(),wkv_state)
     
 ### ---
 
