@@ -274,7 +274,7 @@ class RWKV_TimeMix(JITModClass):
 
 
         u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
-        w = self.time_decay.double().exp().neg().exp().reshape(1, self.n_head,-1,1)
+        w = self.time_decay.double().exp().neg().exp().reshape(1,1, self.n_head,-1,1)
         # The WKV state to update
         if last_state.wkv_state is None:
             wkv_state = torch.zeros((B, 1, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
@@ -287,13 +287,14 @@ class RWKV_TimeMix(JITModClass):
         
          
         # Slightly inefficent, but it works, lets compute all the tokens
-        ms = torch.cat((wkv_state,at),1)
+        ms = [wkv_state,*at.split(1,1)]
         
+
         for t in range(1,TT+1):
-            ms[:,t] += ms[:,t-1] * w
+            ms[t] += ms[t-1] * w
             
         
-        out = (u * r ) @ at + (r @ ms[:,:-1])
+        out = (u * r ) @ at + (r @ torch.cat(ms[:-1],1))
         # Compute the final x output
         x_logits = out.view(-1, C)
         x_logits = self.ln_x(x_logits / 8).view(B, TT, C)
@@ -301,7 +302,7 @@ class RWKV_TimeMix(JITModClass):
 
         
         # Return the logits and the state
-        return x_logits, TimeMixState(x[:,-1],ms[:,-1:])
+        return x_logits, TimeMixState(x[:,-1],ms[-1])
     
         # print(f"B: {B}, TT: {TT}, C: {C}, chunk_len: {chunk_len}")
         # print(f"Original Shapes - r: {r.shape}, k: {k.shape}, v: {v.shape}, g: {g.shape}, x: {x.shape}")
