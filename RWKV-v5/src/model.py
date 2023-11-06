@@ -25,17 +25,10 @@ class TimeMixState:
         self.shift_state = shift_state
         self.wkv_state = wkv_state
 
-
-class ChannelMixState:
-
-    def __init__(self, shift_state: torch.Tensor):
-        self.shift_state = shift_state
-
-
 class BlockState:
 
     def __init__(self, time_mix_state: TimeMixState,
-                 channel_mix_state: ChannelMixState):
+                 channel_mix_state: torch.Tensor):
         self.time_mix_state = time_mix_state
         self.channel_mix_state = channel_mix_state
 
@@ -70,12 +63,12 @@ class BlockStateList:
     def __getitem__(self, layer: int):
         return BlockState(
             TimeMixState(self.shift_states[layer, 0], self.wkv_states[layer]),
-            ChannelMixState(self.shift_states[layer, 1]))
+            (self.shift_states[layer, 1]))
 
     def __setitem__(self, layer: int, state: BlockState):
         self.shift_states[layer, 0] = state.time_mix_state.shift_state
         self.wkv_states[layer] = state.time_mix_state.wkv_state
-        self.shift_states[layer, 1] = state.channel_mix_state.shift_state
+        self.shift_states[layer, 1] = state.channel_mix_state
 
 ### ---
 # RWKV: RWKV Time-mix + RWKV Channel-mix
@@ -216,22 +209,22 @@ class RWKV_ChannelMix(JITModClass):
 
     @JITModMethod
     @TCompileMax
-    def forward(self, x, last_state: ChannelMixState):
+    def forward(self, x, last_state: torch.Tensor):
         # out_emb, out_state = channelMix_batchForward(
         #     self.time_mix_k,self.time_mix_r,
         #     self.key.bi
         #     self.key.weight, self.receptance.weight, self.value.weight,
         #     x, last_state.shift_state
         # )
-        # return (out_emb, ChannelMixState(out_state))
+        # return (out_emb, (out_state))
     
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
+        xx = torch.concat((last_state.unsqueeze(1), x[:, :-1]),
                           dim=1)
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
         kv = self.value( torch.relu( self.key(xk) ) ** 2 )
         return (torch.sigmoid(self.receptance(xr)) * kv,
-                ChannelMixState(x[:, -1]))
+                (x[:, -1]))
 
 
 ### ---
