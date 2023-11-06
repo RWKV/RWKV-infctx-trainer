@@ -47,8 +47,8 @@ class BlockStateList:
     @staticmethod
     def empty(N, B, C, n_head, head_size, device, dtype):
         # @TODO: confirm if dtype can be changed from .flaot to dtype=dtype (when bf16)
-        # wkv_states = torch.empty((N, B, n_head, head_size, head_size),
-        wkv_states = torch.empty((N, B, 1, n_head, head_size, head_size),
+        wkv_states = torch.empty((N, B, n_head, head_size, head_size),
+        # wkv_states = torch.empty((N, B, 1, n_head, head_size, head_size),
                                  device=device,
                                 #  dtype=dtype)
                                  dtype=torch.float)

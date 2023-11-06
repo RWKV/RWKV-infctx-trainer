@@ -22,8 +22,17 @@ class RWKV_ChannelMix(JITModClass):
         self.receptance = nn.Linear(n_embd, n_embd, bias=False)
         self.value = nn.Linear(dim_ffn, n_embd, bias=False)
 
-    @JITModMethod
+    # forwarding channel mix given the model weights and the input tokens and states.
+    #
+    # Given:
+    # - Incoming token embedding size of shape [batch_size, seq_len, embedding_size]
+    # - Last shift states of the various batches [batch_size, state_size]
+    #
+    # Returns a pair 
+    # - of output embedding of shape [batch_size, seq_len, embedding_size]
+    # - and the last output state of shape [batch_size, state_size]
     @TCompileMax
+    @JITModMethod
     def forward(self, x, last_state: torch.Tensor):
         # out_emb, out_state = channelMix_batchForward(
         #     self.time_mix_k,self.time_mix_r,

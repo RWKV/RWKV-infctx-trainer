@@ -2,7 +2,6 @@
 from .CoreDependencies import *
 from .OptimizedOps import modified_lerp
 
-
 class RWKV_TimeMix(JITModClass):
 
     def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att):
@@ -55,10 +54,47 @@ class RWKV_TimeMix(JITModClass):
         self.gate = nn.Linear(n_embd, dim_att, bias=False)
         self.ln_x = nn.GroupNorm(n_head, dim_att)
 
-    # @TCompileMax
+
+    # forwarding time mix given the model weights and the input tokens and states.
     #
-    # last_state, is a tuple of (tokenshift_state, wkv_state)
+    # Given:
+    # - Incoming token embedding size of shape [batch_size, seq_len, embedding_size]
+    # - Last states containing of shape [
+    #       [batch_size, state_size] ## Channel mix state,
+    #       [batch_size, n_head, head_size, head_size] ## WKV state
+    #   ]
+    #
+    # Returns a pair 
+    # - of output embedding of shape [batch_size, seq_len, embedding_size]
+    # - and the last output state of shape [
+    #       [batch_size, state_size] ## Channel mix state,
+    #       [batch_size, n_head, head_size, head_size] ## WKV state
+    #   ]
+    @TCompileMax
+    @JITModMethod
     def forward(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
+        # Get the x sizing, and the chunking length
+        B, TT, C = x.size()
+        chunk_len = 32
+
+        # Logits to return
+        x_logits = torch.zeros(B, TT, C, device=x.device, dtype=x.dtype)
+
+        # Process in chunks
+        for i in range(0, TT, chunk_len):
+            # Get the chunk
+            chunk = x[:, i:i+chunk_len]
+
+            # Process the chunk
+            chunk_logits, last_state = self._forward_noBatching(chunk, last_state)
+
+            # Store the chunk logits
+            x_logits[:, i:i+chunk_len] = chunk_logits
+        
+        # Return the logits and the state
+        return (x_logits, last_state) 
+
+    def _forward_noBatching(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
         # Get the x sizing
         B, TT, C = x.size()
 
@@ -66,10 +102,10 @@ class RWKV_TimeMix(JITModClass):
         xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
     
         # Get the xk, xv, xr, xg
-        xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
-        xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
-        xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-        xg = x * self.time_mix_g + xx * (1 - self.time_mix_g)
+        xk = modified_lerp(x, self.time_mix_k, xx)
+        xv = modified_lerp(x, self.time_mix_v, xx)
+        xr = modified_lerp(x, self.time_mix_r, xx)
+        xg = modified_lerp(x, self.time_mix_g, xx)
 
         r = self.receptance(xr).view(B, TT, self.n_head, 1, -1)
         k = self.key(xk).view(B, TT, self.n_head, -1, 1)
@@ -79,33 +115,23 @@ class RWKV_TimeMix(JITModClass):
         # Compute attent and the initial output tensor
         at = k @ v
         u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
-        w = self.time_decay.exp().neg().exp().reshape(1,1, self.n_head,-1,1)
+
         # The WKV state to update
         if last_state[1] is None:
-            # wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
-            wkv_state = torch.zeros((B, 1, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
+            wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
         else:
-            # Clone is required, due to the way backprop works
             wkv_state = last_state[1].clone().to(r.dtype)
         
         # Slightly inefficent, but it works, lets compute all the tokens
-        ms = [wkv_state]
-        
-        for t in range(1,TT+1):
-            ms = ms + [at[:,t-1] + ms[t-1] * w]
+        out = (u * r) @ at
+        w = self.time_decay.exp().neg().exp().reshape(1, self.n_head,-1,1)
+        for t in range(TT):
+            out[:,t] += r[:,t] @ wkv_state
             
-        out = (u * r ) @ at + (r @ torch.cat(ms[:-1],1))
-        
-        # for t in range(TT):
-        #     # We intentionally do not use the following ...
-        #     # out[:,t] += r[:,t] @ wkv_state
-        # 
-        #     # As the wkv_state object will be modified, and we need to apply @
-        #     # to a constant value, or it will cuase backprop errors
-        #     out[:,t] += r[:,t] @ last_state[1].to(r.dtype)
-        # 
-        #     wkv_state *= w
-        #     wkv_state += at[:,t]
+            # We make a clone copy, so the previous object backprop state is tracked seperately
+            wkv_state = wkv_state.clone()
+            wkv_state *= w
+            wkv_state += at[:,t]
 
         # Compute the final x output
         x_logits = out.view(-1, C)
@@ -113,6 +139,5 @@ class RWKV_TimeMix(JITModClass):
         x_logits = self.output(x_logits * g)
 
         # Return the logits and the state
-        # return x_logits, (x[:,-1].clone(),wkv_state)
-        return x_logits, (x[:,-1],ms[-1])
-    
+        return (x_logits, (x[:,-1],wkv_state))
+        # return x_logits, (x[:,-1],ms[-1])
