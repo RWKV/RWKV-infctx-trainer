@@ -19,15 +19,9 @@ def deepspeed_checkpoint(*args, **kwargs):
 # RWKV: State Blocks
 ### ---
 
-class TimeMixState:
-
-    def __init__(self, shift_state: torch.Tensor, wkv_state: torch.Tensor):
-        self.shift_state = shift_state
-        self.wkv_state = wkv_state
-
 class BlockState:
 
-    def __init__(self, time_mix_state: TimeMixState,
+    def __init__(self, time_mix_state: tuple[torch.Tensor,torch.Tensor],
                  channel_mix_state: torch.Tensor):
         self.time_mix_state = time_mix_state
         self.channel_mix_state = channel_mix_state
@@ -62,12 +56,12 @@ class BlockStateList:
 
     def __getitem__(self, layer: int):
         return BlockState(
-            TimeMixState(self.shift_states[layer, 0], self.wkv_states[layer]),
+            (self.shift_states[layer, 0], self.wkv_states[layer]),
             (self.shift_states[layer, 1]))
 
     def __setitem__(self, layer: int, state: BlockState):
-        self.shift_states[layer, 0] = state.time_mix_state.shift_state
-        self.wkv_states[layer] = state.time_mix_state.wkv_state
+        self.shift_states[layer, 0] = state.time_mix_state[0]
+        self.wkv_states[layer] = state.time_mix_state[1]
         self.shift_states[layer, 1] = state.channel_mix_state
 
 ### ---
@@ -127,12 +121,12 @@ class RWKV_TimeMix(JITModClass):
         self.ln_x = nn.GroupNorm(n_head, dim_att)
 
     # @TCompileMax
-    def forward(self, x, last_state: TimeMixState):
+    def forward(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
         # Get the x sizing
         B, TT, C = x.size()
 
         # Perform the tokenshift, and get the respective state
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
+        xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
     
         # Get the xk, xv, xr, xg
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
@@ -150,12 +144,12 @@ class RWKV_TimeMix(JITModClass):
         u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
         w = self.time_decay.exp().neg().exp().reshape(1,1, self.n_head,-1,1)
         # The WKV state to update
-        if last_state.wkv_state is None:
+        if last_state[1] is None:
             # wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
             wkv_state = torch.zeros((B, 1, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
         else:
             # Clone is required, due to the way backprop works
-            wkv_state = last_state.wkv_state.clone().to(r.dtype)
+            wkv_state = last_state[1].clone().to(r.dtype)
         
         # Slightly inefficent, but it works, lets compute all the tokens
         ms = [wkv_state]
@@ -171,7 +165,7 @@ class RWKV_TimeMix(JITModClass):
         # 
         #     # As the wkv_state object will be modified, and we need to apply @
         #     # to a constant value, or it will cuase backprop errors
-        #     out[:,t] += r[:,t] @ last_state.wkv_state.to(r.dtype)
+        #     out[:,t] += r[:,t] @ last_state[1].to(r.dtype)
         # 
         #     wkv_state *= w
         #     wkv_state += at[:,t]
@@ -182,8 +176,8 @@ class RWKV_TimeMix(JITModClass):
         x_logits = self.output(x_logits * g)
 
         # Return the logits and the state
-        # return x_logits, TimeMixState(x[:,-1].clone(),wkv_state)
-        return x_logits, TimeMixState(x[:,-1],ms[-1])
+        # return x_logits, (x[:,-1].clone(),wkv_state)
+        return x_logits, (x[:,-1],ms[-1])
     
 ### ---
 
