@@ -112,26 +112,36 @@ class RWKV_TimeMix(JITModClass):
         v = self.value(xv).view(B, TT, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
-        # Compute attent and the initial output tensor
-        at = k @ v
-        u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
-
         # The WKV state to update
         if last_state[1] is None:
-            wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
+            wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size)).to(r.dtype)
         else:
             wkv_state = last_state[1].clone().to(r.dtype)
         
-        # Slightly inefficent, but it works, lets compute all the tokens
-        out = (u * r) @ at
-        w = self.time_decay.exp().neg().exp().reshape(1, self.n_head,-1,1)
-        for t in range(TT):
-            out[:,t] += r[:,t] @ wkv_state
+        # # Compute attent and the initial output tensor
+        # at = k @ v
+        # u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
+
+        # # Slightly inefficent, but it works, lets compute all the tokens
+        # w = self.time_decay.exp().neg().exp().reshape(1, self.n_head,-1,1)
+
+        # out = (u * r) @ at
+        # for t in range(TT):
+        #     out[:,t] += r[:,t] @ wkv_state
             
-            # We make a clone copy, so the previous object backprop state is tracked seperately
-            wkv_state = wkv_state.clone()
-            wkv_state *= w
-            wkv_state += at[:,t]
+        #     # We make a clone copy, so the previous object backprop state is tracked seperately
+        #     wkv_state = wkv_state.clone()
+        #     wkv_state *= w
+        #     wkv_state += at[:,t]
+
+        wkv_state, out = compute_wkv_state(
+            k, v, r,
+            self.time_faaaa,
+            self.time_decay,
+            wkv_state, 
+            self.n_head, self.head_size,
+            B, TT
+        )
 
         # Compute the final x output
         x_logits = out.view(-1, C)
@@ -141,3 +151,37 @@ class RWKV_TimeMix(JITModClass):
         # Return the logits and the state
         return (x_logits, (x[:,-1],wkv_state))
         # return x_logits, (x[:,-1],ms[-1])
+
+def compute_wkv_state(
+        k, v, r,
+        time_faaaa: torch.nn.Parameter,
+        time_decay: torch.nn.Parameter,
+        wkv_state, 
+        n_head:int, head_size:int,
+        B:int, TT:int
+    ):
+    # Compute attent and the initial output tensor
+    at = k @ v
+    u = time_faaaa.view(1,1,n_head, 1, -1)
+
+    # Slightly inefficent, but it works, lets compute all the tokens
+    w = time_decay.exp().neg().exp().reshape(1, n_head,-1,1)
+
+    out = (u * r) @ at
+    for t in range(TT):
+        out[:,t] += r[:,t] @ wkv_state
+        
+        # We make a clone copy, so the previous object backprop state is tracked seperately
+        wkv_state = wkv_state.clone()
+        wkv_state *= w
+        wkv_state += at[:,t]
+
+    return wkv_state, out
+
+
+# @TCompileMax
+# @JITFunction
+# def x_logits_output_parsing(out_emb, head_size_divisor, B, TT, C, self_ln_x, self_output, g):
+#     x_logits = out_emb.view(-1, C)
+#     x_logits = self_ln_x(x_logits / head_size_divisor).view(B, TT, C)
+#     return self_output(x_logits * g)
