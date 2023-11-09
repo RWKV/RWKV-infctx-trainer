@@ -608,114 +608,114 @@ class RWKV(L.LightningModule):
         #         zip(self.blocks,
         #             BlockStateList(last_shift_states, last_wkv_states))):
         # ---
-        # for i in range(len(self.blocks)):
-        #     block = self.blocks[i]
-        #     last_state = cur_bs_list[i]
-        #     if self.grad_cp:
-        #         output_x, new_state = deepspeed_checkpoint(
-        #             block, output_x, last_state)
-        #     else:
-        #         output_x, new_state = block(output_x, last_state)
-        #     new_states[i] = new_state
+        for i in range(len(self.blocks)):
+            block = self.blocks[i]
+            last_state = cur_bs_list[i]
+            if self.grad_cp:
+                output_x, new_state = deepspeed_checkpoint(
+                    block, output_x, last_state)
+            else:
+                output_x, new_state = block(output_x, last_state)
+            new_states[i] = new_state
 
         ########
-        ### Forking block loop
+        ### Forking block loop (its slower sadly)
         #######
 
-        # Configuring the chunk sizes
-        first_round_chunk_size = 256
+        # # Configuring the chunk sizes
+        # first_round_chunk_size = 256
         
-        # Next round chunk sizes forumlation
-        def nextRoundChunkSize(t):
-            return first_round_chunk_size
+        # # Next round chunk sizes forumlation
+        # def nextRoundChunkSize(t):
+        #     return first_round_chunk_size
 
-        # First round, first block
-        def firstRound_firstBlock_subProcess(
-                block:Block, last_state:BlockState, 
-                in_x:torch.tensor, grad_cp):
-            if grad_cp:
-                out_x, new_state = deepspeed_checkpoint(
-                    block, in_x, last_state)
-            else:
-                out_x, new_state = block(in_x, last_state)
-            return out_x, new_state
+        # # First round, first block
+        # def firstRound_firstBlock_subProcess(
+        #         block:Block, last_state:BlockState, 
+        #         in_x:torch.tensor, grad_cp):
+        #     if grad_cp:
+        #         out_x, new_state = deepspeed_checkpoint(
+        #             block, in_x, last_state)
+        #     else:
+        #         out_x, new_state = block(in_x, last_state)
+        #     return out_x, new_state
             
-        # First round, next block
-        def firstRound_nextBlock_subProcess(
-                block:Block, last_state:BlockState, 
-                in_x_promise: torch.jit.Future[torch.Tensor], 
-                grad_cp):
-            in_x, prv_layer_state = torch.jit.wait(in_x_promise)
-            return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
+        # # First round, next block
+        # def firstRound_nextBlock_subProcess(
+        #         block:Block, last_state:BlockState, 
+        #         in_x_promise: torch.jit.Future[torch.Tensor], 
+        #         grad_cp):
+        #     in_x, prv_layer_state = torch.jit.wait(in_x_promise)
+        #     return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
         
-        # Next round, sub process
-        def nextRound_firstBlock_subProcess(
-            block:Block, last_state_promise: torch.jit.Future[BlockState],
-            in_x:torch.Tensor, grad_cp):
-            last_x, last_state = torch.jit.wait(last_state_promise)
-            return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
+        # # Next round, sub process
+        # def nextRound_firstBlock_subProcess(
+        #     block:Block, last_state_promise: torch.jit.Future[BlockState],
+        #     in_x:torch.Tensor, grad_cp):
+        #     last_x, last_state = torch.jit.wait(last_state_promise)
+        #     return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
     
-        # Next round, next block
-        def nextRound_nextBlock_subProcess(
-            block:Block, last_state_promise: torch.jit.Future[BlockState],
-            in_x_promise: torch.jit.Future[torch.Tensor], 
-            grad_cp):
-            last_x, last_state = torch.jit.wait(last_state_promise)
-            in_x, prv_layer_state = torch.jit.wait(in_x_promise)
-            return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
+        # # Next round, next block
+        # def nextRound_nextBlock_subProcess(
+        #     block:Block, last_state_promise: torch.jit.Future[BlockState],
+        #     in_x_promise: torch.jit.Future[torch.Tensor], 
+        #     grad_cp):
+        #     last_x, last_state = torch.jit.wait(last_state_promise)
+        #     in_x, prv_layer_state = torch.jit.wait(in_x_promise)
+        #     return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
 
-        # Final x value futures
-        output_x_futures = []
+        # # Final x value futures
+        # output_x_futures = []
         
-        # Highly experimental first round token pass with JIT fork
-        first_round_futures = []
-        for i in range(len(self.blocks)):
-            if i == 0:
-                future = torch.jit.fork(
-                    firstRound_firstBlock_subProcess, self.blocks[i], 
-                    cur_bs_list[i], x[:,:first_round_chunk_size], self.grad_cp
-                )
-            else:
-                future = torch.jit.fork(
-                    firstRound_nextBlock_subProcess, self.blocks[i], 
-                    cur_bs_list[i], first_round_futures[i-1], self.grad_cp
-                )
-            first_round_futures.append(future)
-        output_x_futures.append(first_round_futures[-1])
+        # # Highly experimental first round token pass with JIT fork
+        # first_round_futures = []
+        # for i in range(len(self.blocks)):
+        #     if i == 0:
+        #         future = torch.jit.fork(
+        #             firstRound_firstBlock_subProcess, self.blocks[i], 
+        #             cur_bs_list[i], x[:,:first_round_chunk_size], self.grad_cp
+        #         )
+        #     else:
+        #         future = torch.jit.fork(
+        #             firstRound_nextBlock_subProcess, self.blocks[i], 
+        #             cur_bs_list[i], first_round_futures[i-1], self.grad_cp
+        #         )
+        #     first_round_futures.append(future)
+        # output_x_futures.append(first_round_futures[-1])
 
-        # Lets start doing the next round iterations
-        next_round_futures = first_round_futures
+        # # Lets start doing the next round iterations
+        # next_round_futures = first_round_futures
 
-        # Lets start the next round iterations
-        idx = first_round_chunk_size
-        while idx < T:
-            increment = nextRoundChunkSize(idx)
-            for i in range(len(self.blocks)):
-                if i == 0:
-                    future = torch.jit.fork(
-                        nextRound_firstBlock_subProcess, self.blocks[i], 
-                        next_round_futures[i], x[:,idx:idx+increment], self.grad_cp
-                    )
-                else:
-                    future = torch.jit.fork(
-                        nextRound_nextBlock_subProcess, self.blocks[i], 
-                        next_round_futures[i], next_round_futures[i-1], self.grad_cp
-                    )
-                next_round_futures[i] = future
-            output_x_futures.append(next_round_futures[-1])
-            idx += increment
+        # # Lets start the next round iterations
+        # idx = first_round_chunk_size
+        # while idx < T:
+        #     increment = nextRoundChunkSize(idx)
+        #     for i in range(len(self.blocks)):
+        #         if i == 0:
+        #             future = torch.jit.fork(
+        #                 nextRound_firstBlock_subProcess, self.blocks[i], 
+        #                 next_round_futures[i], x[:,idx:idx+increment], self.grad_cp
+        #             )
+        #         else:
+        #             future = torch.jit.fork(
+        #                 nextRound_nextBlock_subProcess, self.blocks[i], 
+        #                 next_round_futures[i], next_round_futures[i-1], self.grad_cp
+        #             )
+        #         next_round_futures[i] = future
+        #     output_x_futures.append(next_round_futures[-1])
+        #     idx += increment
 
-        # Lets get the new states from the final round futures
-        for i in range(len(self.blocks)):
-            tmp_x, new_state = torch.jit.wait(next_round_futures[i])
-            new_states[i] = new_state
+        # # Lets get the new states from the final round futures
+        # for i in range(len(self.blocks)):
+        #     tmp_x, new_state = torch.jit.wait(next_round_futures[i])
+        #     new_states[i] = new_state
         
-        # Lets process the final output_x_futures
-        output_x, tmp_state = torch.jit.wait(output_x_futures[0])
-        for i in range(1, len(output_x_futures)):
-            tmp_x, tmp_state = torch.jit.wait(output_x_futures[i])
-            output_x = torch.cat((output_x, tmp_x), dim=1)
-        output_x = output_x[:, :T]
+        # # Lets process the final output_x_futures
+        # output_x, tmp_state = torch.jit.wait(output_x_futures[0])
+        # for i in range(1, len(output_x_futures)):
+        #     tmp_x, tmp_state = torch.jit.wait(output_x_futures[i])
+        #     output_x = torch.cat((output_x, tmp_x), dim=1)
+        # output_x = output_x[:, :T]
 
         # Final layernorm and head output
         output_x = self.ln_out(output_x)
