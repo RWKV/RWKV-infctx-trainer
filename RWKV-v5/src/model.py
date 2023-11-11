@@ -1,9 +1,10 @@
-########################################################################################################
+### ---
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
-########################################################################################################
+### ---
 
 import gc, math, os
 from random import randint
+import time
 from typing import List, Optional
 
 import numpy as np
@@ -28,26 +29,27 @@ from torch.utils.cpp_extension import load
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 CUDA_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../cuda"))
 
-########################################################################################################
+### ---
 # JIT / torch compile special handling
-########################################################################################################
+### ---
 
-# Currently the features we need for torch compile, is avaliable only in
-# 2.1 nightly build (and is expected to be in 2.1 official release)
-#
-# However because the nightly build torch.compile behaviour has been unstable
-# the versioning code to check for enabling toch compile will not be used, 
-# until we confirm a stable version of torch.compile
+# Because we are using APIs avaliable only to pytorch 2.1.0
+# We will throw an error if the user is using a lower version
 from packaging import version
 def is_torch_version_above(required_version):
     torch_version = version.parse(torch.__version__.split('+')[0])
     return torch_version >= version.parse(required_version)
-IS_TORCH_2_1 = is_torch_version_above("2.0.9999")
+IS_TORCH_2_1_COMPATIBLE = is_torch_version_above("2.0.9999")
 
 # Get the JIT / torch compile option flags from the environment
-RWKV_JIT_ON        = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
-RWKV_TORCH_COMPILE = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
+# This default is FOR inference mode, the trainer mode default is configured in the lightning_trainer.py
+RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
+RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
 RWKV_TORCH_RUN_MODE = None
+
+# Disable torch compile if its not atleast v2.1
+if not IS_TORCH_2_1_COMPATIBLE:
+    RWKV_TORCH_COMPILE = False
 
 # We enable JITMod*/Function when supporting torch.jit
 # We use TorchCompile* when supporting torch compile
@@ -131,9 +133,9 @@ print(f"[RWKV.model] Running RWKV model using '{RWKV_TORCH_RUN_MODE}' with torch
 def deepspeed_checkpoint(*args, **kwargs):
     return deepspeed.checkpointing.checkpoint(*args, **kwargs)
 
-########################################################################################################
+### ---
 # RWKV: State Blocks
-########################################################################################################
+### ---
 
 class TimeMixState:
 
@@ -175,7 +177,8 @@ class BlockStateList:
     @staticmethod
     def empty(N, B, C, n_head, head_size, device, dtype):
         # @TODO: confirm if dtype can be changed from .flaot to dtype=dtype (when bf16)
-        wkv_states = torch.empty((N, B, n_head, head_size, head_size),
+        # wkv_states = torch.empty((N, B, n_head, head_size, head_size),
+        wkv_states = torch.empty((N, B, 1, n_head, head_size, head_size),
                                  device=device,
                                 #  dtype=dtype)
                                  dtype=torch.float)
@@ -192,9 +195,9 @@ class BlockStateList:
         self.wkv_states[layer] = state.time_mix_state.wkv_state
         self.shift_states[layer, 1] = state.channel_mix_state.shift_state
 
-########################################################################################################
+### ---
 # RWKV: RWKV Time-mix + RWKV Channel-mix
-########################################################################################################
+### ---
 
 class RWKV_TimeMix(JITModClass):
 
@@ -208,12 +211,15 @@ class RWKV_TimeMix(JITModClass):
 
         self.n_head = n_head
         self.head_size = head_size
+        self.head_size_divisor = 8
 
-        # Optimized chunk length is fixed for now
+        # Optimized timemix chunk length is fixed for now
         self.chunk_len = 512
         # assert ctx_len % self.chunk_len == 0
 
-        with torch.no_grad():  # fancy init
+        # V5-R4 changes
+        # https://github.com/BlinkDL/RWKV-LM/commit/5aab658f945ba80745d36c2ab411fb43df3a74f9    
+        with torch.no_grad():
             ratio_0_to_1 = layer_id / (n_layer - 1)  # 0 to 1
             ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
             ddd = torch.ones(1, 1, n_embd)
@@ -224,154 +230,99 @@ class RWKV_TimeMix(JITModClass):
             self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
             self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
             self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-
-            # R3 changes
             self.time_mix_g = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-            self.gate = nn.Linear(n_embd, dim_att, bias=False)
 
             # fancy time_decay
-            decay_speed = torch.ones(n_head)
-            for h in range(n_head):
-                decay_speed[h] = -8 + 7 * (h / (n_head - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
-            self.time_decay = nn.Parameter(decay_speed)
+            decay_speed = torch.ones(dim_att)
+            for n in range(dim_att):
+                decay_speed[n] = -6 + 5 * (n / (dim_att - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
+            self.time_decay = nn.Parameter(decay_speed.reshape(self.n_head, self.head_size))
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
-            # V5-R2 changes
-            self.time_faaaa = nn.Parameter(torch.ones(n_head) * 0.05)
-            # self.time_first = nn.Parameter(torch.ones(n_head) * (-3.0))
+            tmp = torch.zeros(dim_att)
+            for n in range(dim_att):
+                zigzag = ((n + 1) % 3 - 1) * 0.1
+                tmp[n] = ratio_0_to_1 * (1 - (n / (dim_att - 1))) + zigzag
+
+            self.time_faaaa = nn.Parameter(tmp.reshape(self.n_head, self.head_size))
 
         # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
         self.key = nn.Linear(n_embd, dim_att, bias=False)
+
         self.value = nn.Linear(n_embd, dim_att, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
+        self.gate = nn.Linear(n_embd, dim_att, bias=False)
         self.ln_x = nn.GroupNorm(n_head, dim_att)
 
-    # this is based on jit_func(self,x)
-    @JITModMethod
-    def _forward_rkv_chunk(self, x, B, TT, last_state: TimeMixState):
-        # Mix x with the previous timestep to produce xk, xv, xr
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
-        # xx = self.time_shift(x)
+    # @TCompileMax
+    def forward(self, x, last_state: TimeMixState):
+        # Get the x sizing
+        B, TT, C = x.size()
 
+        # Perform the tokenshift, and get the respective state
+        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
+    
+        # Get the xk, xv, xr, xg
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
         xg = x * self.time_mix_g + xx * (1 - self.time_mix_g)
 
-        r = self.receptance(xr).view(B, TT, self.n_head, self.head_size).transpose(1, 2)            # BTC -> BHTS
-        k = self.key(xk).view(B, TT, self.n_head, self.head_size).transpose(1, 2).transpose(-2, -1) # BTC -> BHTS -> BHST
-        v = self.value(xv).view(B, TT, self.n_head, -1).transpose(1, 2)                             # BTC -> BHTS
+        r = self.receptance(xr).view(B, TT, self.n_head, 1, -1)
+        k = self.key(xk).view(B, TT, self.n_head, -1, 1)
+        v = self.value(xv).view(B, TT, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
-        return r, k, v, g
-
-    def _forward_wkbs_chunk(self, T, r, k, v):
-        H = self.n_head
-
-        w = torch.exp(-torch.exp(self.time_decay.float())).unsqueeze(-1)
-
-        # V5-R2 changes
-        u = self.time_faaaa.float().unsqueeze(-1)
-        # u = torch.exp(self.time_first.float()).unsqueeze(-1)
-
-        ws = w.pow(T).reshape(1, H, 1, 1)
-        ind = torch.arange(T-1, -1, -1, device=r.device).unsqueeze(0).repeat(H, 1)
-        w = w.repeat(1, T).pow(ind)
-
-        wk = w.reshape(1, H, 1, T)
-        wb = wk.transpose(-2, -1).flip(2)
-
-        w = torch.cat([w[:, 1:], u], dim=1)
-        w = F.pad(w, (0, T))
-        w = torch.tile(w, [T])
-        w = w[:, :-T].reshape(-1, T, 2 * T - 1)
-        w = w[:, :, T-1:].reshape(1, H, T, T)
-
-        w = w.to(dtype=r.dtype)
-        wk = wk.to(dtype=r.dtype)
-        wb = wb.to(dtype=r.dtype)
-        ws = ws.to(dtype=r.dtype)
-
-        return w, wk, wb, ws
-
-    @JITModMethod
-    def _forward_state_chunk(self, r, k, v, g, w, wk, wb, ws, x_l, last_state: TimeMixState):
-        B, H, TT, S = r.size()
-        T = TT
-
-        # s = torch.zeros(B, H, S, S, device=r.device, dtype=r.dtype)  # state
-        s = last_state.wkv_state
-        if r.dtype == torch.bfloat16 and s.dtype != torch.bfloat16:
-            s = s.contiguous().to(torch.bfloat16)
-
-        x = torch.zeros(B, H, TT, S, device=r.device, dtype=r.dtype) # output
-
-        ########################################################################
-        for i in range(TT // T):
+        # Compute attent and the initial output tensor
+        at = k @ v
+        u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
+        w = self.time_decay.exp().neg().exp().reshape(1,1, self.n_head,-1,1)
+        # The WKV state to update
+        if last_state.wkv_state is None:
+            # wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
+            wkv_state = torch.zeros((B, 1, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
+        else:
+            # Clone is required, due to the way backprop works
+            wkv_state = last_state.wkv_state.clone().to(r.dtype)
         
-            rr = r[:, :, i*T:i*T+T, :]
-            kk = k[:, :, :, i*T:i*T+T]
-            vv = v[:, :, i*T:i*T+T, :]
-
-            x[:, :, i*T:i*T+T, :] = ((rr @ kk) * w) @ vv + (rr @ s) * wb
-
-            s = ws * s + (kk * wk) @ vv
-        ########################################################################
+        # Slightly inefficent, but it works, lets compute all the tokens
+        ms = [wkv_state]
         
-        x = x.transpose(1, 2).contiguous().view(B * TT, H*S) # BHTS -> BTHS -> BTC
+        for t in range(1,TT+1):
+            ms = ms + [at[:,t-1] + ms[t-1] * w]
+            
+        out = (u * r ) @ at + (r @ torch.cat(ms[:-1],1))
+        
+        # for t in range(TT):
+        #     # We intentionally do not use the following ...
+        #     # out[:,t] += r[:,t] @ wkv_state
+        # 
+        #     # As the wkv_state object will be modified, and we need to apply @
+        #     # to a constant value, or it will cuase backprop errors
+        #     out[:,t] += r[:,t] @ last_state.wkv_state.to(r.dtype)
+        # 
+        #     wkv_state *= w
+        #     wkv_state += at[:,t]
 
-        # x = self.ln_x(x/self.head_size_divisor).view(B, TT, H*S)
-        x = self.ln_x(x/8).view(B, TT, H*S)
-
-        # Fix missing *g for output as per :
-        # https://github.com/RWKV/RWKV-infctx-trainer/commit/beb46d599042b77d53db9c7fa59a5966e7d33719#r126730367
-        return self.output(x*g), TimeMixState(x_l, s)
-    
-    def _forward_chunk(self, x, last_state: TimeMixState):
-        # Forward sizings (Batch, Time/ContextLength, Tokens)
-        B, TT, C = x.size()
-        B = torch.tensor(B, device=x.device, dtype=torch.int32)
-        TT = torch.tensor(TT, device=x.device, dtype=torch.int32)
-
-        # Get r, k, v, g (self.jit_func(x))
-        r, k, v, g = self._forward_rkv_chunk(x, B, TT, last_state)
-
-        # Get w, wk, wb, ws (self.jit_func_2)
-        w, wk, wb, ws = self._forward_wkbs_chunk(TT, r, k, v)
-
-        # Does the state forwarding
-        return self._forward_state_chunk(r, k, v, g, w, wk, wb, ws, x[:, -1], last_state)
-
-    @TCompileMax
-    def forward(self, x, last_state: TimeMixState):
-        # Get the x sizing
-        B, TT, C = x.size()
-
-        # Chunk length to split by, 
-        # we probably can reoptimize this at some point
-        chunk_len = self.chunk_len
-
-        # Logits to return
-        x_logits = torch.zeros(B, TT, C, device=x.device, dtype=x.dtype)
-
-        # Split the input by TT chunks
-        for i in range(0, TT, chunk_len):
-            x_chunk = x[:, i:i+chunk_len, :]
-            chunk_logits, last_state = self._forward_chunk(x_chunk, last_state)
-            x_logits[:, i:i+chunk_len, :] = chunk_logits
+        # Compute the final x output
+        x_logits = out.view(-1, C)
+        x_logits = self.ln_x(x_logits / 8).view(B, TT, C)
+        x_logits = self.output(x_logits * g)
 
         # Return the logits and the state
-        return x_logits, last_state
-
-
-########################################################################################################
+        # return x_logits, TimeMixState(x[:,-1].clone(),wkv_state)
+        return x_logits, TimeMixState(x[:,-1],ms[-1])
+    
+### ---
 
 
 class RWKV_ChannelMix(JITModClass):
 
     def __init__(self, layer_id, n_layer, n_embd, dim_ffn):
         super().__init__()
+        # self.layer_id = layer_id
+        # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
 
         with torch.no_grad():  # fancy init of time_mix
             ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
@@ -399,9 +350,9 @@ class RWKV_ChannelMix(JITModClass):
                 ChannelMixState(x[:, -1]))
 
 
-########################################################################################################
+### ---
 # The RWKV Model blocks
-########################################################################################################
+### ---
 
 class Block(nn.Module):
 
@@ -482,17 +433,17 @@ class L2Wrap(torch.autograd.Function):
         gy = gy * ctx.currentMask[:, None][None, :]
         return (grad_output, gy, None, None)
 
-########################################################################################################
+### ---
 # Static optimized functions
-########################################################################################################
+### ---
 
 # @ TCompileMax (no speed improvement)
 # def F_cross_entropy_reduction_none_optimized(logits, targets):
 #     return F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction="none")
 
-########################################################################################################
+### ---
 # Core RWKV module
-########################################################################################################
+### ---
 class RWKV(L.LightningModule):
 
     def __init__(self,
@@ -561,7 +512,10 @@ class RWKV(L.LightningModule):
                 raise ValueError(f"load_model file '{load_model}' does not exist")
 
             # Load the model weights
-            model_weights = torch.load(load_model, map_location='cpu')
+            if IS_TORCH_2_1_COMPATIBLE:
+                model_weights = torch.load(load_model, map_location='cpu', weights_only=True, mmap=True)
+            else:
+                model_weights = torch.load(load_model, map_location='cpu')
 
             # Get the model keys
             model_keys = list(model_weights.keys())
@@ -665,6 +619,10 @@ class RWKV(L.LightningModule):
             self.load_state_dict(model_weights)
             del model_weights
             gc.collect()
+
+        # Training based timings to track, and initialize
+        self._counting_tokens = 0
+        self._counting_time_start = 0
 
     def configure_optimizers(self):
         if self.bptt_learning == False:
@@ -986,6 +944,13 @@ class RWKV(L.LightningModule):
     # Main compute_loss function, this is called by the trainer loop
     #
     def compute_loss(self, batch, batch_idx, is_training_run: bool):
+
+        # Used for token/second performance tracking
+        if self._counting_tokens is None or batch_idx == 0:
+            self._counting_tokens = 0
+        if self._counting_time_start is None or batch_idx == 0:
+            self._counting_time_start = time.time()
+            
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
         ori_seq_mask = batch['attention_mask']
@@ -1151,8 +1116,8 @@ class RWKV(L.LightningModule):
                     # ---
                     # we map it to be a tensor, instead of the int directly, as this is more reliable across certain versions of torch/lightning
                     # https://discord.com/channels/992359628979568762/1148755392638234697/1148821863749931008
-                    forward_segment_count  = self.trainer.strategy.reduce(torch.Tensor([segment_count]).to(dtype=torch.int, device=cur_device), reduce_op="max")
-                    
+                    forward_segment_count  = self.trainer.strategy.reduce(torch.Tensor([segment_count]).to(torch.int), reduce_op="max")
+
                     # Convert to int, if its a torch tensor
                     if isinstance(forward_segment_count, torch.Tensor):
                         forward_segment_count = forward_segment_count.item()
@@ -1314,18 +1279,25 @@ class RWKV(L.LightningModule):
                 gc.collect()
                 # torch.cuda.empty_cache()
 
-        # Wandb logging only, if an active run exists
-        if wandb.run is not None:
+        # Wandb logging only, if an active run exists (only applies for training)
+        if wandb.run is not None and is_training_run:
             global_rank = self.global_rank
             global_device_count = self.trainer.num_devices * self.trainer.num_nodes
+
+            # Increment the counting tokens, and log it accordingly
+            self._counting_tokens += T
+
+            # Log the line values
             wandb.log({
-                'substep': batch_idx * global_device_count + global_rank,
-                'batchidx': batch_idx,
                 'global_rank': global_rank, 
                 'real_ctx_len': T, 
                 'train/loss': total_loss,
+                f'perf/tokens_total.gpu.{global_rank}': self._counting_tokens,
+                f'perf/tokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
+                'substep': (batch_idx * global_device_count + global_rank),
                 'trainer/global_step':self.global_step,
-                'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr']
+                'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
+                'batchidx': batch_idx
             })
 
         return total_loss
@@ -1351,9 +1323,9 @@ class RWKV(L.LightningModule):
         self.log('validation/loss', total_loss, prog_bar=True, sync_dist=True)
         return total_loss
 
-########################################################################################################
+### ---
 # SimpleRWKV, a wrapper for RWKV that allows for simple usage of the model
-########################################################################################################
+### ---
 
 # SimpleRWKV specific imports
 from transformers import PreTrainedTokenizerFast
