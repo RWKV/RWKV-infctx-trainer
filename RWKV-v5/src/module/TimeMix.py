@@ -1,7 +1,132 @@
 # Dependencies
 from .CoreDependencies import *
 from .OptimizedOps import modified_lerp
+import os
 
+# Current code file path
+code_file_path = os.path.realpath(__file__)
+code_dir = os.path.dirname(code_file_path)
+
+### ---
+# Special WKV5 CUDA kernel handling
+### ---
+
+# the cuda kernel (if its used)
+global wkv5_cuda_kernel
+wkv5_cuda_kernel = None
+
+# WKV5_CUDA autograd module
+class WKV5_CUDA(torch.autograd.Function):  
+
+    # WKV5 forwarding process
+    # NOTE: This will modify the state value as part of the forward process
+    @staticmethod
+    def forward(ctx, 
+            B:int, T:int, C:int, H:int, 
+            state:torch.Tensor, 
+            r:torch.Tensor, k:torch.Tensor, v:torch.Tensor, w:torch.Tensor, 
+            u:torch.Tensor, y:torch.Tensor
+        ):
+        with torch.no_grad():
+            # Save the sizing & dtype
+            ctx.B = B
+            ctx.T = T
+            ctx.C = C
+            ctx.H = H
+            dtype = r.dtype
+            ctx.dtype = dtype
+
+            # State and W is expected to be float32
+            assert state.dtype == torch.float32
+            assert w.dtype == torch.float32
+            assert state.is_contiguous()
+            assert w.is_contiguous()
+
+            # Rest can be their respective types, but they are expected
+            # to be consistent with each other
+            assert dtype == k.dtype
+            assert dtype == v.dtype
+            assert dtype == u.dtype
+            assert r.is_contiguous()
+            assert k.is_contiguous()
+            assert v.is_contiguous()
+            assert u.is_contiguous()
+
+            # Lets pre-compute the exp(-w) and exp(exp(-w))
+            ew = (-torch.exp(w.float())).contiguous()
+            eew = (torch.exp(ew)).contiguous()
+            ctx.save_for_backward(r, k, v, eew, ew, u, state.clone())
+
+            # Output logits
+            # y = torch.empty((B, T, C), device=r.device, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            
+            # Call the cuda kernel
+            if dtype == torch.bfloat16:
+                wkv5_cuda_kernel.forward_bf16(B, T, C, H, state, r, k, v, w, u, y)
+            elif dtype == torch.float16:
+                wkv5_cuda_kernel.forward_fp16(B, T, C, H, state, r, k, v, w, u, y)
+            elif dtype == torch.float32:
+                wkv5_cuda_kernel.forward_fp32(B, T, C, H, state, r, k, v, w, u, y)
+            else:
+                raise ValueError(f"Unsupported dtype {dtype} for WKV5_CUDA")
+            
+            # Logits and state
+            return y, state
+    
+    # WKV5 backward pass process
+    @staticmethod
+    def backward(ctx, gy):
+        with torch.no_grad():
+
+            # Get the sizing & dtype
+            B = ctx.B
+            T = ctx.T
+            C = ctx.C
+            H = ctx.H
+            dtype = ctx.dtype
+
+            # GY dtype
+            assert gy.dtype == dtype
+            assert gy.is_contiguous()
+            r, k, v, eew, ew, u, inState = ctx.saved_tensors
+
+            # Initialize all the backward pass vars required
+            gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            gw = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            
+            # Perform the backward pass
+            if dtype == torch.bfloat16:
+                wkv5_cuda_kernel.backward_bf16(B, T, C, H, inState, r, k, v, eew, ew, u, gy, gr, gk, gv, gw, gu)
+            elif dtype == torch.float16:
+                wkv5_cuda_kernel.backward_fp16(B, T, C, H, inState, r, k, v, eew, ew, u, gy, gr, gk, gv, gw, gu)
+            elif dtype == torch.float32:
+                wkv5_cuda_kernel.backward_fp32(B, T, C, H, inState, r, k, v, eew, ew, u, gy, gr, gk, gv, gw, gu)
+            else:
+                raise ValueError(f"Unsupported dtype {dtype} for WKV5_CUDA")
+            
+            gw = torch.sum(gw, 0).view(H, C//H)
+            gu = torch.sum(gu, 0).view(H, C//H)
+
+            # Backprop values
+            return (None, None, None, None, gr, gk, gv, gw, gu)
+       
+@TCompileDisable 
+def RUN_WKV5_CUDA(
+    B:int, T:int, C:int, H:int, 
+    state:torch.Tensor, 
+    r:torch.Tensor, k:torch.Tensor, v:torch.Tensor, w:torch.Tensor, 
+    u:torch.Tensor, y:torch.Tensor
+):
+    return WKV5_CUDA.apply(B, T, C, H, state, r, k, v, w, u, y)
+
+### ---
+# TimeMix block class handling
+### ---
+
+# RWKV TimeMix module
 class RWKV_TimeMix(JITModClass):
 
     def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att):
@@ -54,6 +179,50 @@ class RWKV_TimeMix(JITModClass):
         self.gate = nn.Linear(n_embd, dim_att, bias=False)
         self.ln_x = nn.GroupNorm(n_head, dim_att)
 
+        # Preload the CUDA kernel if needed
+        self.use_cuda = False
+        self._preload_cuda()
+
+    def _preload_cuda(self):
+        global wkv5_cuda_kernel, RWKV_NO_CUDA
+
+        # Skip preload if cuda is disabled
+        if RWKV_NO_CUDA is True:
+            self.use_cuda = False
+            return
+        
+        # Load cuda if needed
+        if wkv5_cuda_kernel is None:
+            # Head sizing
+            HEAD_SIZE = self.head_size
+
+            # Log the compillation block
+            print("---")
+            print(f"[RWKV.TimeMix] Compiling CUDA kernel with HEAD_SIZE={HEAD_SIZE}")
+
+            # The cuda kernel
+            wkv5_cuda_kernel = torch.utils.cpp_extension.load(
+                name="wkv5",
+                sources=[
+                    os.path.join(code_dir, "cuda/wkv5_op.cpp"),
+                    os.path.join(code_dir, "cuda/wkv5_cuda.cu"),
+                ],
+                verbose=True,
+                extra_cuda_cflags=[
+                    "-res-usage", 
+                    "--use_fast_math", 
+                    "-O3", "-Xptxas -O3", 
+                    "--extra-device-vectorization", 
+                    f"-D_N_={HEAD_SIZE}"
+                ]
+            )
+
+            # Close log the compillation block
+            print(f"[RWKV.TimeMix] CUDA kernel compiled & loaded globally")
+            print("---")
+        
+        # Initialize the cuda kernel
+        self.use_cuda = True
 
     # forwarding time mix given the model weights and the input tokens and states.
     #
@@ -70,31 +239,79 @@ class RWKV_TimeMix(JITModClass):
     #       [batch_size, state_size] ## Channel mix state,
     #       [batch_size, n_head, head_size, head_size] ## WKV state
     #   ]
-    @TCompileMax
-    @JITModMethod
     def forward(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
-        # Get the x sizing, and the chunking length
+        # # Run with cuda
+        # if self.use_cuda is True:
+        #     return self._forward_cuda(x, last_state)
+        
+        # Run without cuda (cpu mode, etc)
+        return self._forward_nocuda(x, last_state)
+        
+    def _forward_cuda(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
+        # Get the x sizing
         B, TT, C = x.size()
-        chunk_len = 32
+        H = self.n_head
+
+        # Perform the tokenshift, and get the respective state
+        xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
+    
+        # Get the xk, xv, xr, xg, and rkvg
+        xk = modified_lerp(x, self.time_mix_k, xx)
+        xv = modified_lerp(x, self.time_mix_v, xx)
+        xr = modified_lerp(x, self.time_mix_r, xx)
+        xg = modified_lerp(x, self.time_mix_g, xx)
+
+        r = self.receptance(xr).view(B, TT, self.n_head, 1, -1)
+        k = self.key(xk).view(B, TT, self.n_head, -1, 1)
+        v = self.value(xv).view(B, TT, self.n_head, 1, -1)
+        g = F.silu(self.gate(xg))
+
+        # Logits and state
+        x_logits = torch.zeros(B, TT, C, device=x.device, dtype=r.dtype).contiguous()
+        state = last_state[1].clone(memory_format=torch.contiguous_format).to(torch.float32)
+
+        # Perform the cuda forward pass
+        RUN_WKV5_CUDA(
+            B, TT, C, H, 
+            state, 
+            r, k, v, 
+            self.time_decay.float(), 
+            self.time_faaaa.to(r.dtype),
+            x_logits
+        )
+        return (x_logits, state)
+
+    # Doing the forward pass withotu CUDA, this is currently rather slow
+    # and is not recommended - but it works (awaiting future optimization)
+    #
+    # We intentionally split the forward pass into smaller chunks of 32
+    # to ensure it processes at a resonable rate / vram usage
+    @JITModMethod
+    @TCompileMax
+    def _forward_nocuda(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
+        # Get the x sizing
+        B, TT, C = x.size()
 
         # Logits to return
         x_logits = torch.zeros(B, TT, C, device=x.device, dtype=x.dtype)
 
         # Process in chunks
+        chunk_len = 32
         for i in range(0, TT, chunk_len):
             # Get the chunk
             chunk = x[:, i:i+chunk_len]
 
             # Process the chunk
-            chunk_logits, last_state = self._forward_noBatching(chunk, last_state)
+            chunk_logits, last_state = self._forward_nocuda_noChunking(chunk, last_state)
 
             # Store the chunk logits
             x_logits[:, i:i+chunk_len] = chunk_logits
         
         # Return the logits and the state
-        return (x_logits, last_state) 
+        return (x_logits, last_state)
 
-    def _forward_noBatching(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
+    # The no chunking varient of forwarding without cuda
+    def _forward_nocuda_noChunking(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
         # Get the x sizing
         B, TT, C = x.size()
 

@@ -46,9 +46,17 @@ IS_TORCH_2_1_COMPATIBLE = is_torch_version_above("2.0.9999")
 
 # Get the JIT / torch compile option flags from the environment
 # This default is FOR inference mode, the trainer mode default is configured in the lightning_trainer.py
-RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
-RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
+global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_TORCH_RUN_MODE
 RWKV_TORCH_RUN_MODE = None
+if 'RWKV_JIT_ON' not in globals():
+    RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
+if 'RWKV_TORCH_COMPILE' not in globals():
+    RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
+
+# The RWKV_NO_CUDA global
+global RWKV_NO_CUDA
+if 'RWKV_NO_CUDA' not in globals():
+    RWKV_NO_CUDA = os.getenv("RWKV_NO_CUDA", f"0").lower() in ("1", "true", "yes")
 
 # Disable torch compile if its not atleast v2.1
 if not IS_TORCH_2_1_COMPATIBLE:

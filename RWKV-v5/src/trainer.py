@@ -5,6 +5,8 @@ import torch
 import math
 import wandb
 
+global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
+
 # We extend the native pytorch lightning trainer to add the following
 #
 # - local "fabric" support, as the trainer object is one of the few
@@ -21,6 +23,8 @@ class RWKVLightningTrainer(Trainer):
             # Handle the rest of args, as per normal
             **kwargs,
         ):
+        # Use the global RWKV_NO_CUDA flag
+        global RWKV_NO_CUDA
 
         # trainer_config args (used for wndb logging)
         trainer_config = dict(kwargs)
@@ -69,6 +73,13 @@ class RWKVLightningTrainer(Trainer):
                 f"   - num_devices:             {num_devices}\n"+
                 f"   - accumulate_grad_batches: {accumulate_grad_batches}\n"
                 f"   - effective_batch_size:    {effective_batch_size}\n")
+            
+            # Disable CUDA, if the device type is NOT auto / cuda
+            # or if no CUDA devices was detected
+            if devices != "auto" and devices != "cuda":
+                RWKV_NO_CUDA = True
+            if num_devices <= 0:
+                RWKV_NO_CUDA = True
 
         # Update WANDB config
         # ---

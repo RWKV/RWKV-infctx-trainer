@@ -60,8 +60,6 @@ void cudac_mm8_one(unsigned long long N, unsigned long long M,
         N, M, x, w, w_stride, y, r, o, offset, tokenlength);
 }
 
-
-
 /*
 template <typename F>
 __global__ void kernel_forward(const int B, const int T, const int C, const int H,
@@ -121,7 +119,6 @@ __global__ void kernel_forward(const int B, const int T, const int C, const int 
     }
 }
 */
-
 
 //---------------
 //

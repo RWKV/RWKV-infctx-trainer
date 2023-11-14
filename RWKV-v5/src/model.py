@@ -2,6 +2,8 @@
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ### ---
 
+global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
+
 from .module.CoreDependencies import *
 from .module.ChannelMix import RWKV_ChannelMix
 from .module.TimeMix import RWKV_TimeMix
@@ -13,8 +15,8 @@ from .module.TimeMix import RWKV_TimeMix
 # ---
 
 # In the latest version of deepspeed + torch compile,
-# deepspeed.checkpointing now works ?
-# @TCompileDisable
+# deepspeed.checkpointing now works ? - this is inconsistent, so i am disabling for now
+@TCompileDisable
 def deepspeed_checkpoint(*args, **kwargs):
     return deepspeed.checkpointing.checkpoint(*args, **kwargs)
 
@@ -303,7 +305,6 @@ class RWKV(L.LightningModule):
         # Matmu precision check
         if torch_set_float32_matmul_precision is not None:
             torch.set_float32_matmul_precision(torch_set_float32_matmul_precision)
-
         self.emb = nn.Embedding(vocab_size, n_embd)
 
         # load(name=f"wkv_{self.ctx_len}_bf16",
@@ -568,7 +569,7 @@ class RWKV(L.LightningModule):
             return "stage" in cfg
         return -1
 
-    @TCompileMax
+    @TCompileBaseline
     def forward(self, idx: torch.Tensor, last_shift_states: torch.Tensor = None,
                 last_wkv_states: torch.Tensor = None):
         B, T = idx.size()
