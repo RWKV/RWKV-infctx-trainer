@@ -1,7 +1,5 @@
 # RWKV Infinite Context trainer
 
-**IMPORTANT NOTE: The infctx trainer is broken for the current v5 r4 changes:** (which is what the 1b5 model is trained on)
-
 > If you are new to RWKV, it would be better to find out more about us via our wiki first here: https://wiki.rwkv.com/
 
 RWKV trainer with
@@ -22,6 +20,8 @@ python3 lightning_trainer.py fit -c {your_config}.yaml
 Remember to modify the configuration for your own need. 
 
 See [RWKV-v4neo/config-example.yaml](./RWKV-v4neo/config-example.yaml) for documentation on the various options
+
+> NOTE: Due to current incomplete implementation, without state gradient, bptt_truncate is forced to be true
 
 ## Environment setup
 
@@ -82,7 +82,6 @@ python3 -m pip install -r requirements.txt
 - Start the training process `python3 lightning_trainer.py fit -c {your_config}.yaml`
 - Export the checkpoint after training is complete with `python3 export_checkpoint.py ../path/to/checkpoint/last.ckpt/ ../path/to/export/model.pth`
 - optional, run the dragon prompt as a quick sanity check `python3 dragon_test.py ../path/to/export/model.pth`
-- You should probably convert this to an fp16 model (todo script)
 
 In summary with code, from the trainer directory (eg. RWKV-v4neo)
 
