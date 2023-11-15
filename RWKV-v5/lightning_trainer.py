@@ -17,10 +17,21 @@ import sys, os, yaml
 # os.environ["PYTORCH_CUDA_ALLOC_CONF"] = PYTORCH_CUDA_ALLOC_CONF
 # print(f"[RWKV.lightning_trainer.py] Running with PYTORCH_CUDA_ALLOC_CONF={PYTORCH_CUDA_ALLOC_CONF}")
 
+# Global RWKV flags
+global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
+
 # Get the JIT / torch compile option flags default specific for lightning training mode
 # This enables torch compile by default
 RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
-RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"1").lower() in ("1", "true", "yes")
+RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
+
+# Disable CUDA for RWKV
+RWKV_NO_CUDA        = os.getenv("RWKV_NO_CUDA", "0").lower() in ("1", "true", "yes")
+
+# Set back to the env vars (so that the rest of the code can use it)
+os.environ["RWKV_JIT_ON"] = str(RWKV_JIT_ON)
+os.environ["RWKV_TORCH_COMPILE"] = str(RWKV_TORCH_COMPILE)
+os.environ["RWKV_NO_CUDA"] = str(RWKV_NO_CUDA)
 
 # Parse the global args, we have to do this manually
 # because argparse do not support --trainer.strategy
@@ -168,10 +179,10 @@ def process_auto_resume_ckpt():
         return
 
 
-  #  if not os.path.exists(auto_resume_ckpt_dir):
-  #      os.makedirs(auto_resume_ckpt_dir)
-  #      print(f"[RWKV.lightning_trainer.py] Created '{auto_resume_ckpt_dir}' directory (did not exist previously)")
-  #      return
+    #  if not os.path.exists(auto_resume_ckpt_dir):
+    #      os.makedirs(auto_resume_ckpt_dir)
+    #      print(f"[RWKV.lightning_trainer.py] Created '{auto_resume_ckpt_dir}' directory (did not exist previously)")
+    #      return
     
     # Get the list of directories in the --auto-resume-ckpt-dir
     auto_resume_ckpt_dir_list = os.listdir(auto_resume_ckpt_dir)

@@ -2,126 +2,11 @@
 # The RWKV Language Model - https://github.com/BlinkDL/RWKV-LM
 ### ---
 
-import gc, math, os
-from random import randint
-import time
-from typing import List, Optional
+global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 
-import numpy as np
-import torch
-# torch._C._jit_set_profiling_executor(True)
-# torch._C._jit_set_profiling_mode(True)
-import torch.nn as nn
-from torch.nn import functional as F
-
-import lightning as L
-from lightning.pytorch.utilities import rank_zero_info, rank_zero_only
-from lightning.pytorch.strategies import DeepSpeedStrategy
-
-import deepspeed
-from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
-import deepspeed.runtime.lr_schedules
-import wandb
-
-from torch.utils.cpp_extension import load
-
-# Script dir for various files
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-CUDA_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../cuda"))
-
-### ---
-# JIT / torch compile special handling
-### ---
-
-# Because we are using APIs avaliable only to pytorch 2.1.0
-# We will throw an error if the user is using a lower version
-from packaging import version
-def is_torch_version_above(required_version):
-    torch_version = version.parse(torch.__version__.split('+')[0])
-    return torch_version >= version.parse(required_version)
-IS_TORCH_2_1_COMPATIBLE = is_torch_version_above("2.0.9999")
-
-# Get the JIT / torch compile option flags from the environment
-# This default is FOR inference mode, the trainer mode default is configured in the lightning_trainer.py
-RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
-RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
-RWKV_TORCH_RUN_MODE = None
-
-# Disable torch compile if its not atleast v2.1
-if not IS_TORCH_2_1_COMPATIBLE:
-    RWKV_TORCH_COMPILE = False
-
-# We enable JITMod*/Function when supporting torch.jit
-# We use TorchCompile* when supporting torch compile
-# based on the current runtime settings
-if RWKV_TORCH_COMPILE:
-    RWKV_TORCH_RUN_MODE = "torch-compile"
-
-    JITModClass  = nn.Module
-    JITModMethod = lambda x: x
-    JITFunction  = lambda x: x
-
-    # PS: i have tried mode="max-autotune", and mode="reduce-overhead", however they crash
-    #     for now (8th July 2023). I may introduce them in the future once they are stable
-    #
-    #     Additionally, torch.compile has issues with the pytorch.lightning module directly
-    # ---
-
-    # We generally have 2 major options, either we use torch.compile
-    # onto the key top level functions (train, val, test, predict, etc)
-    # and let the compiler handle all the decision making on how to optimize
-    #
-    # However this was found to basically just match JIT level of performance exactly
-    # ---
-    # TCompileMax          = lambda x: x
-    # TCompileBaseline     = lambda x: torch.compile(x, fullgraph=False)
-
-    # Alternatively, we can perform a much more aggressive optimization on critical functions
-    # that we know are compatible with torch.compile(fullgraph=True) - which provides the highest
-    # level of optimization possible with torch.compile
-    # ---
-    TCompileMax        = lambda x: torch.compile(x, fullgraph=True)
-    TCompileBaseline   = lambda x: x
-
-    # ---
-    # Because torch.compile is expected to change overtime, the two options should 
-    # be tested every now and then, for any performance changes
-    #
-    # and we should switch over to the broaded automated approach if its "faster"
-    # ---
-
-    # Used to wrap functions which are **not** torch.compile compatible
-    TCompileDisable    = torch._dynamo.disable
-
-    # The following are known warnings in the nightly build, that can be safely ignored for stable release
-    #
-    # `torch._inductor.utils: [WARNING] DeviceCopy in input program` 
-    # https://discuss.pytorch.org/t/what-can-cause-warning-devicecopy-in-input-program/175566
-
-elif RWKV_JIT_ON:
-    RWKV_TORCH_RUN_MODE = "torch-jit"
-    JITModClass  = torch.jit.ScriptModule
-    JITModMethod = torch.jit.script_method
-    JITFunction  = torch.jit.script
-
-    # JITModClass  = nn.Module
-    # JITModMethod = lambda x: x
-    # JITFunction  = lambda x: x
-
-    TCompileMax        = lambda x: x
-    TCompileBaseline   = lambda x: x
-    TCompileDisable    = lambda x: x
-else:
-    RWKV_TORCH_RUN_MODE = "torch-native"
-    JITModClass  = nn.Module
-    JITModMethod = lambda x: x
-    JITFunction  = lambda x: x
-
-    TCompileMax        = lambda x: x
-    TCompileBaseline   = lambda x: x
-    TCompileDisable    = lambda x: x
-
-print(f"[RWKV.model] Running RWKV model using '{RWKV_TORCH_RUN_MODE}' with torch '{torch.__version__}'")
+from .module.CoreDependencies import *
+from .module.ChannelMix import RWKV_ChannelMix
+from .module.TimeMix import RWKV_TimeMix
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
@@ -129,6 +14,8 @@ print(f"[RWKV.model] Running RWKV model using '{RWKV_TORCH_RUN_MODE}' with torch
 # the baseline torc.compile to work
 # ---
 
+# In the latest version of deepspeed + torch compile,
+# deepspeed.checkpointing now works ? - this is inconsistent, so i am disabling for now
 @TCompileDisable
 def deepspeed_checkpoint(*args, **kwargs):
     return deepspeed.checkpointing.checkpoint(*args, **kwargs)
@@ -137,23 +24,10 @@ def deepspeed_checkpoint(*args, **kwargs):
 # RWKV: State Blocks
 ### ---
 
-class TimeMixState:
-
-    def __init__(self, shift_state: torch.Tensor, wkv_state: torch.Tensor):
-        self.shift_state = shift_state
-        self.wkv_state = wkv_state
-
-
-class ChannelMixState:
-
-    def __init__(self, shift_state: torch.Tensor):
-        self.shift_state = shift_state
-
-
 class BlockState:
 
-    def __init__(self, time_mix_state: TimeMixState,
-                 channel_mix_state: ChannelMixState):
+    def __init__(self, time_mix_state: tuple[torch.Tensor,torch.Tensor],
+                 channel_mix_state: torch.Tensor):
         self.time_mix_state = time_mix_state
         self.channel_mix_state = channel_mix_state
 
@@ -177,8 +51,8 @@ class BlockStateList:
     @staticmethod
     def empty(N, B, C, n_head, head_size, device, dtype):
         # @TODO: confirm if dtype can be changed from .flaot to dtype=dtype (when bf16)
-        # wkv_states = torch.empty((N, B, n_head, head_size, head_size),
-        wkv_states = torch.empty((N, B, 1, n_head, head_size, head_size),
+        wkv_states = torch.empty((N, B, n_head, head_size, head_size),
+        # wkv_states = torch.empty((N, B, 1, n_head, head_size, head_size),
                                  device=device,
                                 #  dtype=dtype)
                                  dtype=torch.float)
@@ -187,168 +61,13 @@ class BlockStateList:
 
     def __getitem__(self, layer: int):
         return BlockState(
-            TimeMixState(self.shift_states[layer, 0], self.wkv_states[layer]),
-            ChannelMixState(self.shift_states[layer, 1]))
+            (self.shift_states[layer, 0], self.wkv_states[layer]),
+            (self.shift_states[layer, 1]))
 
     def __setitem__(self, layer: int, state: BlockState):
-        self.shift_states[layer, 0] = state.time_mix_state.shift_state
-        self.wkv_states[layer] = state.time_mix_state.wkv_state
-        self.shift_states[layer, 1] = state.channel_mix_state.shift_state
-
-### ---
-# RWKV: RWKV Time-mix + RWKV Channel-mix
-### ---
-
-class RWKV_TimeMix(JITModClass):
-
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att):
-        super().__init__()
-        
-        self.dim_att = dim_att
-        self.n_layer = n_layer
-        self.n_embd = n_embd
-        self.layer_id = layer_id
-
-        self.n_head = n_head
-        self.head_size = head_size
-        self.head_size_divisor = 8
-
-        # Optimized timemix chunk length is fixed for now
-        self.chunk_len = 512
-        # assert ctx_len % self.chunk_len == 0
-
-        # V5-R4 changes
-        # https://github.com/BlinkDL/RWKV-LM/commit/5aab658f945ba80745d36c2ab411fb43df3a74f9    
-        with torch.no_grad():
-            ratio_0_to_1 = layer_id / (n_layer - 1)  # 0 to 1
-            ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
-            ddd = torch.ones(1, 1, n_embd)
-            for i in range(n_embd):
-                ddd[0, 0, i] = i / n_embd
-
-            # fancy time_mix
-            self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-            self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
-            self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-            self.time_mix_g = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-
-            # fancy time_decay
-            decay_speed = torch.ones(dim_att)
-            for n in range(dim_att):
-                decay_speed[n] = -6 + 5 * (n / (dim_att - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
-            self.time_decay = nn.Parameter(decay_speed.reshape(self.n_head, self.head_size))
-            # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
-
-            tmp = torch.zeros(dim_att)
-            for n in range(dim_att):
-                zigzag = ((n + 1) % 3 - 1) * 0.1
-                tmp[n] = ratio_0_to_1 * (1 - (n / (dim_att - 1))) + zigzag
-
-            self.time_faaaa = nn.Parameter(tmp.reshape(self.n_head, self.head_size))
-
-        # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-        self.receptance = nn.Linear(n_embd, dim_att, bias=False)
-        self.key = nn.Linear(n_embd, dim_att, bias=False)
-
-        self.value = nn.Linear(n_embd, dim_att, bias=False)
-        self.output = nn.Linear(dim_att, n_embd, bias=False)
-        self.gate = nn.Linear(n_embd, dim_att, bias=False)
-        self.ln_x = nn.GroupNorm(n_head, dim_att)
-
-    # @TCompileMax
-    def forward(self, x, last_state: TimeMixState):
-        # Get the x sizing
-        B, TT, C = x.size()
-
-        # Perform the tokenshift, and get the respective state
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]), dim=1)
-    
-        # Get the xk, xv, xr, xg
-        xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
-        xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
-        xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-        xg = x * self.time_mix_g + xx * (1 - self.time_mix_g)
-
-        r = self.receptance(xr).view(B, TT, self.n_head, 1, -1)
-        k = self.key(xk).view(B, TT, self.n_head, -1, 1)
-        v = self.value(xv).view(B, TT, self.n_head, 1, -1)
-        g = F.silu(self.gate(xg))
-
-        # Compute attent and the initial output tensor
-        at = k @ v
-        u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
-        w = self.time_decay.exp().neg().exp().reshape(1,1, self.n_head,-1,1)
-        # The WKV state to update
-        if last_state.wkv_state is None:
-            # wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
-            wkv_state = torch.zeros((B, 1, self.n_head, self.head_size, self.head_size),dtype=r.dtype)
-        else:
-            # Clone is required, due to the way backprop works
-            wkv_state = last_state.wkv_state.clone().to(r.dtype)
-        
-        # Slightly inefficent, but it works, lets compute all the tokens
-        ms = [wkv_state]
-        
-        for t in range(1,TT+1):
-            ms = ms + [at[:,t-1] + ms[t-1] * w]
-            
-        out = (u * r ) @ at + (r @ torch.cat(ms[:-1],1))
-        
-        # for t in range(TT):
-        #     # We intentionally do not use the following ...
-        #     # out[:,t] += r[:,t] @ wkv_state
-        # 
-        #     # As the wkv_state object will be modified, and we need to apply @
-        #     # to a constant value, or it will cuase backprop errors
-        #     out[:,t] += r[:,t] @ last_state.wkv_state.to(r.dtype)
-        # 
-        #     wkv_state *= w
-        #     wkv_state += at[:,t]
-
-        # Compute the final x output
-        x_logits = out.view(-1, C)
-        x_logits = self.ln_x(x_logits / 8).view(B, TT, C)
-        x_logits = self.output(x_logits * g)
-
-        # Return the logits and the state
-        # return x_logits, TimeMixState(x[:,-1].clone(),wkv_state)
-        return x_logits, TimeMixState(x[:,-1],ms[-1])
-    
-### ---
-
-
-class RWKV_ChannelMix(JITModClass):
-
-    def __init__(self, layer_id, n_layer, n_embd, dim_ffn):
-        super().__init__()
-        # self.layer_id = layer_id
-        # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
-
-        with torch.no_grad():  # fancy init of time_mix
-            ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
-            ddd = torch.ones(1, 1, n_embd)
-            for i in range(n_embd):
-                ddd[0, 0, i] = i / n_embd
-            self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-            self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-
-        self.key = nn.Linear(n_embd, dim_ffn, bias=False)
-        self.receptance = nn.Linear(n_embd, n_embd, bias=False)
-        self.value = nn.Linear(dim_ffn, n_embd, bias=False)
-
-    @JITModMethod
-    @TCompileMax
-    def forward(self, x, last_state: ChannelMixState):
-        xx = torch.concat((last_state.shift_state.unsqueeze(1), x[:, :-1]),
-                          dim=1)
-        xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
-        xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-        k = self.key(xk)
-        k = torch.relu(k) ** 2
-        kv = self.value(k)
-        return (torch.sigmoid(self.receptance(xr)) * kv,
-                ChannelMixState(x[:, -1]))
-
+        self.shift_states[layer, 0] = state.time_mix_state[0]
+        self.wkv_states[layer] = state.time_mix_state[1]
+        self.shift_states[layer, 1] = state.channel_mix_state
 
 ### ---
 # The RWKV Model blocks
@@ -560,6 +279,16 @@ class RWKV(L.LightningModule):
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
 
+        # Add warning that bptt_truncated_learning is forced to be true
+        # due to incomplete implementation of CUDA kernel for bptt_learning
+        #
+        # @TODO : remove this warning once the CUDA kernel, with state gradient, is implemented
+        if self.bptt_truncated_learning == False:
+            print("====================================================================")
+            print("[WARNING]: bptt_truncated_learning is set as true (was configured as false), due to incomplete implementation of CUDA kernel for bptt_learning")
+            print("====================================================================")
+            self.bptt_truncated_learning = True
+
         # Save the position loss params
         self.position_loss_bias = position_loss_bias
         self.position_loss_bias_in_validation = position_loss_bias_in_validation
@@ -586,7 +315,6 @@ class RWKV(L.LightningModule):
         # Matmu precision check
         if torch_set_float32_matmul_precision is not None:
             torch.set_float32_matmul_precision(torch_set_float32_matmul_precision)
-
         self.emb = nn.Embedding(vocab_size, n_embd)
 
         # load(name=f"wkv_{self.ctx_len}_bf16",
@@ -877,6 +605,13 @@ class RWKV(L.LightningModule):
         else:
             cur_bs_list = BlockStateList(last_shift_states, last_wkv_states)
 
+        ## The output X token
+        output_x = x
+
+        ########
+        ### Non forking block loop
+        #######
+
         # Avoid using the zip operation, as torch.compile throws an exception on it
         # with `zip not reconized as a valid function`
         # ---
@@ -888,17 +623,116 @@ class RWKV(L.LightningModule):
             block = self.blocks[i]
             last_state = cur_bs_list[i]
             if self.grad_cp:
-                x, new_state = deepspeed_checkpoint(
-                    block, x, last_state)
+                output_x, new_state = deepspeed_checkpoint(
+                    block, output_x, last_state)
             else:
-                x, new_state = block(x, last_state)
+                output_x, new_state = block(output_x, last_state)
             new_states[i] = new_state
 
-        x = self.ln_out(x)
+        ########
+        ### Forking block loop (its slower sadly)
+        #######
 
-        x = self.head(x)
+        # # Configuring the chunk sizes
+        # first_round_chunk_size = 256
+        
+        # # Next round chunk sizes forumlation
+        # def nextRoundChunkSize(t):
+        #     return first_round_chunk_size
 
-        return x, new_states.shift_states, new_states.wkv_states
+        # # First round, first block
+        # def firstRound_firstBlock_subProcess(
+        #         block:Block, last_state:BlockState, 
+        #         in_x:torch.tensor, grad_cp):
+        #     if grad_cp:
+        #         out_x, new_state = deepspeed_checkpoint(
+        #             block, in_x, last_state)
+        #     else:
+        #         out_x, new_state = block(in_x, last_state)
+        #     return out_x, new_state
+            
+        # # First round, next block
+        # def firstRound_nextBlock_subProcess(
+        #         block:Block, last_state:BlockState, 
+        #         in_x_promise: torch.jit.Future[torch.Tensor], 
+        #         grad_cp):
+        #     in_x, prv_layer_state = torch.jit.wait(in_x_promise)
+        #     return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
+        
+        # # Next round, sub process
+        # def nextRound_firstBlock_subProcess(
+        #     block:Block, last_state_promise: torch.jit.Future[BlockState],
+        #     in_x:torch.Tensor, grad_cp):
+        #     last_x, last_state = torch.jit.wait(last_state_promise)
+        #     return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
+    
+        # # Next round, next block
+        # def nextRound_nextBlock_subProcess(
+        #     block:Block, last_state_promise: torch.jit.Future[BlockState],
+        #     in_x_promise: torch.jit.Future[torch.Tensor], 
+        #     grad_cp):
+        #     last_x, last_state = torch.jit.wait(last_state_promise)
+        #     in_x, prv_layer_state = torch.jit.wait(in_x_promise)
+        #     return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
+
+        # # Final x value futures
+        # output_x_futures = []
+        
+        # # Highly experimental first round token pass with JIT fork
+        # first_round_futures = []
+        # for i in range(len(self.blocks)):
+        #     if i == 0:
+        #         future = torch.jit.fork(
+        #             firstRound_firstBlock_subProcess, self.blocks[i], 
+        #             cur_bs_list[i], x[:,:first_round_chunk_size], self.grad_cp
+        #         )
+        #     else:
+        #         future = torch.jit.fork(
+        #             firstRound_nextBlock_subProcess, self.blocks[i], 
+        #             cur_bs_list[i], first_round_futures[i-1], self.grad_cp
+        #         )
+        #     first_round_futures.append(future)
+        # output_x_futures.append(first_round_futures[-1])
+
+        # # Lets start doing the next round iterations
+        # next_round_futures = first_round_futures
+
+        # # Lets start the next round iterations
+        # idx = first_round_chunk_size
+        # while idx < T:
+        #     increment = nextRoundChunkSize(idx)
+        #     for i in range(len(self.blocks)):
+        #         if i == 0:
+        #             future = torch.jit.fork(
+        #                 nextRound_firstBlock_subProcess, self.blocks[i], 
+        #                 next_round_futures[i], x[:,idx:idx+increment], self.grad_cp
+        #             )
+        #         else:
+        #             future = torch.jit.fork(
+        #                 nextRound_nextBlock_subProcess, self.blocks[i], 
+        #                 next_round_futures[i], next_round_futures[i-1], self.grad_cp
+        #             )
+        #         next_round_futures[i] = future
+        #     output_x_futures.append(next_round_futures[-1])
+        #     idx += increment
+
+        # # Lets get the new states from the final round futures
+        # for i in range(len(self.blocks)):
+        #     tmp_x, new_state = torch.jit.wait(next_round_futures[i])
+        #     new_states[i] = new_state
+        
+        # # Lets process the final output_x_futures
+        # output_x, tmp_state = torch.jit.wait(output_x_futures[0])
+        # for i in range(1, len(output_x_futures)):
+        #     tmp_x, tmp_state = torch.jit.wait(output_x_futures[i])
+        #     output_x = torch.cat((output_x, tmp_x), dim=1)
+        # output_x = output_x[:, :T]
+
+        # Final layernorm and head output
+        output_x = self.ln_out(output_x)
+        output_x = self.head(output_x)
+
+        return output_x, new_states.shift_states, new_states.wkv_states
 
     #
     # Custom overwrite of manual_backwards operation, to skip the "manual_backwards"
@@ -1140,9 +974,9 @@ class RWKV(L.LightningModule):
 
             # We compute when we start the segmented learning process
             if forward_segment_count != backward_segment_count:
-                start_learning_segment = max(segment_count - self.bptt_learning_range, 0);
+                start_learning_segment = max(segment_count - self.bptt_learning_range, 0)
             else:
-                start_learning_segment = 0;
+                start_learning_segment = 0
 
             # # Segment loss array to track (and reduce later)
             # # of size equal to forward_segment_count
@@ -1300,6 +1134,8 @@ class RWKV(L.LightningModule):
                 'batchidx': batch_idx
             })
 
+        # Throw if total loss is NaN
+        assert not torch.isnan(total_loss), "total_loss is NaN"
         return total_loss
 
     @TCompileBaseline
