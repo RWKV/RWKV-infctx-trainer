@@ -1125,7 +1125,7 @@ class RWKV(L.LightningModule):
             })
 
         # Throw if total loss is NaN
-        assert not torch.isnan(total_loss), "total_loss is NaN"
+        # assert not torch.isnan(total_loss), "total_loss is NaN"
         return total_loss
 
     @TCompileBaseline
