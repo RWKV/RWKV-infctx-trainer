@@ -1,0 +1,44 @@
+trainer:
+  strategy: deepspeed_stage_1
+  target_batch_size: 32
+  max_epochs: 1
+
+  # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
+  # ---
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+    init_args:
+      name: 'L6-D512-neox (train-ctx=4096, data-ctx=4096, bs=32)'
+      project: 'RWKV-v5x'
+      tags: ['RWKV', 'infctx']
+  
+  # Checkpoint settings for the training process
+  callbacks:
+    class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      dirpath: ../checkpoint/trainer-validation/mini-v5-enwiki/
+      save_top_k: 2
+      monitor: 'step'
+      mode: max
+      save_last: true
+      every_n_train_steps: 1000
+      save_on_train_epoch_end: true
+  
+model:
+  load_model: ../model/L6-D512-v5-neox-init.pth
+  ctx_len: 4096
+  lr_init: 6e-4
+  lr_final: 3e-4
+  bptt_learning: true
+  bptt_learning_range: 1
+data:
+  data_path: ../datapath/enwiki_10k_neox_4096/
+  source: "teven/enwiki_10k"
+  tokenizer: neox
+  min_token_size: 64
+  max_token_size: -1
+  text_rechunk_size: 4096
+  text_rechunk_force: true
+  custom_text_key: 'text'
+  test_split: 0.01
+  test_split_shuffle: false

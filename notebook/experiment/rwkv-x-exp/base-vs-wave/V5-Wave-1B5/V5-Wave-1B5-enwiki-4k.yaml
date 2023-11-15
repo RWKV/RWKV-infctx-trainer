@@ -1,0 +1,234 @@
+# lightning.pytorch==2.0.2
+seed_everything: true
+trainer:
+  # Configure the number of GPU, avaliable on your machine
+  accelerator: gpu
+  devices: auto
+  num_nodes: 1
+
+  #
+  # Configure the deepspeed strategy, 
+  #
+  strategy: deepspeed_stage_1
+
+  # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
+  # ---
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+    init_args:
+      name: 'V5-Wave-1B5 Enwiki foundation (train-ctx=4k)'
+      project: 'RWKV-5X-Experiments'
+      tags: ['RWKV', 'RWKV-5X']
+  
+  # Checkpoint settings for the training process
+  callbacks:
+    class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      # Configure this to the path you want to save your checkpoints to
+      # note that a subdir will be created with the name `epoch=x-step=y.ckpt`
+      # 
+      # to convert a checkpoint to a model, you can use the 
+      # `python3 export_checkpoint.py <checkpoint path>` script, 
+      # which will create a `rwkv_model.pth` in the checkpoint directory.
+      #
+      # Do not use the `zero_to_fp32.py` script as that will have export format issues
+      dirpath: ../checkpoint/V5-Wave-1B5-enwiki-4k/
+      filename: null
+      
+      # Save the top/last K checkpoints
+      save_top_k: 2
+      # Choose by the most recent checkpoints (time based)
+      monitor: 'step'
+      mode: max
+      
+      # If enabled (true), save a copy of the latest checkpoint to 'last.ckpt'
+      # useful to simply checkpoint resume scripts, at a price of disk performance
+      save_last: true
+
+      # DO NOT set this as true, as the model weight exported will have format issues
+      # expert as checkpoint, and use the `export_checkpoint.py` script to convert to model instead
+      save_weights_only: false
+
+      # How frequent you want to save a checkpoint for every step.
+      # This will happen for every X data sample, where X = every_n_train_steps * accumulate_grad_batches
+      #
+      # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
+      # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
+      # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
+      every_n_train_steps: 250
+      every_n_epochs: null
+      save_on_train_epoch_end: true
+      train_time_interval: null
+
+      # Other settings, you can probably leave alone
+      verbose: false
+      auto_insert_metric_name: true
+  
+  ########################################
+  ## Training run parameter settings
+  ########################################
+
+  # Generally what you want to configure is the maximum number of epochs
+  # If you leave it as -1, and it will keep going forever till interrupted
+  # Or set it as a number, and it will stop after that number of epochs
+  max_epochs: 1
+  min_epochs: null
+
+  # Number of datasamples to train for each step, a data sample is considered
+  # a "substep" in wandb logs, and a "step" is tracked as "trainer/global_step"
+  #
+  # This decides the number of datasample, to learn together from, before backproping
+  # any weight changes at the end of the batch.
+  #
+  # Recommended to be a big enough number (like 128/256) where it prevents the training 
+  # loss from flucuating in the process. But not too big of a number where the increased
+  # GPU vRAM / offloaded RAM usage will cause the training to crash.
+  #
+  # You are also recommended to configure this to a large enough number to fully utilize
+  # your GPU processing time %, and avoid idle time for the GPU between batches
+  target_batch_size: 32
+
+
+########################################
+## Training model settings
+########################################
+model:
+  # Model to start the finetune/training process from
+  load_model: ../model/L24-D2048-neox-v5wave-init.pth
+
+  # Context length to use for the training process
+  # the larger the number (and batch size) the larger the vram usage
+  # 
+  # Note that if the datasample context length is larger then the ctx_len
+  # its training process would be split into ctx_len sized chunks.
+  #
+  # This allows the training of extreamly large context length (eg. 100k),
+  # without eating up too much vram by keeping the training context length
+  # to a resonable number sutible to the current GPU setup
+  ctx_len: 4096
+
+  # Data samples would be cut down to the respective max ctx_len_cutoffs
+  # values if its larger then ctx_len. If the data sample is larger then
+  # the largest len_cutoff, the remaining data will be discarded
+  #
+  # Leave it as a blank array to disable the feature
+  ctx_len_cutoffs: []
+  # Experimental settings, number of tokens to skip in the data sample
+  # prefix, for the respective cutoff length. Used to speed up the process
+  #
+  # Leave it as a blank array to disable the feature
+  ctx_len_warmup_steps: []
+
+  # Learning rate of the training process
+  # ---
+  # Initia learning rate of the process
+  lr_init: 6e-4
+  # Final learning rate after the learning rate period
+  # learning rate will stay at final value from then onwards
+  #
+  # NOTE: lr_final / lr_period does not work with warmup_steps
+  #       and will be ignored (or replaced) with the warmup_steps logic instead
+  lr_final: 4e-4
+  # Number of epoch to reduce the learning rate from lr_init to lr_final
+  #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
+  #  0 means lr_final will apply immediately
+  # -1 means we take the current max_step / max_epoch as the period
+  lr_period: 1
+  # lr_period type if its set, defaults to epoch
+  lr_period_type: epoch
+
+  # We disable bptt / limit bptt_learning_range, to 1, to ensure high throughput within a multi-gpu setup. 
+  # (by skipping some syncronization code). Additionally, as bptt learning should not be triggering 
+  # anyway as the data sample should be within ctx size 99% of the time
+  bptt_learning: true
+  bptt_learning_range: 1
+
+data:
+  # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
+  #
+  # Use this if you have built your own dataset and saved it with `save_to_disk()`
+  # with source left as null. Other wise configure this to a directory which the 
+  # dataset will be built and tokenized by the huggingface dataset process.
+  data_path: ../datapath/enwiki_100k_4096/
+
+  # Other wise provide the source path, which is used as huggingface dataset path
+  # this will be used to populate the dataset_path
+  #
+  # Use either the following
+  # - hugging face dataset 
+  # - Directory path to a directory containing dataset files
+  # - Path to a single dataset file
+  # - hugging face dataset mode (ie: text,csv,etc - use data_dir, to configure the path then)
+  # - null
+  #
+  # If source is disabled, all other params, except data_path, is ignored
+  source: "teven/enwiki_100k"
+  # source: text
+  # source: /home/ubuntu/RWKV-LM-LoRA/dataset-text/enwik8.txt
+
+  # Use data_dir, if you are using source=text/json/etc
+  # this should be relative to the trainer script path
+  source_data_dir: null
+
+  # After loading the dataset, split out test data used for validation, 
+  # This process is skipped if the dataset includes a test split
+  # This process is skipped if set to zero
+  test_split: 0.005
+  test_split_shuffle: true
+
+  # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
+  # If using a custom tokenizer, provide the tokenizer file path
+  # ---
+  tokenizer: neox
+
+  # Minimum / Maximum token size of the dataset to use
+  # useful for filtering out small noisy data samples from large datasets
+  # (eg. removal of small articles of less then 512 tokens from wikipedia)
+  #
+  # This is ignored, if set to -1
+  min_token_size: 1024
+  max_token_size: -1
+
+  # Rechunking of text dataset, this is done only when source is set as 'text'
+  # and will merge the various sentencees, into larger chunks up to the target size
+  #
+  # Defaults to 4096
+  #
+  # This is ignored, if source is not set as text
+  # This is ignored, if set to zero
+  # ---
+  text_rechunk_size: 4096
+
+  # Apply text rechunk to the dataset, even if its not a 'text' source
+  # This is done only after dataset filtering, and if source is not 'text'
+  # ---
+  text_rechunk_force: True
+
+  # Custom text column to use, useful for dataset with alternative training columns labels
+  # This is checked before multi column merging, default is null (disabled)
+  # eg: 'code'
+  # ---
+  # custom_text_key: 'code'
+
+  # Multi Column merging process, default setting is used to support and merge
+  # "instruction", "input", "output", datasets. To disable set multi_column_keys to []
+  #
+  # A minimum of 2 columns is required, with non empty data, for the merge to occur
+  # If no match is found, this will fallback to the default prompt/completion or text column, 
+  # or throw an error if the default fallback is not found
+  # ---
+  # multi_column_keys: ['instruction', 'input', 'output']
+  # multi_column_prefix: ['Instruction:\n', 'Input:\n', 'Output:\n']
+  # multi_column_train_mask: [true, false, true]
+  # multi_column_seperator: '\n\n'
+
+  # If processing prompt/completion jsonl pairs, the prompt is masked by default
+  # use this flag to disable this default behaviour
+  # ---
+  # disable_prompt_mask: false
+
+# Path to the current checkpoint to continue training from
+# Enable this to the last checkpoint after the first run 
+# (if it crash and you want to resume)
+# ckpt_path: ../checkpoint/V5-Wave-1B5-enwiki/epoch=0-step=2500.ckpt
+ckpt_path: null
