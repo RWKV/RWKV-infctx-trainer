@@ -127,10 +127,13 @@ __global__ void kernel_forward(const int B, const int T, const int C, const int 
 //---------------
 
 template <typename F>
-__global__ void kernel_forward_inference(const int B, const int T, const int C, const int H, float *__restrict__ _state,
-                               const F *__restrict__ const _r, const F *__restrict__ const _k, const F *__restrict__ const _v, const float *__restrict__ _w, const F *__restrict__ _u,
-                               F *__restrict__ const _y)
-{
+__global__ void kernel_forward_inference(
+    const int B, const int T, const int C, const int H,
+    float *__restrict__ _state,
+    const F *__restrict__ const _r, const F *__restrict__ const _k, 
+    const F *__restrict__ const _v, const float *__restrict__ _w, 
+    const F *__restrict__ _u, F *__restrict__ _y
+) {
     const int b = blockIdx.x / H;
     const int h = blockIdx.x % H;
     const int i = threadIdx.x;
@@ -187,9 +190,12 @@ __global__ void kernel_forward_inference(const int B, const int T, const int C, 
         }
         _y[t] = F(y);
     }
+
+    __syncthreads();
     #pragma unroll
     for (int j = 0; j < _N_; j++)
         _state[j] = state[j];
+    __syncthreads();
 }
 
 //---------------

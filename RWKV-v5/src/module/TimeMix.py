@@ -59,26 +59,34 @@ class WKV5_CUDA(torch.autograd.Function):
             ctx.save_for_backward(r, k, v, eew, ew, u, state.clone())
 
             # Output logits
-            # y = torch.empty(B, T, C, device=r.device, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            y = torch.empty(B, T, C, device=r.device, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
             
-            # Debugging y value is populated by cuda kernel
-            y = torch.zeros(B, T, C, device=r.device, dtype=dtype).contiguous() # .uniform_(-1, 1)
-            assert torch.sum(y) == 0, "Initial zero check"
-            assert not torch.isnan(torch.sum(y)), "Initial NaN check"
+            # # Debugging y value is populated by cuda kernel
+            # y = torch.zeros(B, T, C, device=r.device, dtype=dtype).contiguous() # .uniform_(-1, 1)
+            # assert torch.sum(y) == 0, "Initial zero check"
+            # assert not torch.isnan(y).any(), "Initial NaN check"
+
+            # # Asserting non NaN valeus in inputs
+            # assert not torch.isnan(state).any(), "Initial state NaN check"
+            # assert not torch.isnan(r).any(), "Initial r NaN check"
+            # assert not torch.isnan(k).any(), "Initial k NaN check"
+            # assert not torch.isnan(v).any(), "Initial v NaN check"
+            # assert not torch.isnan(w).any(), "Initial w NaN check"
+            # assert not torch.isnan(u).any(), "Initial u NaN check"
 
             # Call the cuda kernel
             if dtype == torch.bfloat16:
-                wkv5_cuda_kernel.forward_bf16(B, T, C, H, state, r, k, v, w, u, y)
+                wkv5_cuda_kernel.forward_bf16(B, T, C, H, state, r, k, v, eew, u, y)
             elif dtype == torch.float16:
-                wkv5_cuda_kernel.forward_fp16(B, T, C, H, state, r, k, v, w, u, y)
+                wkv5_cuda_kernel.forward_fp16(B, T, C, H, state, r, k, v, eew, u, y)
             elif dtype == torch.float32:
-                wkv5_cuda_kernel.forward_fp32(B, T, C, H, state, r, k, v, w, u, y)
+                wkv5_cuda_kernel.forward_fp32(B, T, C, H, state, r, k, v, eew, u, y)
             else:
                 raise ValueError(f"Unsupported dtype {dtype} for WKV5_CUDA")
             
-            # Assert output logits y is not zero, nor NaN
-            assert torch.sum(y) != 0, "Post kernel, non zero check"
-            assert not torch.isnan(torch.sum(y)), "Post kernel, NaN check"
+            # # Assert output logits y is not zero, nor NaN
+            # assert torch.sum(y) != 0, "Post kernel, non zero check"
+            # assert not torch.isnan(y).any(), "Post kernel, NaN check"
 
             # Logits (without state)
             return y
@@ -119,11 +127,6 @@ class WKV5_CUDA(torch.autograd.Function):
             
             gw = torch.sum(gw, 0).view(H, C//H)
             gu = torch.sum(gu, 0).view(H, C//H)
-
-            # Reshaping to compliant formats
-            gr = gr.view(B, T, H, 1, C//H)
-            gk = gk.view(B, T, H, C//H, 1)
-            gv = gv.view(B, T, H, 1, C//H)
 
             # # Log the shapes of gr-gu (debugging)
             # print(f"[WKV5_CUDA] gr.shape={gr.shape}, gk.shape={gk.shape}, gv.shape={gv.shape}, gw.shape={gw.shape}, gu.shape={gu.shape}")
@@ -287,9 +290,9 @@ class RWKV_TimeMix(JITModClass):
         xr = modified_lerp(x, self.time_mix_r, xx)
         xg = modified_lerp(x, self.time_mix_g, xx)
 
-        r = self.receptance(xr).view(B, TT, self.n_head, 1, -1)
-        k = self.key(xk).view(B, TT, self.n_head, -1, 1)
-        v = self.value(xv).view(B, TT, self.n_head, 1, -1)
+        r = self.receptance(xr)#.view(B, TT, self.n_head, 1, -1)
+        k = self.key(xk)#.view(B, TT, self.n_head, -1, 1)
+        v = self.value(xv)#.view(B, TT, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
         # Logits and state
@@ -406,7 +409,6 @@ class RWKV_TimeMix(JITModClass):
         x_logits = x_logits.view(-1, C)
         x_logits = self.ln_x(x_logits / self.head_size_divisor).view(B, T, C)
         return self.output(x_logits * gate)
-
 
 def compute_wkv_state(
         k, v, r,
