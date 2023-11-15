@@ -279,6 +279,16 @@ class RWKV(L.LightningModule):
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
 
+        # Add warning that bptt_truncated_learning is forced to be true
+        # due to incomplete implementation of CUDA kernel for bptt_learning
+        #
+        # @TODO : remove this warning once the CUDA kernel, with state gradient, is implemented
+        if self.bptt_truncated_learning == False:
+            print("====================================================================")
+            print("[WARNING]: bptt_truncated_learning is set as true (was configured as false), due to incomplete implementation of CUDA kernel for bptt_learning")
+            print("====================================================================")
+            self.bptt_truncated_learning = True
+
         # Save the position loss params
         self.position_loss_bias = position_loss_bias
         self.position_loss_bias_in_validation = position_loss_bias_in_validation
