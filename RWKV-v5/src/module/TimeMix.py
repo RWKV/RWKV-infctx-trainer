@@ -59,8 +59,13 @@ class WKV5_CUDA(torch.autograd.Function):
             ctx.save_for_backward(r, k, v, eew, ew, u, state.clone())
 
             # Output logits
-            y = torch.empty(B, T, C, device=r.device, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            # y = torch.empty(B, T, C, device=r.device, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
             
+            # Debugging y value is populated by cuda kernel
+            y = torch.zeros(B, T, C, device=r.device, dtype=dtype).contiguous() # .uniform_(-1, 1)
+            assert torch.sum(y) == 0, "Initial zero check"
+            assert not torch.isnan(torch.sum(y)), "Initial NaN check"
+
             # Call the cuda kernel
             if dtype == torch.bfloat16:
                 wkv5_cuda_kernel.forward_bf16(B, T, C, H, state, r, k, v, w, u, y)
@@ -72,8 +77,8 @@ class WKV5_CUDA(torch.autograd.Function):
                 raise ValueError(f"Unsupported dtype {dtype} for WKV5_CUDA")
             
             # Assert output logits y is not zero, nor NaN
-            assert torch.sum(y) != 0
-            assert not torch.isnan(torch.sum(y))
+            assert torch.sum(y) != 0, "Post kernel, non zero check"
+            assert not torch.isnan(torch.sum(y)), "Post kernel, NaN check"
 
             # Logits (without state)
             return y
