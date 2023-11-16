@@ -102,9 +102,15 @@ trainer:
   # your GPU processing time %, and avoid idle time for the GPU between batches
   #
   # This number is divided by the number of GPUs, and nodes configured
-  # So if you have 4 GPUs, and 2 nodes, and this is configured as 128
-  # Each GPU will process 128/4/2 = 16 datasamples per step, via accumulate_grad_batches
+  # So if you have 4 GPUs, 2 nodes, and this is configured as 128
+  # Each GPU will process 128/4/2 = 16 datasamples per step batch, via accumulate_grad_batches
   target_batch_size: 16
+
+  # Microbatching chunks which we split our data by, this substentially increase vram usage 
+  # for each GPU step, but increase throughput of the training process substentially. 
+  #
+  # So if you have 16 datasample per batch per GPU. And microbatch_size of 2, you have 8 substep
+  microbatch_size: 2
 
 ########################################
 ## Training model settings

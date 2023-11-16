@@ -595,6 +595,11 @@ class RWKVDataModule(LightningDataModule):
             num_replicas=self.trainer.world_size,
             rank=self.trainer.global_rank,
         )
+
+        microbatch_size = 1
+        if hasattr(self, "trainer") and hasattr(self.trainer, "microbatch_size"):
+            microbatch_size = self.trainer.microbatch_size
+
         return DataLoader(
             dataset, 
             sampler=sampler,
@@ -604,7 +609,7 @@ class RWKVDataModule(LightningDataModule):
             # Prefetching 8 batches
             prefetch_factor=8,
             # Of batch size 1 datasets
-            batch_size=1, 
+            batch_size=microbatch_size, 
             # Pinned in GPU memory
             pin_memory=True
         )
