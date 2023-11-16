@@ -294,10 +294,15 @@ def prepare_data_static(**kargs):
                             input_ids += column_encodings['input_ids']
                             token_type_ids += column_encodings['token_type_ids']
 
-                            # Override the training attention mask if masking is set to false
-                            if len(multi_column_train_mask) < i and multi_column_train_mask[i] is False:
+                            # Configure the attention masks accordingly
+                            if i > len(multi_column_train_mask):
+                                # If the corresponding `multi_column_train_mask` is not set, we will assume as valid training data
+                                attention_mask += ([1] * len(column_encodings['input_ids']))
+                            elif multi_column_train_mask[i] is False:
+                                # If the `multi_column_train_mask` is set, but configured as false, we should not pay attention to it
                                 attention_mask += ([0] * len(column_encodings['input_ids']))
-                            else:
+                            else: # multi_column_train_mask[i] is True
+                                # This means it is true, lets pay attention once again
                                 attention_mask += ([1] * len(column_encodings['input_ids']))
                                 
                             # Add the suffix
