@@ -156,6 +156,17 @@ trainer:
   # your GPU processing time %, and avoid idle time for the GPU between batches
   target_batch_size: 32
 
+  # Microbatching chunks which we split our data by, this substentially increase vram usage 
+  # for each GPU step, but increase throughput of the training process substentially. 
+  #
+  # So if you have 16 datasample per batch per GPU. And microbatch_size of 2, you have 8 substep
+  #
+  # It is generally recommended to tune this to be the highest you can resonably support 
+  # on your GPU as it has a direct impact on your overall tokens / second count.
+  #
+  # Typically you tune the microbatch_size first, before tuning the target_batch_size
+  microbatch_size: 1
+
   # You can alternatively set the accumulate_grad_batches per GPU directly
   # (not recommended)
   #
