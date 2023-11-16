@@ -501,8 +501,6 @@ def dataloader_collator_fn(records):
     # Get the maximum number of records 
     # (aka the batch size)
     records_len = len(records)
-    if records_len == 1:
-        return records[0]
     
     # Compute the total length of the records
     input_ids_len = 0
