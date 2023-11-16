@@ -1,5 +1,6 @@
 from lightning import LightningDataModule
 
+import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import DistributedSampler
 
@@ -293,10 +294,15 @@ def prepare_data_static(**kargs):
                             input_ids += column_encodings['input_ids']
                             token_type_ids += column_encodings['token_type_ids']
 
-                            # Override the training attention mask if masking is set to false
-                            if len(multi_column_train_mask) < i and multi_column_train_mask[i] is False:
+                            # Configure the attention masks accordingly
+                            if i > len(multi_column_train_mask):
+                                # If the corresponding `multi_column_train_mask` is not set, we will assume as valid training data
+                                attention_mask += ([1] * len(column_encodings['input_ids']))
+                            elif multi_column_train_mask[i] is False:
+                                # If the `multi_column_train_mask` is set, but configured as false, we should not pay attention to it
                                 attention_mask += ([0] * len(column_encodings['input_ids']))
-                            else:
+                            else: # multi_column_train_mask[i] is True
+                                # This means it is true, lets pay attention once again
                                 attention_mask += ([1] * len(column_encodings['input_ids']))
                                 
                             # Add the suffix
@@ -494,6 +500,48 @@ def prepare_data_static(**kargs):
         # Save the dataset to disk
         src_dataset.save_to_disk(kargs["data_path"])
 
+# Dataloader collator for merging multiple dataset records together
+# we use token 0 for padding, with a learning mask value of 0
+def dataloader_collator_fn(records):
+    # Get the maximum number of records 
+    # (aka the batch size)
+    records_len = len(records)
+    
+    # Compute the total length of the records
+    input_ids_len = 0
+    token_type_ids_len = 0
+    attention_mask_len = 0
+
+    # Loop through the records and compute the max length
+    for i in range(records_len):
+        input_ids_len = max(input_ids_len, len(records[i]["input_ids"]))
+        token_type_ids_len = max(token_type_ids_len, len(records[i]["token_type_ids"]))
+        attention_mask_len = max(attention_mask_len, len(records[i]["attention_mask"]))
+
+    # First row of the records
+    first_row = records[0]
+
+    # Create the output arrays, with the default 0 values (no learning mask)
+    out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"].dtype)
+    out_token_type_ids = torch.zeros((records_len, token_type_ids_len), dtype=first_row["token_type_ids"].dtype)
+    out_attention_mask = torch.zeros((records_len, attention_mask_len), dtype=first_row["attention_mask"].dtype)
+    out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
+
+    # Loop through the records and copy the values to the output arrays
+    for i in range(records_len):
+        out_input_ids[i][:len(records[i]["input_ids"])] = records[i]["input_ids"]
+        out_token_type_ids[i][:len(records[i]["token_type_ids"])] = records[i]["token_type_ids"]
+        out_attention_mask[i][:len(records[i]["attention_mask"])] = records[i]["attention_mask"]
+        out_data_ctx_len[i] = len(records[i]["input_ids"])
+    
+    # Build & return the output object
+    out = {
+        'input_ids': out_input_ids,
+        'token_type_ids': out_token_type_ids,
+        'attention_mask': out_attention_mask,
+        'data_ctx_len': out_data_ctx_len
+    }
+    return out
 
 class RWKVDataModule(LightningDataModule):
     def __init__(
@@ -595,6 +643,11 @@ class RWKVDataModule(LightningDataModule):
             num_replicas=self.trainer.world_size,
             rank=self.trainer.global_rank,
         )
+
+        microbatch_size = 1
+        if hasattr(self, "trainer") and hasattr(self.trainer, "microbatch_size"):
+            microbatch_size = self.trainer.microbatch_size
+
         return DataLoader(
             dataset, 
             sampler=sampler,
@@ -604,7 +657,9 @@ class RWKVDataModule(LightningDataModule):
             # Prefetching 8 batches
             prefetch_factor=8,
             # Of batch size 1 datasets
-            batch_size=1, 
+            batch_size=microbatch_size, 
+            # The collation function
+            collate_fn=dataloader_collator_fn,
             # Pinned in GPU memory
             pin_memory=True
         )

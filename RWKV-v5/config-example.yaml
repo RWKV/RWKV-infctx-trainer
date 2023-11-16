@@ -156,6 +156,17 @@ trainer:
   # your GPU processing time %, and avoid idle time for the GPU between batches
   target_batch_size: 32
 
+  # Microbatching chunks which we split our data by, this substentially increase vram usage 
+  # for each GPU step, but increase throughput of the training process substentially. 
+  #
+  # So if you have 16 datasample per batch per GPU. And microbatch_size of 2, you have 8 substep
+  #
+  # It is generally recommended to tune this to be the highest you can resonably support 
+  # on your GPU as it has a direct impact on your overall tokens / second count.
+  #
+  # Typically you tune the microbatch_size first, before tuning the target_batch_size
+  microbatch_size: 1
+
   # You can alternatively set the accumulate_grad_batches per GPU directly
   # (not recommended)
   #
@@ -409,6 +420,12 @@ data:
   # A minimum of 2 columns is required, with non empty data, for the merge to occur
   # If no match is found, this will fallback to the default prompt/completion or text column, 
   # or throw an error if the default fallback is not found
+  #
+  # IMPORTANT NOTE: as newlines are commonly used for multi_column_suffix, etc. 
+  #                 you should use single quotes to ensure such values dun get escaped.
+  #                 eg. multi_column_suffix: ['\n\n']
+  #
+  # See: https://github.com/RWKV/RWKV-infctx-trainer/issues/34
   # ---
   # multi_column_keys: ['instruction', 'input', 'output']
   # multi_column_prefix: ['Instruction:\n', 'Input:\n', 'Output:\n']
