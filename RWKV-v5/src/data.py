@@ -1,5 +1,6 @@
 from lightning import LightningDataModule
 
+import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import DistributedSampler
 
@@ -494,6 +495,50 @@ def prepare_data_static(**kargs):
         # Save the dataset to disk
         src_dataset.save_to_disk(kargs["data_path"])
 
+# Dataloader collator for merging multiple dataset records together
+# we use token 0 for padding, with a learning mask value of 0
+def dataloader_collator_fn(records):
+    # Get the maximum number of records 
+    # (aka the batch size)
+    records_len = len(records)
+    if records_len == 1:
+        return records[0]
+    
+    # Compute the total length of the records
+    input_ids_len = 0
+    token_type_ids_len = 0
+    attention_mask_len = 0
+
+    # Loop through the records and compute the max length
+    for i in range(records_len):
+        input_ids_len = max(input_ids_len, len(records[i]["input_ids"]))
+        token_type_ids_len = max(token_type_ids_len, len(records[i]["token_type_ids"]))
+        attention_mask_len = max(attention_mask_len, len(records[i]["attention_mask"]))
+
+    # First row of the records
+    first_row = records[0]
+
+    # Create the output arrays, with the default 0 values (no learning mask)
+    out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"].dtype)
+    out_token_type_ids = torch.zeros((records_len, token_type_ids_len), dtype=first_row["token_type_ids"].dtype)
+    out_attention_mask = torch.zeros((records_len, attention_mask_len), dtype=first_row["attention_mask"].dtype)
+    out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
+
+    # Loop through the records and copy the values to the output arrays
+    for i in range(records_len):
+        out_input_ids[i][:len(records[i]["input_ids"])] = records[i]["input_ids"]
+        out_token_type_ids[i][:len(records[i]["token_type_ids"])] = records[i]["token_type_ids"]
+        out_attention_mask[i][:len(records[i]["attention_mask"])] = records[i]["attention_mask"]
+        out_data_ctx_len[i] = len(records[i]["input_ids"])
+    
+    # Build & return the output object
+    out = {
+        'input_ids': out_input_ids,
+        'token_type_ids': out_token_type_ids,
+        'attention_mask': out_attention_mask,
+        'data_ctx_len': out_data_ctx_len
+    }
+    return out
 
 class RWKVDataModule(LightningDataModule):
     def __init__(
@@ -610,6 +655,8 @@ class RWKVDataModule(LightningDataModule):
             prefetch_factor=8,
             # Of batch size 1 datasets
             batch_size=microbatch_size, 
+            # The collation function
+            collate_fn=dataloader_collator_fn,
             # Pinned in GPU memory
             pin_memory=True
         )

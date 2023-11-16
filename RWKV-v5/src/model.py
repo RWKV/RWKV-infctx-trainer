@@ -1153,13 +1153,20 @@ class RWKV(L.LightningModule):
             global_rank = self.global_rank
             global_device_count = self.trainer.num_devices * self.trainer.num_nodes
 
+            # Get the total dataset context length
+            batch_ctx_len = 0
+            if "data_ctx_len" in batch:
+                batch_ctx_len = torch.sum(batch["data_ctx_len"]).item()
+            else:
+                batch_ctx_len = T * self.trainer.microbatch_size
+
             # Increment the counting tokens, and log it accordingly
-            self._counting_tokens += T * self.trainer.microbatch_size
+            self._counting_tokens += batch_ctx_len
 
             # Log the line values
             wandb.log({
                 'global_rank': global_rank, 
-                'real_ctx_len': T, 
+                'data_ctx_len': batch_ctx_len / self.trainer.microbatch_size, 
                 'train/loss': total_loss,
                 f'perf/tokens_total.gpu.{global_rank}': self._counting_tokens,
                 f'perf/tokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
