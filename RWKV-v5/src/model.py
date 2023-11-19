@@ -135,12 +135,16 @@ class L2Wrap(torch.autograd.Function):
         #
         # See also:
         # - checkpointed_step
-        ctx.save_for_backward(y, token_amount, currentMask)
+        ctx.save_for_backward(y)
+        ctx.token_amount = token_amount
+        ctx.currentMask = currentMask
         return loss
 
     @staticmethod
     def backward(ctx, grad_output):
-        y, token_amount, currentMask = ctx.saved_tensors
+        y, = ctx.saved_tensors
+        token_amount = ctx.token_amount
+        currentMask = ctx.currentMask
 
         # to encourage the logits to be close to 0
         factor = 1e-4 / token_amount
@@ -1164,17 +1168,32 @@ class RWKV(L.LightningModule):
             self._counting_tokens += batch_ctx_len
 
             # Log the line values
-            wandb.log({
-                'global_rank': global_rank, 
-                'data_ctx_len': batch_ctx_len / self.trainer.microbatch_size, 
-                'train/loss': total_loss,
-                f'perf/tokens_total.gpu.{global_rank}': self._counting_tokens,
-                f'perf/tokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
-                'substep': (batch_idx * global_device_count + global_rank),
-                'trainer/global_step':self.global_step,
-                'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
-                'batchidx': batch_idx
-            })
+            if batch_idx > 10:
+                # Log with tokens per second
+                wandb.log({
+                    'global_rank': global_rank, 
+                    'data_ctx_len': batch_ctx_len / self.trainer.microbatch_size, 
+                    'train/loss': total_loss,
+                    f'perf/tokens_total.gpu.{global_rank}': self._counting_tokens,
+                    f'perf/tokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
+                    'substep': (batch_idx * global_device_count + global_rank),
+                    'trainer/global_step':self.global_step,
+                    'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
+                    'batchidx': batch_idx
+                })
+            else:
+                # Avoid logging tokens per second too early, cause it tends to be overexegerrated for first few steps
+                wandb.log({
+                    'global_rank': global_rank, 
+                    'data_ctx_len': batch_ctx_len / self.trainer.microbatch_size, 
+                    'train/loss': total_loss,
+                    f'perf/tokens_total.gpu.{global_rank}': self._counting_tokens,
+                    # f'perf/tokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
+                    'substep': (batch_idx * global_device_count + global_rank),
+                    'trainer/global_step':self.global_step,
+                    'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
+                    'batchidx': batch_idx
+                })
 
         # Throw if total loss is NaN
         assert not torch.isnan(total_loss), "total_loss is NaN"
