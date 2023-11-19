@@ -36,21 +36,13 @@ sudo apt-get install ninja-build
 # Update conda & its package listings
 conda update conda
 
-# Virtual env, with python 3.10
-# python 3.11 have issues with torch.compile / h100s
-# and if you want to use 3.11, you will need to do a nightly build install
+# Virtual env, with python 3.11
 conda create -n rwkv-infctx python=3.11 pip
 conda activate rwkv-infctx
 
-# Install pytorch (>=2.0.1)
-conda install -y pytorch==2.0.1 torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-python -m pip install lightning==2.0.5 deepspeed==0.10.0
-
-# Currently for torch.compile + 3.11 to work, for some platform, you will need the nightly build
-# if so you may need to try the following instead - this is considered highly "unstable"
-# ---
-# conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch-nightly -c nvidia
-# python -m pip install lightning==2.0.5 deepspeed==0.10.0
+# Install pytorch (>=2.1.0)
+conda install -y pytorch==2.1.0 torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
+python -m pip install lightning==2.1.2 deepspeed==0.12.3
 
 # Verify your pytorch version 
 python -c "import torch; print(torch.__version__)"
@@ -63,6 +55,9 @@ python -m pip install lm-dataformat ftfy sentencepiece tokenizers wandb
 
 # Optional dependencies, useful for running notebooks, etc
 python -m pip install papermill
+
+# Optional for jupyter notebook integration
+conda install -n rwkv-infctx ipykernel
 ```
 
 Alternatively you could use the requirements.txt (this may not install pytorch-cuda properly, and is found to be **not compatible** with conda environments)
