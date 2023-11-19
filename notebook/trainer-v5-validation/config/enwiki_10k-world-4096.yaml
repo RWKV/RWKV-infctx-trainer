@@ -43,7 +43,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/trainer-validaiton/infctx-v5-unit-test-baseline-4096
+      dirpath: ../checkpoint/trainer-validaiton/infctx-v5-enwiki-10k-4096
       filename: null
       
       # Save the top/last K checkpoints
@@ -105,12 +105,6 @@ trainer:
   # So if you have 4 GPUs, and 2 nodes, and this is configured as 128
   # Each GPU will process 128/4/2 = 16 datasamples per step, via accumulate_grad_batches
   target_batch_size: 16
-
-  # Microbatching chunks which we split our data by, this substentially increase vram usage 
-  # for each GPU step, but increase throughput of the training process substentially. 
-  #
-  # So if you have 16 datasample per batch per GPU. And microbatch_size of 2, you have 8 substep
-  microbatch_size: 1
 
 ########################################
 ## Training model settings
