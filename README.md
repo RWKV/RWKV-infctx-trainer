@@ -40,8 +40,10 @@ conda update conda
 conda create -n rwkv-infctx python=3.11 pip
 conda activate rwkv-infctx
 
-# Install pytorch (>=2.1.0)
-conda install -y pytorch==2.1.0 torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
+# Install pytorch (>=2.1.1), with cuda 12.1
+# 
+# PS: There seems to be exploding vram issues with 4090 + pytorch 2.1.0
+conda install -y pytorch==2.1.1 torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
 python -m pip install lightning==2.1.2 deepspeed==0.12.3
 
 # Verify your pytorch version 

@@ -1,6 +1,10 @@
 import argparse, math, os
 import torch.nn as nn
 import torch
+
+# Disable several stuff, that is not needed for model init
+os.environ['RWKV_NO_CUDA'] = 'True'
+
 from src.model import RWKV 
 
 def init_model(
