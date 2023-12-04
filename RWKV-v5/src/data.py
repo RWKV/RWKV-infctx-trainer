@@ -338,12 +338,6 @@ def prepare_data_static(**kargs):
                                     # This means it is false, lets not pay attention to it
                                     attention_mask += ([0] * (len(column_encodings['input_ids']) + (len(prefix['input_ids']) if prefix is not None else 0)))
 
-                print({
-                    'input_ids': input_ids,
-                    'token_type_ids': token_type_ids,
-                    'attention_mask': attention_mask
-                })
-
                 return {
                     'input_ids': input_ids,
                     'token_type_ids': token_type_ids,
