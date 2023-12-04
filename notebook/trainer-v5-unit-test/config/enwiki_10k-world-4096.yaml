@@ -178,7 +178,7 @@ model:
   # Segmented range to performing backprop learning on
   # 1 means to apply only for the last segment
   # -1 means to apply for all segments
-  bptt_learning_range: -1
+  bptt_learning_range: 1
 
 data:
   # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
