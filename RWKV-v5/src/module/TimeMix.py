@@ -291,7 +291,9 @@ class RWKV_TimeMix(JITModClass):
         xg = modified_lerp(x, self.time_mix_g, xx)
 
         r = self.receptance(xr)#.view(B, TT, self.n_head, 1, -1)
+        r = F.relu(r)
         k = self.key(xk)#.view(B, TT, self.n_head, -1, 1)
+        k = F.relu(k)
         v = self.value(xv)#.view(B, TT, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
