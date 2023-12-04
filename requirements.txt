@@ -3,7 +3,7 @@ torchaudio
 torchvision
 lightning==2.0.5
 deepspeed==0.10.0
-datasets==2.13.1
+datasets==2.15.0
 transformers==4.30.2
 ninja==1.11.1
 numexpr==2.8.4
