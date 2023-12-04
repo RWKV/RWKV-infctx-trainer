@@ -295,6 +295,9 @@ class RWKV_TimeMix(JITModClass):
         v = self.value(xv)#.view(B, TT, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
+        r = F.relu(r)
+        k = F.relu(k)
+
         # Logits and state
         state = last_state[1].clone().to(torch.float32).contiguous()
 
