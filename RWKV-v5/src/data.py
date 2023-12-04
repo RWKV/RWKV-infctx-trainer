@@ -294,6 +294,7 @@ def prepare_data_static(**kargs):
                             if prefix is not None:
                                 input_ids += prefix['input_ids']
                                 token_type_ids += prefix['token_type_ids']
+                                attention_mask += prefix['attention_mask']
 
                             # Tokenize the column
                             column_encodings = encodeTokens(value)
@@ -304,10 +305,10 @@ def prepare_data_static(**kargs):
 
                             if key not in kargs["conversation_input_key_mask"] or kargs["conversation_input_key_mask"][key]:
                                 # If the corresponding `conversation_input_key_mask` is not set, we will assume as valid training data
-                                attention_mask += ([1] * (len(column_encodings['input_ids']) + (len(prefix['input_ids']) if prefix is not None else 0)))
+                                attention_mask += ([1] * len(column_encodings['input_ids']))
                             else: # kargs["conversation_input_key_mask"][key] is False
                                 # This means it is false, lets not pay attention to it
-                                attention_mask += ([0] * (len(column_encodings['input_ids']) + (len(prefix['input_ids']) if prefix is not None else 0)))
+                                attention_mask += ([0] * len(column_encodings['input_ids']))
                 
                 elif kargs['conversation_format'] == 'sender':
                     for i in range(len(conversation)):
@@ -323,6 +324,7 @@ def prepare_data_static(**kargs):
                                 if prefix is not None:
                                     input_ids += prefix['input_ids']
                                     token_type_ids += prefix['token_type_ids']
+                                    attention_mask += prefix['attention_mask']
 
                                 # Tokenize the column
                                 column_encodings = encodeTokens(turn[key])
@@ -333,10 +335,10 @@ def prepare_data_static(**kargs):
 
                                 if sender not in kargs["conversation_sender_mask"] or kargs["conversation_sender_mask"][sender]:
                                     # If the corresponding `conversation_input_key_mask` is not set, we will assume as valid training data
-                                    attention_mask += ([1] * (len(column_encodings['input_ids']) + (len(prefix['input_ids']) if prefix is not None else 0)))
+                                    attention_mask += ([1] * len(column_encodings['input_ids']))
                                 else: # kargs["conversation_input_key_mask"][key] is False
                                     # This means it is false, lets not pay attention to it
-                                    attention_mask += ([0] * (len(column_encodings['input_ids']) + (len(prefix['input_ids']) if prefix is not None else 0)))
+                                    attention_mask += ([0] * len(column_encodings['input_ids']))
 
                 return {
                     'input_ids': input_ids,
