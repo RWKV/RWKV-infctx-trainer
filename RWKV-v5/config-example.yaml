@@ -427,11 +427,37 @@ data:
   #
   # See: https://github.com/RWKV/RWKV-infctx-trainer/issues/34
   # ---
-  # multi_column_keys: ['instruction', 'input', 'output']
-  # multi_column_prefix: ['Instruction:\n', 'Input:\n', 'Output:\n']
-  # multi_column_suffix: ['\n\n', '\n\n', '\n\n']
+  # multi_column_keys: ["instruction", "input", "output"]
+  # multi_column_prefix: ["Instruction:\n", "Input:\n", "Output:\n"]
+  # multi_column_suffix: ["\n\n", "\n\n", "\n\n"]
   # multi_column_train_mask: [true, false, true]
-  # multi_column_separator: '\n\n'
+  # multi_column_separator: "\n\n"
+
+  # Conversation merging process
+  # useful for merging full conversational datasets, into single documents
+  # default is off, (or set conversation_key to [])
+  # conversation_formatting supports "iopairs" or "sender" for now.
+  # ---
+  # conversation_format: 'iopairs'
+  # conversation_key: 'conversation'
+
+  # Iopairs config
+  # This means that every object in the conversation object is a pair of input output.
+  # In future it will also support a format where one of the keys dictates the format style
+  # if conversation_key is set to null, it will use the root object as the conversation object
+  # ---
+  # conversation_input_key_prefix_map: {'input': "\n\nUser: ", 'output': "\n\nAssistant: ""}
+  # conversation_input_key_mask: {'input': false, 'output': true}
+
+  # Sender config
+  # This means that every object in the conversation object is a single message (with sender and message keys - or similar)
+  # conversation_format: 'sender'
+  # conversation_input_key_map: {'message': "\n\n{sender}: "", 'context': ''} - processed in order on each turn
+  #
+  # conversation_sender_key: 'sender'
+  # conversation_sender_value_map: {'user': 'User', 'assistant': 'Assistant', 'system': 'System'}
+  # conversation_sender_mask: {'user': false, 'assistant': true, 'system': false}
+
 
   # If processing prompt/completion jsonl pairs, the prompt is masked by default
   # use this flag to disable this default behaviour
