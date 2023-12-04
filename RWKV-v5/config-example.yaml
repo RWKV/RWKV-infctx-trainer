@@ -446,7 +446,7 @@ data:
   # In future it will also support a format where one of the keys dictates the format style
   # if conversation_key is set to null, it will use the root object as the conversation object
   # ---
-  # conversation_input_key_prefix_map: {'input': "\n\nUser: ", 'output': "\n\nAssistant: ""}
+  # conversation_input_key_prefix_map: {'input': "\n\nUser: ", 'output': "\n\nAssistant: "}
   # conversation_input_key_mask: {'input': false, 'output': true}
 
   # Sender config
