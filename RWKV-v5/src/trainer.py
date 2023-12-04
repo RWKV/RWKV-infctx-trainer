@@ -18,8 +18,15 @@ class RWKVLightningTrainer(Trainer):
             *args, 
             # Replaces the accumulate_grad_batches, if set
             # automatically compute the accumulate_grad_batches
-            # according to the num_nodes, and num_devices configured
+            #
+            # According to the microbatch_size, num_nodes, 
+            # and num_devices configured
             target_batch_size=-1,
+            # Microbatch sizing, to be used with
+            # each training step per GPU. 
+            # 
+            # This is the same as pytorch dataset batch size.
+            microbatch_size=1,
             # Handle the rest of args, as per normal
             **kwargs,
         ):
@@ -31,6 +38,10 @@ class RWKVLightningTrainer(Trainer):
 
         # target batch size logging
         target_batch_size_log_msg = ""
+
+        # Compute the microbatch_size
+        self.microbatch_size = microbatch_size
+        assert microbatch_size > 0, "microbatch_size must be greater than 0"
 
         # Compute the accumulate_grad_batches, using the target_batch_size
         self.target_batch_size = target_batch_size
@@ -56,9 +67,9 @@ class RWKVLightningTrainer(Trainer):
                 raise ValueError(f"Unsupported devices config '{devices}', unable to compute device count for 'target_batch_size'")
             
             # Compute the accumulate_grad_batches
-            accumulate_grad_batches = max( 1, math.floor(target_batch_size / (num_nodes * num_devices)) )
+            accumulate_grad_batches = max( 1, math.floor(target_batch_size / (num_nodes * num_devices * microbatch_size)) )
             kwargs["accumulate_grad_batches"] = accumulate_grad_batches
-            effective_batch_size = accumulate_grad_batches * num_nodes * num_devices
+            effective_batch_size = accumulate_grad_batches * num_nodes * num_devices * microbatch_size
 
             # Log the applied accumulate_grad_batches
             trainer_config["__accumulate_grad_batches"] = accumulate_grad_batches
@@ -71,6 +82,7 @@ class RWKVLightningTrainer(Trainer):
                 f"   - target_batch_size:       {target_batch_size}\n"+
                 f"   - num_nodes:               {num_nodes}\n"+
                 f"   - num_devices:             {num_devices}\n"+
+                f"   - microbatch_size:         {microbatch_size}\n"+
                 f"   - accumulate_grad_batches: {accumulate_grad_batches}\n"
                 f"   - effective_batch_size:    {effective_batch_size}\n")
             
@@ -99,7 +111,7 @@ class RWKVLightningTrainer(Trainer):
         # if local rank is 0
         if target_batch_size_log_msg != "" and self.local_rank == 0:
             print(target_batch_size_log_msg)
-
+    
     # Fabric instance, useful for coordinating between processes
     # when `self.trainer.strategy.reduce` is not possible
     def getFabric(self):

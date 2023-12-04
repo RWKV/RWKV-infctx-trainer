@@ -102,6 +102,12 @@ data:
   # A minimum of 2 columns is required, with non empty data, for the merge to occur
   # If no match is found, this will fallback to the default prompt/completion or text column, 
   # or throw an error if the default fallback is not found
+  #
+  # IMPORTANT NOTE: as newlines are commonly used for multi_column_suffix, etc. 
+  #                 you should use single quotes to ensure such values dun get escaped.
+  #                 eg. multi_column_suffix: ['\n\n']
+  #
+  # See: https://github.com/RWKV/RWKV-infctx-trainer/issues/34
   # ---
   multi_column_keys: ['instruction', 'input', 'output']
   multi_column_prefix: ['Instruction:\n', 'Input:\n', 'Output:\n']

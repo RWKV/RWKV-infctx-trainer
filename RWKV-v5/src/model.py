@@ -135,21 +135,21 @@ class L2Wrap(torch.autograd.Function):
         #
         # See also:
         # - checkpointed_step
-        ctx.save_for_backward(y)
-        ctx.token_amount = token_amount
-        ctx.currentMask = currentMask
+        ctx.save_for_backward(y, token_amount, currentMask)
         return loss
 
     @staticmethod
     def backward(ctx, grad_output):
-        y, = ctx.saved_tensors
-        token_amount = ctx.token_amount
+        y, token_amount, currentMask = ctx.saved_tensors
+
         # to encourage the logits to be close to 0
         factor = 1e-4 / token_amount
         maxx, ids = torch.max(y, -1, keepdim=True)
         gy = torch.zeros_like(y)
         gy.scatter_(-1, ids, maxx * factor)
-        gy = gy * ctx.currentMask[:, None][None, :]
+
+        # We ensure the mask is reshaped accordingly, and apply it against gy
+        gy = gy * currentMask.reshape(gy.shape[0],gy.shape[1],1) # currentMask[:, None][None, :]
         return (grad_output, gy, None, None)
 
 ### ---
@@ -200,7 +200,7 @@ class RWKV(L.LightningModule):
                  grad_cp: bool = True,
                  bptt_learning: bool = True,
                  bptt_learning_range: int = -1,
-                 bptt_truncated_learning: bool = False,
+                 bptt_truncated_learning: bool = True,
                  layerwise_lr: bool = True,
                  dim_att: Optional[int] = None,
                  dim_ffn: Optional[int] = None,
@@ -784,7 +784,8 @@ class RWKV(L.LightningModule):
             self._counting_tokens = 0
         if self._counting_time_start is None or batch_idx == 0:
             self._counting_time_start = time.time()
-            
+        
+        # Get the input sequence, and attention mask
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
         ori_seq_mask = batch['attention_mask']
@@ -793,17 +794,30 @@ class RWKV(L.LightningModule):
         if ori_seq_mask is None or ori_seq_mask.ndim != 2:
             ori_seq_mask = torch.ones_like(seq[:, 1:])
 
+        # Initialize the total_mask_sum (but not compute it)
+        total_mask_sum = 0
+
+        # Number of GPUs used in training, note that if it is > 1
+        # it is requried that all operations here are in sync with
+        # all other GPUs, as such "quick return" on this function
+        # should not be allowed
+        num_devices = self.trainer.num_devices
+
+        ### ---
+        ### Positional loss bias handling
+        ### ---
+        
         # Get the starting and ending loss bias
         loss_bias_start = self.position_loss_bias
         loss_bias_end   = 2.0 - loss_bias_start
-
-        # total_mask_sum
-        total_mask_sum = torch.sum(ori_seq_mask)
 
         # Skip loss bias calculation, if loss_bias_start is 1.0
         if loss_bias_start == 1.0 or (is_training_run == False and self.position_loss_bias_in_validation == False):
             seq_mask = ori_seq_mask
         else:
+            # Lets get the torch mask sum
+            total_mask_sum = torch.sum(ori_seq_mask)
+
             # Lets get a linear multiplier for the loss bias
             # seq_mask_sum = torch.sum(ori_seq_mask)
             bias_mask = torch.linspace(loss_bias_start, loss_bias_end, int(total_mask_sum.item()), device=ori_seq_mask.device)
@@ -818,12 +832,18 @@ class RWKV(L.LightningModule):
             # And save it as seq_mask
             seq_mask = final_mask.unsqueeze(0)
 
+        ### ---
+        ### Training cutoff logic handling 
+        ### ---
+        
         # Perform cutoff for training run
         if is_training_run:
             prev_step = 0
 
             # Avoid using the zip operation, as torch.compile throws an exception on it
             # with `zip not reconized as a valid function`
+            # 
+            # This skip if ctx_len_warmup_steps/ctx_len_cutoffs is not set
             # ---
             # for step, len_cut in zip(self.ctx_len_warmup_steps,
             #                          self.ctx_len_cutoffs):
@@ -846,23 +866,35 @@ class RWKV(L.LightningModule):
                     seq_mask[:, :pos] = 0
                     break
                 prev_step = step
-                
+        
+        ### ---
+        ### Various size checking, and implementing the core checkpoint_step
+        ### ---
+        
+        # BPTT, and training steps, and various size fetching
         do_bptt_learning = self.bptt_learning and is_training_run
         idx, targets = seq[:, :-1], seq[:, 1:]
-
         B, T = idx.shape
         C = self.n_embd
-        total_mask_sum = torch.sum(seq_mask)
 
         # If total_mask_sum, we skip, as there is no tokens of value to learn from anyway
-        if total_mask_sum == 0:
+        total_mask_sum = torch.sum(seq_mask)
+        # Do a quick return, if there is no tokens of value to learn from due to full masking
+        if num_devices > 1 and total_mask_sum == 0:
             return 0
         
+        # Checkpoint steps
         def checkpointed_step(idx, targets, mask, prev_loss, last_shift_states,
                               last_wkv_states, prev_steps):
             logits, new_shift_states, new_wkv_states = self(
                 idx, last_shift_states, last_wkv_states)
             
+            # Ensure logits, targets, and mask are contiguous
+            # this is required to avoid view is not compatible with size and stride error
+            logits = logits.contiguous()
+            targets = targets.contiguous()
+            mask = mask.contiguous()
+
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
                                     targets.view(-1),
                                     reduction="none")
@@ -876,14 +908,17 @@ class RWKV(L.LightningModule):
             new_loss = prev_loss + loss
             return new_loss, new_shift_states, new_wkv_states, new_steps
 
-        total_loss = torch.tensor(
-            0, dtype=self.emb.weight.dtype).requires_grad_()
+        total_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
         steps = 0
         states = BlockStateList.create(self.n_layer, B, C, 
                                        self.n_head, self.head_size,
                                        seq.device, self.emb.weight.dtype)
         segment_count = math.ceil(T / self.ctx_len)
 
+        ### ---
+        ### Learning process logic (BPTT or not)
+        ### ---
+        
         #
         # BPTT learning, we split the sequence into segments
         # and perform a backward pass for each segment, on its own.
@@ -919,12 +954,12 @@ class RWKV(L.LightningModule):
             # it also helps ensure the segment cutoff points are more varied, across mixed dataset sizes
             # and avoid potentially undesired training behaviour at fixed cutoff points
             # (this only applies for segmented learning)
-            segment_size = min(math.ceil(T / segment_count), self.ctx_len)
+            segment_size = min(math.ceil(T / segment_count)+1, self.ctx_len)
 
-            # Dummy 2D tenros of shape [1,1], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
+            # Dummy 2D tensor of shape [1,1], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
             dummy_2d_zero = torch.tensor([[0]], dtype=torch.long, device=cur_device)
 
-            # Get the max segment count across all GPUs, in the current batch, which is used to keep all devices are in sync
+            # Get the max segment count across all GPUs, in the current substep, which is used to keep all devices are in sync
             # Once a thread has completed all its segments, it will do dummy checkpoint/forward/backprop with one token,
             # and stay in sync with the thread that are still working on their segments
             #
@@ -950,7 +985,17 @@ class RWKV(L.LightningModule):
                     # ---
                     # we map it to be a tensor, instead of the int directly, as this is more reliable across certain versions of torch/lightning
                     # https://discord.com/channels/992359628979568762/1148755392638234697/1148821863749931008
-                    forward_segment_count  = self.trainer.strategy.reduce(torch.Tensor([segment_count]).to(torch.int), reduce_op="max")
+                    
+                    if self.device.type == "cuda":
+                        forward_segment_count = self.trainer.strategy.reduce(
+                            torch.cuda.IntTensor([segment_count], device=self.device), 
+                            reduce_op="max"
+                        )
+                    else:
+                        forward_segment_count = self.trainer.strategy.reduce(
+                            torch.Tensor([segment_count], dtype=torch.int),
+                            reduce_op="max"
+                        )
 
                     # Convert to int, if its a torch tensor
                     if isinstance(forward_segment_count, torch.Tensor):
@@ -1118,13 +1163,20 @@ class RWKV(L.LightningModule):
             global_rank = self.global_rank
             global_device_count = self.trainer.num_devices * self.trainer.num_nodes
 
+            # Get the total dataset context length
+            batch_ctx_len = 0
+            if "data_ctx_len" in batch:
+                batch_ctx_len = torch.sum(batch["data_ctx_len"]).item()
+            else:
+                batch_ctx_len = T * self.trainer.microbatch_size
+
             # Increment the counting tokens, and log it accordingly
-            self._counting_tokens += T
+            self._counting_tokens += batch_ctx_len
 
             # Log the line values
             wandb.log({
                 'global_rank': global_rank, 
-                'real_ctx_len': T, 
+                'data_ctx_len': batch_ctx_len / self.trainer.microbatch_size, 
                 'train/loss': total_loss,
                 f'perf/tokens_total.gpu.{global_rank}': self._counting_tokens,
                 f'perf/tokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
@@ -1138,8 +1190,15 @@ class RWKV(L.LightningModule):
         assert not torch.isnan(total_loss), "total_loss is NaN"
         return total_loss
 
+    #
+    # Training and validation steps
+    #
     @TCompileBaseline
     def training_step(self, batch, batch_idx):
+
+        # print("=== BATCH ID SHAPE ===", batch["input_ids"].shape)
+        # print("=== BATCH AM SHAPE ===", batch["attention_mask"].shape)
+
         total_loss = self.compute_loss(batch, batch_idx, True)
 
         self.log('train/loss', total_loss, prog_bar=True)
