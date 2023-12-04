@@ -426,12 +426,13 @@ data:
   #                 eg. multi_column_suffix: ['\n\n']
   #
   # See: https://github.com/RWKV/RWKV-infctx-trainer/issues/34
+  # Need to use " or the new lines won't be tokenized properly
   # ---
-  # multi_column_keys: ['instruction', 'input', 'output']
-  # multi_column_prefix: ['Instruction:\n', 'Input:\n', 'Output:\n']
-  # multi_column_suffix: ['\n\n', '\n\n', '\n\n']
+  # multi_column_keys: ["instruction", "input", "output"]
+  # multi_column_prefix: ["Instruction:\n", "Input:\n", "Output:\n"]
+  # multi_column_suffix: ["\n\n", "\n\n", "\n\n"]
   # multi_column_train_mask: [true, false, true]
-  # multi_column_separator: '\n\n'
+  # multi_column_separator: "\n\n"
 
   # If processing prompt/completion jsonl pairs, the prompt is masked by default
   # use this flag to disable this default behaviour
