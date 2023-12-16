@@ -238,6 +238,7 @@ def prepare_data_static(**kargs):
                 multi_column_separator_encodings = encodeTokens(multi_column_separator)
 
         conversation_prefix_encoding_map = {}
+        conversation_suffix_encoding_map = {}
         conversation_enabled = False
         if 'conversation_format' in kargs and kargs["conversation_format"] is not None:
             if kargs["conversation_format"] == "iopairs":
@@ -252,6 +253,9 @@ def prepare_data_static(**kargs):
                         if input_key not in conversation_prefix_encoding_map:
                             conversation_prefix_encoding_map[input_key] = {}
                         conversation_prefix_encoding_map[input_key][key] = encodeTokens(value.replace('{sender}', relabel))
+
+                for key, suffix in kargs['conversation_sender_suffix'].items():
+                    conversation_suffix_encoding_map[key] = encodeTokens(suffix)
                         # example conversation_prefix_encoding_map['message']['user'] = encodeTokens('\n\nUser:')
 
                 conversation_enabled = True
@@ -339,6 +343,13 @@ def prepare_data_static(**kargs):
                                 else: # kargs["conversation_input_key_mask"][key] is False
                                     # This means it is false, lets not pay attention to it
                                     attention_mask += ([0] * len(column_encodings['input_ids']))
+
+                                suffix = conversation_suffix_encoding_map[sender]
+
+                                if suffix is not None:
+                                    input_ids += suffix['input_ids']
+                                    token_type_ids += suffix['token_type_ids']
+                                    attention_mask += suffix['attention_mask']
 
                 return {
                     'input_ids': input_ids,
@@ -705,6 +716,7 @@ class RWKVDataModule(LightningDataModule):
         conversation_sender_key: str = None,
         conversation_sender_value_map: dict = None,
         conversation_input_key_map: dict = None,
+        conversation_sender_suffix: dict = None,
         conversation_sender_mask: dict = None,
 
         # prompt/completion format masking support
