@@ -239,6 +239,7 @@ def prepare_data_static(**kargs):
 
         conversation_prefix_encoding_map = {}
         conversation_suffix_encoding_map = {}
+        conversation_end_of_conversation_token = encodeTokens(kargs["conversation_end_of_conversation"]) if kargs["conversation_end_of_conversation"] is not None else None
         conversation_enabled = False
         if 'conversation_format' in kargs and kargs["conversation_format"] is not None:
             if kargs["conversation_format"] == "iopairs":
@@ -254,8 +255,8 @@ def prepare_data_static(**kargs):
                             conversation_prefix_encoding_map[input_key] = {}
                         conversation_prefix_encoding_map[input_key][key] = encodeTokens(value.replace('{sender}', relabel))
 
-                for key, suffix in kargs['conversation_sender_suffix'].items():
-                    conversation_suffix_encoding_map[key] = encodeTokens(suffix)
+            for key, suffix in kargs['conversation_sender_suffix'].items():
+                conversation_suffix_encoding_map[key] = encodeTokens(suffix)
                         # example conversation_prefix_encoding_map['message']['user'] = encodeTokens('\n\nUser:')
 
                 conversation_enabled = True
@@ -292,7 +293,7 @@ def prepare_data_static(**kargs):
                         # lets loop through each key in the io pair
                         for key, value in conversation[i].items():
                             # lets get the prefix for this key
-                            prefix = conversation_prefix_encoding_map[key]
+                            prefix = conversation_prefix_encoding_map[key] if sender in conversation_prefix_encoding_map[key] else None
 
                             # Add the prefix
                             if prefix is not None:
@@ -313,6 +314,14 @@ def prepare_data_static(**kargs):
                             else: # kargs["conversation_input_key_mask"][key] is False
                                 # This means it is false, lets not pay attention to it
                                 attention_mask += ([0] * len(column_encodings['input_ids']))
+
+                            
+                            suffix = conversation_suffix_encoding_map[key] if sender in conversation_suffix_encoding_map else None
+
+                            if suffix is not None:
+                                input_ids += suffix['input_ids']
+                                token_type_ids += suffix['token_type_ids']
+                                attention_mask += suffix['attention_mask']
                 
                 elif kargs['conversation_format'] == 'sender':
                     for i in range(len(conversation)):
@@ -322,7 +331,7 @@ def prepare_data_static(**kargs):
                         for key, value in kargs['conversation_input_key_map'].items():
                             if key in turn:
                                 # lets get the prefix for this key
-                                prefix = conversation_prefix_encoding_map[key][sender]
+                                prefix = conversation_prefix_encoding_map[key][sender] if sender in conversation_prefix_encoding_map[key] else None
 
                                 # Add the prefix
                                 if prefix is not None:
@@ -344,12 +353,17 @@ def prepare_data_static(**kargs):
                                     # This means it is false, lets not pay attention to it
                                     attention_mask += ([0] * len(column_encodings['input_ids']))
 
-                                suffix = conversation_suffix_encoding_map[sender]
+                                suffix = conversation_suffix_encoding_map[sender] if sender in conversation_suffix_encoding_map else None
 
                                 if suffix is not None:
                                     input_ids += suffix['input_ids']
                                     token_type_ids += suffix['token_type_ids']
                                     attention_mask += suffix['attention_mask']
+
+                if len(input_ids) > 0  and conversation_end_of_conversation_token is not None:
+                    input_ids += conversation_end_of_conversation_token['input_ids']
+                    token_type_ids += conversation_end_of_conversation_token['token_type_ids']
+                    attention_mask += conversation_end_of_conversation_token['attention_mask']
 
                 return {
                     'input_ids': input_ids,
@@ -718,6 +732,7 @@ class RWKVDataModule(LightningDataModule):
         conversation_input_key_map: dict = None,
         conversation_sender_suffix: dict = None,
         conversation_sender_mask: dict = None,
+        conversation_end_of_conversation: str = None,
 
         # prompt/completion format masking support
         disable_prompt_completion_mask: bool = False,
