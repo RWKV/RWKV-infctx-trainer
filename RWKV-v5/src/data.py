@@ -46,6 +46,7 @@ def prepare_data_static(**kargs):
         # Special handling for binidx
         #--------------------------------
 
+        # TODO: verify this works, i have a suspicion this just creates a new "document" for each token.
         if kargs["tokenizer"] == "binidx":
             from .dataflow.binidx import MMapIndexedDataset
 
@@ -236,6 +237,30 @@ def prepare_data_static(**kargs):
             if multi_column_separator is not None and len(multi_column_separator) > 0:
                 multi_column_separator_encodings = encodeTokens(multi_column_separator)
 
+        conversation_prefix_encoding_map = {}
+        conversation_suffix_encoding_map = {}
+        conversation_end_of_conversation_token = encodeTokens(kargs["conversation_end_of_conversation"]) if kargs["conversation_end_of_conversation"] is not None else None
+        conversation_enabled = False
+        if 'conversation_format' in kargs and kargs["conversation_format"] is not None:
+            if kargs["conversation_format"] == "iopairs":
+                # preencode all prefixes (keyed by the input key)
+                for key, prefix in kargs['conversation_input_key_prefix_map'].items():
+                    conversation_prefix_encoding_map[key] = encodeTokens(prefix)
+                conversation_enabled = True
+            elif kargs["conversation_format"] == "sender":
+                # preencode all prefixes (keyed by the sender value)
+                for key, relabel in kargs['conversation_sender_value_map'].items():
+                    for input_key, value in kargs['conversation_input_key_map'].items():
+                        if input_key not in conversation_prefix_encoding_map:
+                            conversation_prefix_encoding_map[input_key] = {}
+                        conversation_prefix_encoding_map[input_key][key] = encodeTokens(value.replace('{sender}', relabel))
+
+            for key, suffix in kargs['conversation_sender_suffix'].items():
+                conversation_suffix_encoding_map[key] = encodeTokens(suffix)
+                        # example conversation_prefix_encoding_map['message']['user'] = encodeTokens('\n\nUser:')
+
+                conversation_enabled = True
+
         # Maps the dataset record to the tokenized result
         # handles a wide variety of format according to the data configuration
         #
@@ -253,6 +278,99 @@ def prepare_data_static(**kargs):
                 if kargs["custom_text_key"] in x:
                     return encodeTokens(x[kargs["custom_text_key"]])
                 
+            if conversation_enabled:
+                conv_key = kargs['conversation_key'] if 'conversation_key' in kargs else None
+                conversation = x[conv_key] if conv_key is not None else x
+
+                # Array of output values we will return
+                input_ids = []
+                token_type_ids = []
+                attention_mask = []
+
+                if kargs['conversation_format'] == 'iopairs':
+                    # lets loop through each io pair
+                    for i in range(len(conversation)):
+                        # lets loop through each key in the io pair
+                        for key, value in conversation[i].items():
+                            # lets get the prefix for this key
+                            prefix = conversation_prefix_encoding_map[key] if sender in conversation_prefix_encoding_map[key] else None
+
+                            # Add the prefix
+                            if prefix is not None:
+                                input_ids += prefix['input_ids']
+                                token_type_ids += prefix['token_type_ids']
+                                attention_mask += prefix['attention_mask']
+
+                            # Tokenize the column
+                            column_encodings = encodeTokens(value)
+
+                            # Add the column
+                            input_ids += column_encodings['input_ids']
+                            token_type_ids += column_encodings['token_type_ids']
+
+                            if key not in kargs["conversation_input_key_mask"] or kargs["conversation_input_key_mask"][key]:
+                                # If the corresponding `conversation_input_key_mask` is not set, we will assume as valid training data
+                                attention_mask += ([1] * len(column_encodings['input_ids']))
+                            else: # kargs["conversation_input_key_mask"][key] is False
+                                # This means it is false, lets not pay attention to it
+                                attention_mask += ([0] * len(column_encodings['input_ids']))
+
+                            
+                            suffix = conversation_suffix_encoding_map[key] if sender in conversation_suffix_encoding_map else None
+
+                            if suffix is not None:
+                                input_ids += suffix['input_ids']
+                                token_type_ids += suffix['token_type_ids']
+                                attention_mask += suffix['attention_mask']
+                
+                elif kargs['conversation_format'] == 'sender':
+                    for i in range(len(conversation)):
+                        turn = conversation[i]
+                        sender = turn[kargs['conversation_sender_key']]
+                            
+                        for key, value in kargs['conversation_input_key_map'].items():
+                            if key in turn:
+                                # lets get the prefix for this key
+                                prefix = conversation_prefix_encoding_map[key][sender] if sender in conversation_prefix_encoding_map[key] else None
+
+                                # Add the prefix
+                                if prefix is not None:
+                                    input_ids += prefix['input_ids']
+                                    token_type_ids += prefix['token_type_ids']
+                                    attention_mask += prefix['attention_mask']
+
+                                # Tokenize the column
+                                column_encodings = encodeTokens(turn[key])
+
+                                # Add the column
+                                input_ids += column_encodings['input_ids']
+                                token_type_ids += column_encodings['token_type_ids']
+
+                                if sender not in kargs["conversation_sender_mask"] or kargs["conversation_sender_mask"][sender]:
+                                    # If the corresponding `conversation_input_key_mask` is not set, we will assume as valid training data
+                                    attention_mask += ([1] * len(column_encodings['input_ids']))
+                                else: # kargs["conversation_input_key_mask"][key] is False
+                                    # This means it is false, lets not pay attention to it
+                                    attention_mask += ([0] * len(column_encodings['input_ids']))
+
+                                suffix = conversation_suffix_encoding_map[sender] if sender in conversation_suffix_encoding_map else None
+
+                                if suffix is not None:
+                                    input_ids += suffix['input_ids']
+                                    token_type_ids += suffix['token_type_ids']
+                                    attention_mask += suffix['attention_mask']
+
+                if len(input_ids) > 0  and conversation_end_of_conversation_token is not None:
+                    input_ids += conversation_end_of_conversation_token['input_ids']
+                    token_type_ids += conversation_end_of_conversation_token['token_type_ids']
+                    attention_mask += conversation_end_of_conversation_token['attention_mask']
+
+                return {
+                    'input_ids': input_ids,
+                    'token_type_ids': token_type_ids,
+                    'attention_mask': attention_mask
+                }
+                    
             # Multi column merging support
             if multi_column_enabled:
                 # Lets count the number of columns we have
@@ -600,6 +718,22 @@ class RWKVDataModule(LightningDataModule):
         multi_column_suffix: list = None,
         multi_column_train_mask: list = None,
         multi_column_separator: str = None,
+        # Conversation format support
+        conversation_format: str = None,
+        conversation_key: str = None,
+
+        # conversation_format == 'iopairs'
+        conversation_input_key_prefix_map: dict = None,
+        conversation_input_key_mask: dict = None,
+
+        # conversation_format == 'sender'
+        conversation_sender_key: str = None,
+        conversation_sender_value_map: dict = None,
+        conversation_input_key_map: dict = None,
+        conversation_sender_suffix: dict = None,
+        conversation_sender_mask: dict = None,
+        conversation_end_of_conversation: str = None,
+
         # prompt/completion format masking support
         disable_prompt_completion_mask: bool = False,
         # Skip database setup checks if datapath exists, ignored if using preload_datapath.py

@@ -1210,6 +1210,10 @@ class RWKV(L.LightningModule):
             gc.collect()
             torch.cuda.empty_cache()
 
+        # if loss not a number return None
+        if torch.isnan(total_loss):
+            return None
+
         return total_loss
 
     @TCompileBaseline
