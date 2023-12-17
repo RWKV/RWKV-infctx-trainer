@@ -590,6 +590,9 @@ def prepare_data_static(**kargs):
                                             num_proc=num_cpus)
             else:
                 raise NotImplementedError("Packing in random order is not implemented yet")
+        else:
+            # Remove the sample_length column, as it is no longer needed
+            src_dataset['train'] = src_dataset['train'].remove_columns(["sample_length"])
         
         # If an int value is used, it is interprated as document count
         # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
