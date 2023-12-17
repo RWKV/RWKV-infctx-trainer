@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import DistributedSampler
 
+import math
 import wandb
 from datasets import load_from_disk, load_dataset, Dataset
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
@@ -536,6 +537,11 @@ def prepare_data_static(**kargs):
                 'attention_mask': out_attention_mask,
             }
             return ret
+        
+        # Get the kargs["processing_max_batch_size"], if not set, we will use the full dataset
+        processing_max_batch_size = kargs["processing_max_batch_size"]
+        if processing_max_batch_size <= 0:
+            processing_max_batch_size = len(src_dataset["train"])
 
         # Remove empty datasets (it causes an error otherwise)
         # and perform min/max length filtering (if configured)
@@ -549,18 +555,23 @@ def prepare_data_static(**kargs):
                 return False
             return True
         src_dataset = src_dataset.filter(dataset_filter, num_proc=num_cpus)
+
+        # Rechunking happened
+        rechunking_happened = False
         
         # Perform rechunking if needed for "text" based datasets
         if kargs["source"] == "text" and kargs["text_rechunk_size"] > 0 and kargs["text_rechunk_auto"]:
+            rechunking_happened = True
             src_dataset = src_dataset.map(rechunk_text, batched=True, 
-                                        batch_size=kargs["text_rechunk_size"]*10,
+                                        batch_size=processing_max_batch_size,
                                         num_proc=num_cpus)
         
         # Perform rechunking after filtering, if source is not a "text" based 
         # dataset and text_rechunk_force is enabled
         if kargs["source"] != "text" and kargs["text_rechunk_size"] > 0 and kargs["text_rechunk_force"]:
+            rechunking_happened = True
             src_dataset = src_dataset.map(rechunk_text, batched=True, 
-                                        batch_size=kargs["text_rechunk_size"]*2,
+                                        batch_size=processing_max_batch_size,
                                         num_proc=num_cpus)
 
         # Check if the dataset does not have a test split
@@ -575,19 +586,156 @@ def prepare_data_static(**kargs):
                 seed=42 #Fixed seed, to prevent train/test reshuffling between test runs
             )
         
-        # Perform a sort by length, only after test split
-        if kargs["sort_by_length"]:
-            sort_asc = kargs["sort_asc"]
-            
-            def add_length(example):
-                example["input_length"] = len(example['input_ids'])
-                return example
-            
-            src_dataset['train'] = src_dataset['train'].map(add_length, batched=False, num_proc=num_cpus)
-            
-            # sort by length (not sorting the columns, just the rows)
-            src_dataset['train'] = src_dataset['train'].sort("input_length", reverse=not sort_asc)
+        # Compute the sample length, as requried for the sort by length feature, and packing
+        def add_length(example):
+            example["sample_length"] = len(example['input_ids'])
+            return example
+        src_dataset['train'] = src_dataset['train'].map(add_length, batched=False, num_proc=num_cpus)
 
+        # Does the actual sorting process (after test split!)
+        if kargs["sort_by_length"]:
+            if kargs["packing_enable"] and not kargs["packing_in_sequence"]:
+                # Show warning if sort_by_length is enabled, with packing
+                print("Warning: sort_by_length=true, packing_enable=true, with packing_in_sequence=False - sort_by_length to be ignored")
+            else:
+                sort_asc = kargs["sort_asc"]
+                src_dataset['train'] = src_dataset['train'].sort("sample_length", reverse=not sort_asc)
+        
+        # Implement dataset packing, which merges the dataset row records, into "fixed sizes"
+        # this is done by merging multiple dataset samples, with a 0 token in between
+        # to form a single dataset sample of the desired size
+        #
+        # The longest dattaset sample (below the pack size) will be appended with the shortest
+        # dataset samples, until the desired pack size is reached. With the process 
+        # repeated for all samples
+        #
+        # This however will mess up the "real_ctx_len" value, as it will be the length of the
+        # of the merged dataset samples, instead of the original dataset sample.
+        # ---
+
+        if kargs["packing_enable"] and rechunking_happened:
+            # Show warning if packing_enable is enabled, with rechunking
+            print("Warning: packing_enable=true, with text rechunking (either auto, or forced) - packing_enable will be treated as false")
+
+        if kargs["packing_enable"] and not rechunking_happened:
+
+            # def add_length(example):
+            #     example["sample_length"] = len(example['input_ids'])
+            #     return example
+            # src_dataset['train'] = src_dataset['train'].map(add_length, batched=False, num_proc=num_cpus)
+
+            # The pack size
+            packing_batchsize = int(kargs["packing_batchsize"])
+            packing_chunksize = int(kargs["packing_chunksize"])
+            packing_min_ctx_len = int(kargs["packing_min_ctx_len"])
+
+            if packing_min_ctx_len <= 0:
+                packing_min_ctx_len = packing_chunksize
+
+            # The pack function
+            def pack_dataset_in_sequence(x):
+                
+                # The return resulting arrays
+                id_arr = []
+                type_arr = []
+                mask_arr = []
+                sample_len_arr = []
+
+                # batch set chunk counting
+                batchset_chunksize = [0]
+                
+                # The total length of the dataset
+                total_len = len(x["input_ids"])
+
+                # Preload size (we can use either packing_batchsize, or just 1)
+                preload_size = 1 # packing_batchsize
+
+                # Lets prepare the basic first chunk
+                for i in range(preload_size):
+                    # Port the values to the return arrays
+                    id_arr.append(x["input_ids"][i])
+                    type_arr.append(x["token_type_ids"][i])
+                    mask_arr.append(x["attention_mask"][i])
+                    sample_len_arr.append([x["sample_length"][i]])
+
+                    # Keep the chunk count in sync
+                    batchset_chunksize[0] = max( 
+                        math.ceil( max(x["sample_length"][i],packing_min_ctx_len) / packing_chunksize ) * packing_chunksize, 
+                        batchset_chunksize[0] 
+                    )
+
+                # Given the datasample index, try to scan and merge into existing samples (if possible)
+                def merge_into_existing_samples(i):
+                    # Get the sample length
+                    sample_len = x["sample_length"][i]
+
+                    # Iterate and see if we can merge the sample
+                    for j in range(len(batchset_chunksize)):
+
+                        # Get the current set chunk size
+                        current_set_chunk_size = batchset_chunksize[j]
+                        
+                        # Iterate existing samples for the chunk
+                        for k in range( j * packing_chunksize, min((j+1) * packing_chunksize, len(id_arr))):
+                            # Get the existing record length
+                            existing_record_len = len(id_arr[k])
+
+                            # Check if the sample can be merged
+                            if existing_record_len + 1 + sample_len < current_set_chunk_size:
+                                # Merge the sample
+                                id_arr[k] += endOfDoc_tokenSet["input_ids"][0] + x["input_ids"][i]
+                                type_arr[k] += endOfDoc_tokenSet["token_type_ids"][0] + x["token_type_ids"][i]
+                                mask_arr[k] += endOfDoc_tokenSet["attention_mask"][0] + x["attention_mask"][i]
+                                sample_len_arr[k].append(sample_len)
+                                
+                                # Return that a merge has been done
+                                return True
+                            
+                    # Return that no merge has been done
+                    return False
+
+                # Lets iterate the rest of the dataset, and start packing
+                for i in range(preload_size, total_len):
+                    # Merge if possible
+                    if merge_into_existing_samples(i):
+                        continue
+
+                    # Ok merge failed, lets append and update the chunk size, of the affected batchset
+                    id_arr.append(x["input_ids"][i])
+                    type_arr.append(x["token_type_ids"][i])
+                    mask_arr.append(x["attention_mask"][i])
+                    sample_len_arr.append([x["sample_length"][i]])
+
+                    # Update the chunk size
+                    batchset_id = math.floor( len(id_arr) / packing_chunksize )
+                    updated_chunksize = max( math.ceil( x["sample_length"][i] / packing_chunksize ) * packing_chunksize, packing_min_ctx_len )
+
+                    if batchset_id >= len(batchset_chunksize):
+                        batchset_chunksize.append(updated_chunksize)
+                    else:
+                        batchset_chunksize[batchset_id] = max(updated_chunksize, batchset_chunksize[batchset_id])
+
+                # Prepare and return the output object
+                ret = {
+                    'input_ids': id_arr,
+                    'token_type_ids': type_arr,
+                    'attention_mask': mask_arr,
+                    'sample_length': sample_len_arr
+                }
+                return ret
+
+            # Shuffle the dataset if needed
+            if not kargs["packing_in_sequence"]:
+                src_dataset['train'] = src_dataset['train'].shuffle(seed=101)
+
+            # Perform the dataset packing
+            src_dataset['train'] = src_dataset['train'].map(pack_dataset_in_sequence, batched=True, 
+                                        batch_size=processing_max_batch_size,
+                                        num_proc=num_cpus)
+        else:
+            # Remove the sample_length column, as it is no longer needed
+            src_dataset['train'] = src_dataset['train'].remove_columns(["sample_length"])
+        
         # If an int value is used, it is interprated as document count
         # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
         if kargs["dataset_offset"] > 0 or kargs["dataset_length"] > 0:
@@ -693,7 +841,10 @@ class RWKVDataModule(LightningDataModule):
         # HF dataset conversion helpers
         # ---
         # Min / Max token size filtering
-        min_token_size: int = -1,
+        #
+        # default min token size of 1 is chosen, to filter out empty records
+        # which causes errors in the trainer
+        min_token_size: int = 1,
         max_token_size: int = -1,
         
         # Sort by length
@@ -736,6 +887,44 @@ class RWKVDataModule(LightningDataModule):
 
         # prompt/completion format masking support
         disable_prompt_completion_mask: bool = False,
+
+        # ----------------------------
+        # dataset packing support
+        # ----------------------------
+
+        # Boolean flag to enable / disable dataset packing
+        packing_enable: bool = False,
+
+        # Used to ensure all training samples wihin this batch size is the same length
+        # Ideally this should align exactly with your real "batch size"
+        #
+        # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
+        # a large number of batch size combinations. This helps reduce the amount of
+        # misaligned batches, and thus reduce the amount of wasted training time.
+        packing_batchsize: int = 20160,
+
+        # Chunking size to align within each batch, this ideally should be equal to
+        # the training context length used.
+        packing_chunksize: int = 4096,
+
+        # Minimum size to pack up to, this should be a multiple of packing_chunksize
+        # defautls to -1, which equals to packing_chunksize
+        packing_min_ctx_len: int = -1,
+
+        # Pack the data sequentially if possible, in accordance to the dataset sequence
+        # this can be used together with sort_by_length, otherwise a shuffle will be done
+        packing_in_sequence: bool = False,
+
+        # ----------------------------
+        # System tweaks
+        # ----------------------------
+
+        # Batch size scanning range, used for deciding the max number of documents
+        # to process simultaneously at a time. This is used to prevent OOM errors
+        # while rearranging the dataset, etc. Used for both packing / sorting operations
+        # ( Defaults to all records )
+        processing_max_batch_size: int = -1,
+
         # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
         skip_datapath_setup: bool = False
     ):
