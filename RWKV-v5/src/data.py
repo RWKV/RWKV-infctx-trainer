@@ -463,13 +463,11 @@ def prepare_data_static(**kargs):
                 seed=42 #Fixed seed, to prevent train/test reshuffling between test runs
             )
         
-        # Compute the sample length, as requried for the sort by length feature
-        if kargs["sort_by_length"] and not kargs["packing_enabled"]:
-            def add_length(example):
-                example["sample_length"] = len(example['input_ids'])
-                return example
-            
-            src_dataset['train'] = src_dataset['train'].map(add_length, batched=False, num_proc=num_cpus)
+        # Compute the sample length, as requried for the sort by length feature, and packing
+        def add_length(example):
+            example["sample_length"] = len(example['input_ids'])
+            return example
+        src_dataset['train'] = src_dataset['train'].map(add_length, batched=False, num_proc=num_cpus)
 
         # Does the actual sorting process (after test split!)
         # Skipped if dataset packing is enabled (as this woould be redundant)
