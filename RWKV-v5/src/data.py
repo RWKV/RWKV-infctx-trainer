@@ -437,9 +437,13 @@ def prepare_data_static(**kargs):
                 return False
             return True
         src_dataset = src_dataset.filter(dataset_filter, num_proc=num_cpus)
+
+        # Rechunking happened
+        rechunking_happened = False
         
         # Perform rechunking if needed for "text" based datasets
         if kargs["source"] == "text" and kargs["text_rechunk_size"] > 0 and kargs["text_rechunk_auto"]:
+            rechunking_happened = True
             src_dataset = src_dataset.map(rechunk_text, batched=True, 
                                         batch_size=processing_max_batch_size,
                                         num_proc=num_cpus)
@@ -447,6 +451,7 @@ def prepare_data_static(**kargs):
         # Perform rechunking after filtering, if source is not a "text" based 
         # dataset and text_rechunk_force is enabled
         if kargs["source"] != "text" and kargs["text_rechunk_size"] > 0 and kargs["text_rechunk_force"]:
+            rechunking_happened = True
             src_dataset = src_dataset.map(rechunk_text, batched=True, 
                                         batch_size=processing_max_batch_size,
                                         num_proc=num_cpus)
@@ -489,7 +494,12 @@ def prepare_data_static(**kargs):
         # This however will mess up the "real_ctx_len" value, as it will be the length of the
         # of the merged dataset samples, instead of the original dataset sample.
         # ---
-        if kargs["packing_enable"]:
+
+        if kargs["packing_enable"] and rechunking_happened:
+            # Show warning if packing_enable is enabled, with rechunking
+            print("Warning: packing_enable=true, with text rechunking (either auto, or forced) - packing_enable will be treated as false")
+
+        if kargs["packing_enable"] and not rechunking_happened:
 
             # def add_length(example):
             #     example["sample_length"] = len(example['input_ids'])
@@ -769,7 +779,6 @@ class RWKVDataModule(LightningDataModule):
 
         # Pack the data sequentially if possible, in accordance to the dataset sequence
         # this can be used together with sort_by_length, otherwise a shuffle will be done
-        # prior to packing
         packing_in_sequence: bool = False,
 
         # ----------------------------

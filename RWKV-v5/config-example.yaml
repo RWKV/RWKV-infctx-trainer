@@ -382,7 +382,7 @@ data:
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
   # If using a custom tokenizer, provide the HF tokenizer name/path
   # ---
-  tokenizer: neox
+  tokenizer: world
 
   # Minimum / Maximum token size of the dataset to use
   # useful for filtering out small noisy data samples from large datasets
@@ -392,21 +392,6 @@ data:
   # ---
   # min_token_size: 1024
   # max_token_size: -1
-
-  # Rechunking of text dataset, this is done only when source is set as 'text'
-  # and will merge the various sentencees, into larger chunks up to the target size
-  #
-  # Defaults to 2048
-  #
-  # This is ignored, if source is not set as text (unless text_rechunk_force)
-  # This is ignored, if set to zero
-  # ---
-  # text_rechunk_size: 2048
-
-  # Apply text rechunk to the dataset, even if its not a 'text' source
-  # This is done only after dataset filtering, and if source is not 'text'
-  # ---
-  # text_rechunk_force: True
 
   # Custom text column to use, useful for dataset with alternative training columns labels
   # This is checked before multi column merging, default is null (disabled)
@@ -438,6 +423,58 @@ data:
   # use this flag to disable this default behaviour
   # ---
   # disable_prompt_completion_mask: false
+
+  # ----------------------------
+  # Rechunking support
+  # ----------------------------
+
+  # Rechunking of text dataset, this is done only when source is set as 'text'
+  # and will merge the various sentencees, into larger chunks up to the target size
+  #
+  # Defaults to 2048
+  #
+  # This is ignored, if source is not set as text (unless text_rechunk_force)
+  # This is ignored, if set to zero / -1
+  # ---
+  text_rechunk_size: 2048
+
+  # Apply text rechunk to the dataset, even if its not a 'text' source
+  # This is done only after dataset filtering, and if source is not 'text'
+  # ---
+  text_rechunk_force: False
+
+  # Used to disable the automated text rechunkin for text files, if set as false
+  # ---
+  text_rechunk_auto: True
+
+  # ----------------------------
+  # Dataset packing support
+  # Recommended to be used with mixed documents sized finetuning
+  # For foundation model "from scratch", rechunking is typically used instead
+  # ----------------------------
+
+  # Boolean flag to enable / disable dataset packing
+  packing_enable: True
+
+  # Used to ensure all training samples wihin this batch size is the same length
+  # Ideally this should align exactly with your real "batch size"
+  #
+  # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
+  # a large number of batch size combinations. This helps reduce the amount of
+  # misaligned batches, and thus reduce the amount of wasted training time.
+  packing_batchsize: 20160
+
+  # Chunking size to align within each batch, this ideally should be equal to
+  # the training context length used.
+  packing_chunksize: 4096
+
+  # Minimum size to pack up to, this should be a multiple of packing_chunksize
+  # defautls to -1, which equals to packing_chunksize
+  packing_min_ctx_len: -1
+
+  # Pack the data sequentially if possible, in accordance to the dataset sequence
+  # this can be used together with sort_by_length, otherwise a shuffle will be done
+  packing_in_sequence: False
 
 # Path to the current checkpoint to continue training from
 # this should be the directory path, and ends with `.ckpt/`
