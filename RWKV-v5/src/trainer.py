@@ -52,7 +52,7 @@ class RWKVLightningTrainer(Trainer):
                 raise ValueError(f"Unsupported devices config '{devices}', unable to compute device count for 'target_batch_size'")
             
             # Compute the accumulate_grad_batches
-            accumulate_grad_batches = max( 1, math.floor(target_batch_size / (num_nodes * num_devices)) )
+            accumulate_grad_batches = max( 1, math.floor(target_batch_size / max(1, num_nodes * num_devices)) )
             kwargs["accumulate_grad_batches"] = accumulate_grad_batches
             effective_batch_size = accumulate_grad_batches * num_nodes * num_devices
 
