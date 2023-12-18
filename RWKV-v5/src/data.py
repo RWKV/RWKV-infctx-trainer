@@ -44,6 +44,8 @@ def prepare_data_static(**kargs):
         if kargs["tokenizer"] is None:
             raise ValueError('Tokenizer must be specified if source is specified')
         
+        # =====================================================
+
         # Special handling for binidx
         #--------------------------------
 
@@ -68,271 +70,237 @@ def prepare_data_static(**kargs):
                     }
 
             # Load the huggingface dataset from the generator
-            src_dataset = Dataset.from_generator(gen)
+            raw_src_dataset = Dataset.from_generator(gen)
 
+            # Previous short cut save for binidx, disabled to support chunking/packing
+            # ----------------------
             # Train/test split
             test_split = kargs["test_split"]
             # The minimum test size is 1, if not we will get errors in the trainer?
             if test_split <= 0 or test_split <= 0.0:
                 test_split = 1
-            split_dataset = src_dataset.train_test_split(
+            
+            # Force a split, to normlize the dataset format
+            src_dataset = raw_src_dataset.train_test_split(
                 test_size=test_split,shuffle=kargs["test_split_shuffle"],
                 seed=42 #Fixed seed, to prevent train/test reshuffling between test runs
             )
+            
+            # # Save the dataset to disk
+            # split_dataset.save_to_disk(kargs["data_path"])
+            # # Does nothing else (done)
+            # return
 
-            # Save the dataset to disk
-            split_dataset.save_to_disk(kargs["data_path"])
-            # Does nothing else (done)
-            return
+        else:
+            # Reverting back to general purpose HF dataset / tokenizer handling
+            #--------------------------------
+            load_dataset_params = {
+                'path': kargs["source"],
+                'num_proc': num_cpus
+            }
 
-        # Reverting back to general purpose HF dataset / tokenizer handling
-        #--------------------------------
+            # Handle advance params (if set)
+            if kargs["source_data_dir"] is not None:
+                load_dataset_params['data_dir'] = kargs["source_data_dir"]
+            if kargs["source_dataset_params"] is not None:
+                source_dataset_params = kargs["source_dataset_params"]
+                for k, v in source_dataset_params.items():
+                    load_dataset_params[k] = v
 
-        load_dataset_params = {
-            'path': kargs["source"],
-            'num_proc': num_cpus
-        }
+            # Load the dataset
+            src_dataset = load_dataset(**load_dataset_params)
 
-        # Handle advance params (if set)
-        if kargs["source_data_dir"] is not None:
-            load_dataset_params['data_dir'] = kargs["source_data_dir"]
-        if kargs["source_dataset_params"] is not None:
-            source_dataset_params = kargs["source_dataset_params"]
-            for k, v in source_dataset_params.items():
-                load_dataset_params[k] = v
+            # If for some reason the dataset is a "test" only split, and missing a "train" split, we remap it as a "train" split
+            if "train" not in src_dataset.keys():
+                if "test" in src_dataset.keys():
+                    src_dataset["train"] = src_dataset["test"]
+                    del src_dataset["test"]
+                else:
+                    raise ValueError('Dataset must have a "train" split')
 
-        # Load the dataset
-        src_dataset = load_dataset(**load_dataset_params)
+            # If an int value is used, it is interprated as document count
+            # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
+            if kargs["dataset_offset"] > 0 or kargs["dataset_length"] > 0:
+                # src dataset length
+                train_length = len(src_dataset["train"])
 
-        # If for some reason the dataset is a "test" only split, and missing a "train" split, we remap it as a "train" split
-        if "train" not in src_dataset.keys():
-            if "test" in src_dataset.keys():
-                src_dataset["train"] = src_dataset["test"]
-                del src_dataset["test"]
+                # Compute the offset position
+                offset_val = kargs["dataset_offset"]
+
+                # If offset is a float, we will use it as a percentage
+                if offset_val < 0:
+                    offset_val = 0
+                if offset_val > 0 and offset_val < 1.0:
+                    offset_val = int(train_length * offset_val) # Rounded down value
+
+                # Compute the length position
+                length_val = kargs["dataset_length"]
+                if length_val < 0:
+                    length_val = train_length - offset_val
+                if length_val > 0 and length_val < 1.0:
+                    length_val = int(train_length * length_val)
+                if length_val > (train_length - offset_val):
+                    length_val = (train_length - offset_val)
+
+                # Get the subset of the dataset
+                src_dataset["train"] = src_dataset["train"].select(range(offset_val, offset_val + length_val))
+
+            # Tokenizer vars
+            hf_tokenizer = None
+            world_tokenizer = None
+
+            # Load the tokenizer according to either its predefined name or its path
+            # (defaults to neox)
+            if kargs["tokenizer"] == "neox":
+                tokenizer_file = os.path.join(SRC_DIR, "./dataflow/20B_tokenizer.json")
+                hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
+            elif kargs["tokenizer"] == "world":
+                # Setup the tokenizer
+                world_tokenizer = True
             else:
-                raise ValueError('Dataset must have a "train" split')
+                # AutoTokenizer
+                tokenizerName = kargs["tokenizer"]
 
-        # If an int value is used, it is interprated as document count
-        # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
-        if kargs["dataset_offset"] > 0 or kargs["dataset_length"] > 0:
-            # src dataset length
-            train_length = len(src_dataset["train"])
+                # with custom args and props
+                tokenizerKWArgs = {}
+                tokenizerProps = {}
+                if kargs["autoTokenizer"] is not None:
+                    if kargs["autoTokenizer"]["kwargs"] is not None:
+                        tokenizerKWArgs = kargs["autoTokenizer"]["kwargs"]
+                    if kargs["autoTokenizer"]["props"] is not None:
+                        tokenizerProps  = kargs["autoTokenizer"]["props"]
 
-            # Compute the offset position
-            offset_val = kargs["dataset_offset"]
+                # Intialize the tokenizer, with kwargs
+                hf_tokenizer = AutoTokenizer.from_pretrained(tokenizerName, **tokenizerKWArgs)
 
-            # If offset is a float, we will use it as a percentage
-            if offset_val < 0:
-                offset_val = 0
-            if offset_val > 0 and offset_val < 1.0:
-                offset_val = int(train_length * offset_val) # Rounded down value
+                # Configure the tokenizer properties
+                for k, v in tokenizerProps.items():
+                    setattr(hf_tokenizer, k, v)
 
-            # Compute the length position
-            length_val = kargs["dataset_length"]
-            if length_val < 0:
-                length_val = train_length - offset_val
-            if length_val > 0 and length_val < 1.0:
-                length_val = int(train_length * length_val)
-            if length_val > (train_length - offset_val):
-                length_val = (train_length - offset_val)
+            # Function used to tokenize the dataset as per HF tokenizer format
+            # if given the textual data, it will return the tokenized data
+            def encodeTokens(x):
+                if world_tokenizer is True:
+                    # If x is an array of strings, we encode them seperately, and conslidate the result
+                    if isinstance(x, list):
+                        id_arr = []
+                        type_arr = []
+                        mask_arr = []
+                        for i in range(len(x)):
+                            enc_str = world_tokenizer_encode(x[i], world_add_endoftext_token=world_add_endoftext_token)
+                            id_arr.append(enc_str)
+                            type_arr.append([0] * len(enc_str))
+                            mask_arr.append([1] * len(enc_str))
 
-            # Get the subset of the dataset
-            src_dataset["train"] = src_dataset["train"].select(range(offset_val, offset_val + length_val))
-
-        # Tokenizer vars
-        hf_tokenizer = None
-        world_tokenizer = None
-
-        # Load the tokenizer according to either its predefined name or its path
-        # (defaults to neox)
-        if kargs["tokenizer"] == "neox":
-            tokenizer_file = os.path.join(SRC_DIR, "./dataflow/20B_tokenizer.json")
-            hf_tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file)
-        elif kargs["tokenizer"] == "world":
-            # Setup the tokenizer
-            world_tokenizer = True
-        else:
-            # AutoTokenizer
-            tokenizerName = kargs["tokenizer"]
-
-            # with custom args and props
-            tokenizerKWArgs = {}
-            tokenizerProps = {}
-            if kargs["autoTokenizer"] is not None:
-                if kargs["autoTokenizer"]["kwargs"] is not None:
-                    tokenizerKWArgs = kargs["autoTokenizer"]["kwargs"]
-                if kargs["autoTokenizer"]["props"] is not None:
-                    tokenizerProps  = kargs["autoTokenizer"]["props"]
-
-            # Intialize the tokenizer, with kwargs
-            hf_tokenizer = AutoTokenizer.from_pretrained(tokenizerName, **tokenizerKWArgs)
-
-            # Configure the tokenizer properties
-            for k, v in tokenizerProps.items():
-                setattr(hf_tokenizer, k, v)
-
-        # Function used to tokenize the dataset as per HF tokenizer format
-        # if given the textual data, it will return the tokenized data
-        def encodeTokens(x):
-            if world_tokenizer is True:
-                # If x is an array of strings, we encode them seperately, and conslidate the result
-                if isinstance(x, list):
-                    id_arr = []
-                    type_arr = []
-                    mask_arr = []
-                    for i in range(len(x)):
-                        enc_str = world_tokenizer_encode(x[i], world_add_endoftext_token=world_add_endoftext_token)
-                        id_arr.append(enc_str)
-                        type_arr.append([0] * len(enc_str))
-                        mask_arr.append([1] * len(enc_str))
-
-                    # Consolidate the result
+                        # Consolidate the result
+                        return {
+                            'input_ids': id_arr,
+                            'token_type_ids': type_arr,
+                            'attention_mask': mask_arr
+                        }
+                    
+                    # Else we encode the string and return it following the HF tokenizer format
+                    enc_str = world_tokenizer_encode(x, world_add_endoftext_token=world_add_endoftext_token)
                     return {
-                        'input_ids': id_arr,
-                        'token_type_ids': type_arr,
-                        'attention_mask': mask_arr
+                        'input_ids': enc_str,
+                        'token_type_ids': [0] * len(enc_str),
+                        'attention_mask': [1] * len(enc_str)
                     }
-                
-                # Else we encode the string and return it following the HF tokenizer format
-                enc_str = world_tokenizer_encode(x, world_add_endoftext_token=world_add_endoftext_token)
-                return {
-                    'input_ids': enc_str,
-                    'token_type_ids': [0] * len(enc_str),
-                    'attention_mask': [1] * len(enc_str)
-                }
 
-            # We use the HF tokenizer as it is, and get the input_ids
-            return hf_tokenizer(x)
-        
-        # Multi column merging default values setup
-        if kargs["multi_column_keys"] is None:
-            multi_column_keys = ['instruction', 'input', 'output']
-            multi_column_prefix = ['Instruction:\n', 'Input:\n', 'Output:\n']
-            multi_column_suffix = ['', '', '']
-            multi_column_train_mask = [True, False, True]
-            multi_column_separator = '\n\n'
-        else:
-            multi_column_keys = kargs["multi_column_keys"]
-            multi_column_prefix = kargs["multi_column_prefix"]
-            multi_column_suffix = kargs["multi_column_suffix"]
-            multi_column_train_mask = kargs["multi_column_train_mask"]
-            multi_column_separator = kargs["multi_column_separator"]
-        
-        # Tokenized encodings for multi column keys
-        multi_column_enabled = len(multi_column_keys) > 0
-        multi_column_prefix_encodings = []
-        multi_column_suffix_encodings = []
-        multi_column_separator_encodings = None
-
-        # Process the multi column settings
-        if multi_column_enabled:
+                # We use the HF tokenizer as it is, and get the input_ids
+                return hf_tokenizer(x)
             
-            # Tokenize the multi column strings
-            for i in range(len(multi_column_keys)):
-                if multi_column_prefix is not None and multi_column_prefix[i] is not None:
-                    multi_column_prefix_encodings.append(encodeTokens(multi_column_prefix[i]))
-                if multi_column_suffix is not None and multi_column_suffix[i] is not None:
-                    multi_column_suffix_encodings.append(encodeTokens(multi_column_suffix[i]))    
+            # Multi column merging default values setup
+            if kargs["multi_column_keys"] is None:
+                multi_column_keys = ['instruction', 'input', 'output']
+                multi_column_prefix = ['Instruction:\n', 'Input:\n', 'Output:\n']
+                multi_column_suffix = ['', '', '']
+                multi_column_train_mask = [True, False, True]
+                multi_column_separator = '\n\n'
+            else:
+                multi_column_keys = kargs["multi_column_keys"]
+                multi_column_prefix = kargs["multi_column_prefix"]
+                multi_column_suffix = kargs["multi_column_suffix"]
+                multi_column_train_mask = kargs["multi_column_train_mask"]
+                multi_column_separator = kargs["multi_column_separator"]
             
-            # Tokenize the multi column separator
-            if multi_column_separator is not None and len(multi_column_separator) > 0:
-                multi_column_separator_encodings = encodeTokens(multi_column_separator)
+            # Tokenized encodings for multi column keys
+            multi_column_enabled = len(multi_column_keys) > 0
+            multi_column_prefix_encodings = []
+            multi_column_suffix_encodings = []
+            multi_column_separator_encodings = None
 
-        conversation_prefix_encoding_map = {}
-        conversation_suffix_encoding_map = {}
-        conversation_end_of_conversation_token = encodeTokens(kargs["conversation_end_of_conversation"]) if kargs["conversation_end_of_conversation"] is not None else None
-        conversation_enabled = False
-        if 'conversation_format' in kargs and kargs["conversation_format"] is not None:
-            if kargs["conversation_format"] == "iopairs":
-                # preencode all prefixes (keyed by the input key)
-                for key, prefix in kargs['conversation_input_key_prefix_map'].items():
-                    conversation_prefix_encoding_map[key] = encodeTokens(prefix)
-                conversation_enabled = True
-            elif kargs["conversation_format"] == "sender":
-                # preencode all prefixes (keyed by the sender value)
-                for key, relabel in kargs['conversation_sender_value_map'].items():
-                    for input_key, value in kargs['conversation_input_key_map'].items():
-                        if input_key not in conversation_prefix_encoding_map:
-                            conversation_prefix_encoding_map[input_key] = {}
-                        conversation_prefix_encoding_map[input_key][key] = encodeTokens(value.replace('{sender}', relabel))
-
-            for key, suffix in kargs['conversation_sender_suffix'].items():
-                conversation_suffix_encoding_map[key] = encodeTokens(suffix)
-                        # example conversation_prefix_encoding_map['message']['user'] = encodeTokens('\n\nUser:')
-
-                conversation_enabled = True
-
-        # Maps the dataset record to the tokenized result
-        # handles a wide variety of format according to the data configuration
-        #
-        # - custom text keys
-        # - multiple key columns merged
-        # - prompt/completion format
-        # - text column itself
-        #
-        # Throws an error, if it failed to process the record
-        #
-        # This is called for each row record in the dataset
-        def map_tokenizer(x):
-            # Custom text column support
-            if kargs["custom_text_key"] is not None:
-                if kargs["custom_text_key"] in x:
-                    return encodeTokens(x[kargs["custom_text_key"]])
+            # Process the multi column settings
+            if multi_column_enabled:
                 
-            if conversation_enabled:
-                conv_key = kargs['conversation_key'] if 'conversation_key' in kargs else None
-                conversation = x[conv_key] if conv_key is not None else x
-
-                # Array of output values we will return
-                input_ids = []
-                token_type_ids = []
-                attention_mask = []
-
-                if kargs['conversation_format'] == 'iopairs':
-                    # lets loop through each io pair
-                    for i in range(len(conversation)):
-                        # lets loop through each key in the io pair
-                        for key, value in conversation[i].items():
-                            # lets get the prefix for this key
-                            prefix = conversation_prefix_encoding_map[key] if sender in conversation_prefix_encoding_map[key] else None
-
-                            # Add the prefix
-                            if prefix is not None:
-                                input_ids += prefix['input_ids']
-                                token_type_ids += prefix['token_type_ids']
-                                attention_mask += prefix['attention_mask']
-
-                            # Tokenize the column
-                            column_encodings = encodeTokens(value)
-
-                            # Add the column
-                            input_ids += column_encodings['input_ids']
-                            token_type_ids += column_encodings['token_type_ids']
-
-                            if key not in kargs["conversation_input_key_mask"] or kargs["conversation_input_key_mask"][key]:
-                                # If the corresponding `conversation_input_key_mask` is not set, we will assume as valid training data
-                                attention_mask += ([1] * len(column_encodings['input_ids']))
-                            else: # kargs["conversation_input_key_mask"][key] is False
-                                # This means it is false, lets not pay attention to it
-                                attention_mask += ([0] * len(column_encodings['input_ids']))
-
-                            
-                            suffix = conversation_suffix_encoding_map[key] if sender in conversation_suffix_encoding_map else None
-
-                            if suffix is not None:
-                                input_ids += suffix['input_ids']
-                                token_type_ids += suffix['token_type_ids']
-                                attention_mask += suffix['attention_mask']
+                # Tokenize the multi column strings
+                for i in range(len(multi_column_keys)):
+                    if multi_column_prefix is not None and multi_column_prefix[i] is not None:
+                        multi_column_prefix_encodings.append(encodeTokens(multi_column_prefix[i]))
+                    if multi_column_suffix is not None and multi_column_suffix[i] is not None:
+                        multi_column_suffix_encodings.append(encodeTokens(multi_column_suffix[i]))    
                 
-                elif kargs['conversation_format'] == 'sender':
-                    for i in range(len(conversation)):
-                        turn = conversation[i]
-                        sender = turn[kargs['conversation_sender_key']]
-                            
-                        for key, value in kargs['conversation_input_key_map'].items():
-                            if key in turn:
+                # Tokenize the multi column separator
+                if multi_column_separator is not None and len(multi_column_separator) > 0:
+                    multi_column_separator_encodings = encodeTokens(multi_column_separator)
+
+            conversation_prefix_encoding_map = {}
+            conversation_suffix_encoding_map = {}
+            conversation_end_of_conversation_token = encodeTokens(kargs["conversation_end_of_conversation"]) if kargs["conversation_end_of_conversation"] is not None else None
+            conversation_enabled = False
+            if 'conversation_format' in kargs and kargs["conversation_format"] is not None:
+                if kargs["conversation_format"] == "iopairs":
+                    # preencode all prefixes (keyed by the input key)
+                    for key, prefix in kargs['conversation_input_key_prefix_map'].items():
+                        conversation_prefix_encoding_map[key] = encodeTokens(prefix)
+                    conversation_enabled = True
+                elif kargs["conversation_format"] == "sender":
+                    # preencode all prefixes (keyed by the sender value)
+                    for key, relabel in kargs['conversation_sender_value_map'].items():
+                        for input_key, value in kargs['conversation_input_key_map'].items():
+                            if input_key not in conversation_prefix_encoding_map:
+                                conversation_prefix_encoding_map[input_key] = {}
+                            conversation_prefix_encoding_map[input_key][key] = encodeTokens(value.replace('{sender}', relabel))
+
+                for key, suffix in kargs['conversation_sender_suffix'].items():
+                    conversation_suffix_encoding_map[key] = encodeTokens(suffix)
+                            # example conversation_prefix_encoding_map['message']['user'] = encodeTokens('\n\nUser:')
+
+                    conversation_enabled = True
+
+            # Maps the dataset record to the tokenized result
+            # handles a wide variety of format according to the data configuration
+            #
+            # - custom text keys
+            # - multiple key columns merged
+            # - prompt/completion format
+            # - text column itself
+            #
+            # Throws an error, if it failed to process the record
+            #
+            # This is called for each row record in the dataset
+            def map_tokenizer(x):
+                # Custom text column support
+                if kargs["custom_text_key"] is not None:
+                    if kargs["custom_text_key"] in x:
+                        return encodeTokens(x[kargs["custom_text_key"]])
+                    
+                if conversation_enabled:
+                    conv_key = kargs['conversation_key'] if 'conversation_key' in kargs else None
+                    conversation = x[conv_key] if conv_key is not None else x
+
+                    # Array of output values we will return
+                    input_ids = []
+                    token_type_ids = []
+                    attention_mask = []
+
+                    if kargs['conversation_format'] == 'iopairs':
+                        # lets loop through each io pair
+                        for i in range(len(conversation)):
+                            # lets loop through each key in the io pair
+                            for key, value in conversation[i].items():
                                 # lets get the prefix for this key
-                                prefix = conversation_prefix_encoding_map[key][sender] if sender in conversation_prefix_encoding_map[key] else None
+                                prefix = conversation_prefix_encoding_map[key] if sender in conversation_prefix_encoding_map[key] else None
 
                                 # Add the prefix
                                 if prefix is not None:
@@ -341,152 +309,196 @@ def prepare_data_static(**kargs):
                                     attention_mask += prefix['attention_mask']
 
                                 # Tokenize the column
-                                column_encodings = encodeTokens(turn[key])
+                                column_encodings = encodeTokens(value)
 
                                 # Add the column
                                 input_ids += column_encodings['input_ids']
                                 token_type_ids += column_encodings['token_type_ids']
 
-                                if sender not in kargs["conversation_sender_mask"] or kargs["conversation_sender_mask"][sender]:
+                                if key not in kargs["conversation_input_key_mask"] or kargs["conversation_input_key_mask"][key]:
                                     # If the corresponding `conversation_input_key_mask` is not set, we will assume as valid training data
                                     attention_mask += ([1] * len(column_encodings['input_ids']))
                                 else: # kargs["conversation_input_key_mask"][key] is False
                                     # This means it is false, lets not pay attention to it
                                     attention_mask += ([0] * len(column_encodings['input_ids']))
 
-                                suffix = conversation_suffix_encoding_map[sender] if sender in conversation_suffix_encoding_map else None
+                                
+                                suffix = conversation_suffix_encoding_map[key] if sender in conversation_suffix_encoding_map else None
 
                                 if suffix is not None:
                                     input_ids += suffix['input_ids']
                                     token_type_ids += suffix['token_type_ids']
                                     attention_mask += suffix['attention_mask']
-
-                if len(input_ids) > 0  and conversation_end_of_conversation_token is not None:
-                    input_ids += conversation_end_of_conversation_token['input_ids']
-                    token_type_ids += conversation_end_of_conversation_token['token_type_ids']
-                    attention_mask += conversation_end_of_conversation_token['attention_mask']
-
-                return {
-                    'input_ids': input_ids,
-                    'token_type_ids': token_type_ids,
-                    'attention_mask': attention_mask
-                }
                     
-            # Multi column merging support
-            if multi_column_enabled:
-                # Lets count the number of columns we have
-                # that have data in them
-                num_columns = 0
-                for i in range(len(multi_column_keys)):
-                    if multi_column_keys[i] in x and x[multi_column_keys[i]] is not None and len(x[multi_column_keys[i]]) > 0:
-                        num_columns += 1
-                # If we have more than 1 column, we will have to merge them
-                if num_columns > 1:
-                    # Array of output values we will return
-                    input_ids = []
-                    token_type_ids = []
-                    attention_mask = []
-
-                    # First item flag
-                    is_first_item = True
-
-                    # Lets loop through each column
-                    for i in range(len(multi_column_keys)):
-                        # And process the column if it has data
-                        if multi_column_keys[i] in x and x[multi_column_keys[i]] is not None and len(x[multi_column_keys[i]]) > 0:
-                            # Add the separator if this is not the first item
-                            if not is_first_item and multi_column_separator_encodings is not None:
-                                input_ids += multi_column_separator_encodings['input_ids']
-                                token_type_ids += multi_column_separator_encodings['token_type_ids']
-                                attention_mask += multi_column_separator_encodings['attention_mask']
-                            
-                            # Add the prefix
-                            if len(multi_column_prefix_encodings) > i and multi_column_prefix_encodings[i] is not None:
-                                input_ids += multi_column_prefix_encodings[i]['input_ids']
-                                token_type_ids += multi_column_prefix_encodings[i]['token_type_ids']
-                                attention_mask += multi_column_prefix_encodings[i]['attention_mask']
-
-                            # Tokenize the column
-                            column_encodings = encodeTokens(x[multi_column_keys[i]])
-
-                            # Add the column
-                            input_ids += column_encodings['input_ids']
-                            token_type_ids += column_encodings['token_type_ids']
-
-                            # Configure the attention masks accordingly
-                            if i > len(multi_column_train_mask):
-                                # If the corresponding `multi_column_train_mask` is not set, we will assume as valid training data
-                                attention_mask += ([1] * len(column_encodings['input_ids']))
-                            elif multi_column_train_mask[i] is False:
-                                # If the `multi_column_train_mask` is set, but configured as false, we should not pay attention to it
-                                attention_mask += ([0] * len(column_encodings['input_ids']))
-                            else: # multi_column_train_mask[i] is True
-                                # This means it is true, lets pay attention once again
-                                attention_mask += ([1] * len(column_encodings['input_ids']))
+                    elif kargs['conversation_format'] == 'sender':
+                        for i in range(len(conversation)):
+                            turn = conversation[i]
+                            sender = turn[kargs['conversation_sender_key']]
                                 
-                            # Add the suffix
-                            if len(multi_column_suffix_encodings) > i and multi_column_suffix_encodings[i] is not None:
-                                input_ids += multi_column_suffix_encodings[i]['input_ids']
-                                token_type_ids += multi_column_suffix_encodings[i]['token_type_ids']
-                                attention_mask += multi_column_suffix_encodings[i]['attention_mask']
-                            
-                            # Set the first item flag to false
-                            is_first_item = False
-                    
-                    # Return the merged columns
+                            for key, value in kargs['conversation_input_key_map'].items():
+                                if key in turn:
+                                    # lets get the prefix for this key
+                                    prefix = conversation_prefix_encoding_map[key][sender] if sender in conversation_prefix_encoding_map[key] else None
+
+                                    # Add the prefix
+                                    if prefix is not None:
+                                        input_ids += prefix['input_ids']
+                                        token_type_ids += prefix['token_type_ids']
+                                        attention_mask += prefix['attention_mask']
+
+                                    # Tokenize the column
+                                    column_encodings = encodeTokens(turn[key])
+
+                                    # Add the column
+                                    input_ids += column_encodings['input_ids']
+                                    token_type_ids += column_encodings['token_type_ids']
+
+                                    if sender not in kargs["conversation_sender_mask"] or kargs["conversation_sender_mask"][sender]:
+                                        # If the corresponding `conversation_input_key_mask` is not set, we will assume as valid training data
+                                        attention_mask += ([1] * len(column_encodings['input_ids']))
+                                    else: # kargs["conversation_input_key_mask"][key] is False
+                                        # This means it is false, lets not pay attention to it
+                                        attention_mask += ([0] * len(column_encodings['input_ids']))
+
+                                    suffix = conversation_suffix_encoding_map[sender] if sender in conversation_suffix_encoding_map else None
+
+                                    if suffix is not None:
+                                        input_ids += suffix['input_ids']
+                                        token_type_ids += suffix['token_type_ids']
+                                        attention_mask += suffix['attention_mask']
+
+                    if len(input_ids) > 0  and conversation_end_of_conversation_token is not None:
+                        input_ids += conversation_end_of_conversation_token['input_ids']
+                        token_type_ids += conversation_end_of_conversation_token['token_type_ids']
+                        attention_mask += conversation_end_of_conversation_token['attention_mask']
+
                     return {
                         'input_ids': input_ids,
                         'token_type_ids': token_type_ids,
                         'attention_mask': attention_mask
                     }
+                        
+                # Multi column merging support
+                if multi_column_enabled:
+                    # Lets count the number of columns we have
+                    # that have data in them
+                    num_columns = 0
+                    for i in range(len(multi_column_keys)):
+                        if multi_column_keys[i] in x and x[multi_column_keys[i]] is not None and len(x[multi_column_keys[i]]) > 0:
+                            num_columns += 1
+                    # If we have more than 1 column, we will have to merge them
+                    if num_columns > 1:
+                        # Array of output values we will return
+                        input_ids = []
+                        token_type_ids = []
+                        attention_mask = []
 
-            # Prompt completion support
-            if 'prompt' in x and 'completion' in x:
-                # Array of output values we will return
-                input_ids = None
-                token_type_ids = None
-                attention_mask = None
+                        # First item flag
+                        is_first_item = True
 
-                # Tokenize both prompt and completion
-                # Note that the tokenizer will process and return the input_ids in batches
-                prompt_encodings = encodeTokens(x['prompt'])
-                completion_encodings = encodeTokens(x['completion'])
+                        # Lets loop through each column
+                        for i in range(len(multi_column_keys)):
+                            # And process the column if it has data
+                            if multi_column_keys[i] in x and x[multi_column_keys[i]] is not None and len(x[multi_column_keys[i]]) > 0:
+                                # Add the separator if this is not the first item
+                                if not is_first_item and multi_column_separator_encodings is not None:
+                                    input_ids += multi_column_separator_encodings['input_ids']
+                                    token_type_ids += multi_column_separator_encodings['token_type_ids']
+                                    attention_mask += multi_column_separator_encodings['attention_mask']
+                                
+                                # Add the prefix
+                                if len(multi_column_prefix_encodings) > i and multi_column_prefix_encodings[i] is not None:
+                                    input_ids += multi_column_prefix_encodings[i]['input_ids']
+                                    token_type_ids += multi_column_prefix_encodings[i]['token_type_ids']
+                                    attention_mask += multi_column_prefix_encodings[i]['attention_mask']
 
-                # Join the two input_ids lists
-                input_ids = prompt_encodings['input_ids'] + completion_encodings['input_ids']
-                # Join the two token_type_ids lists
-                token_type_ids = prompt_encodings['token_type_ids'] + completion_encodings['token_type_ids']
-                # Setup the attention mask, 0 for prompt, 1 for completion, if masking is enabled
-                if kargs["disable_prompt_completion_mask"]:
-                    attention_mask = ([1] * len(prompt_encodings['input_ids']) + [1] * len(completion_encodings['input_ids']))
-                else:
-                    attention_mask = ([0] * len(prompt_encodings['input_ids']) + [1] * len(completion_encodings['input_ids']))
+                                # Tokenize the column
+                                column_encodings = encodeTokens(x[multi_column_keys[i]])
 
-                # Prepare and return the output object
-                return {
-                    'input_ids': input_ids,
-                    'token_type_ids': token_type_ids,
-                    'attention_mask': attention_mask,
-                }
+                                # Add the column
+                                input_ids += column_encodings['input_ids']
+                                token_type_ids += column_encodings['token_type_ids']
+
+                                # Configure the attention masks accordingly
+                                if i > len(multi_column_train_mask):
+                                    # If the corresponding `multi_column_train_mask` is not set, we will assume as valid training data
+                                    attention_mask += ([1] * len(column_encodings['input_ids']))
+                                elif multi_column_train_mask[i] is False:
+                                    # If the `multi_column_train_mask` is set, but configured as false, we should not pay attention to it
+                                    attention_mask += ([0] * len(column_encodings['input_ids']))
+                                else: # multi_column_train_mask[i] is True
+                                    # This means it is true, lets pay attention once again
+                                    attention_mask += ([1] * len(column_encodings['input_ids']))
+                                    
+                                # Add the suffix
+                                if len(multi_column_suffix_encodings) > i and multi_column_suffix_encodings[i] is not None:
+                                    input_ids += multi_column_suffix_encodings[i]['input_ids']
+                                    token_type_ids += multi_column_suffix_encodings[i]['token_type_ids']
+                                    attention_mask += multi_column_suffix_encodings[i]['attention_mask']
+                                
+                                # Set the first item flag to false
+                                is_first_item = False
+                        
+                        # Return the merged columns
+                        return {
+                            'input_ids': input_ids,
+                            'token_type_ids': token_type_ids,
+                            'attention_mask': attention_mask
+                        }
+
+                # Prompt completion support
+                if 'prompt' in x and 'completion' in x:
+                    # Array of output values we will return
+                    input_ids = None
+                    token_type_ids = None
+                    attention_mask = None
+
+                    # Tokenize both prompt and completion
+                    # Note that the tokenizer will process and return the input_ids in batches
+                    prompt_encodings = encodeTokens(x['prompt'])
+                    completion_encodings = encodeTokens(x['completion'])
+
+                    # Join the two input_ids lists
+                    input_ids = prompt_encodings['input_ids'] + completion_encodings['input_ids']
+                    # Join the two token_type_ids lists
+                    token_type_ids = prompt_encodings['token_type_ids'] + completion_encodings['token_type_ids']
+                    # Setup the attention mask, 0 for prompt, 1 for completion, if masking is enabled
+                    if kargs["disable_prompt_completion_mask"]:
+                        attention_mask = ([1] * len(prompt_encodings['input_ids']) + [1] * len(completion_encodings['input_ids']))
+                    else:
+                        attention_mask = ([0] * len(prompt_encodings['input_ids']) + [1] * len(completion_encodings['input_ids']))
+
+                    # Prepare and return the output object
+                    return {
+                        'input_ids': input_ids,
+                        'token_type_ids': token_type_ids,
+                        'attention_mask': attention_mask,
+                    }
+                
+                # Fallback to standard text tokenization
+                if 'text' in x:
+                    return encodeTokens(x['text'])
+                
+                raise ValueError('Invalid dataset format, must contain either the configured "multi column" or prompt/completion or text')
+
+            # Map the dataset to the tokenizer, removing the old text column
+            src_dataset = src_dataset.map(map_tokenizer, batched=False, num_proc=num_cpus)
             
-            # Fallback to standard text tokenization
-            if 'text' in x:
-                return encodeTokens(x['text'])
-            
-            raise ValueError('Invalid dataset format, must contain either the configured "multi column" or prompt/completion or text')
+        # =====================================================
 
-        # Map the dataset to the tokenizer, removing the old text column
-        src_dataset = src_dataset.map(map_tokenizer, batched=False, num_proc=num_cpus)
-        
         # Remove all features, except input_ids, token_type_ids and attention_mask
         # as the metadata/etc columns may cause problems down the line (when passed to the trainer)
         dataset_features = src_dataset["train"].features
         dataset_features_to_remove = {k: v for k, v in dataset_features.items() if k not in ["input_ids", "token_type_ids", "attention_mask"]}
         src_dataset = src_dataset.remove_columns(list(dataset_features_to_remove.keys()))
-        
+    
         # Get the newline token
-        endOfDoc_tokenSet = encodeTokens(["\n"])
-        endOfDoc_tokenSet["input_ids"][0][0] = 0
+        endOfDoc_tokenSet = {
+            'input_ids': [[0]],
+            'token_type_ids': [[0]],
+            'attention_mask': [[1]],
+        }
+
 
         # See if rechunking is needed, this is useful mostly for "text" based datasets
         # where we would need to split them into "digestable" context length sizes 
@@ -560,19 +572,21 @@ def prepare_data_static(**kargs):
         rechunking_happened = False
         
         # Perform rechunking if needed for "text" based datasets
-        if kargs["source"] == "text" and kargs["text_rechunk_size"] > 0 and kargs["text_rechunk_auto"]:
-            rechunking_happened = True
-            src_dataset = src_dataset.map(rechunk_text, batched=True, 
-                                        batch_size=processing_max_batch_size,
-                                        num_proc=num_cpus)
-        
-        # Perform rechunking after filtering, if source is not a "text" based 
-        # dataset and text_rechunk_force is enabled
-        if kargs["source"] != "text" and kargs["text_rechunk_size"] > 0 and kargs["text_rechunk_force"]:
-            rechunking_happened = True
-            src_dataset = src_dataset.map(rechunk_text, batched=True, 
-                                        batch_size=processing_max_batch_size,
-                                        num_proc=num_cpus)
+        text_rechunk_size = int(kargs["text_rechunk_size"])
+        if text_rechunk_size > 0:
+            if kargs["source"] == "text" and (kargs["text_rechunk_auto"] or kargs["text_rechunk_force"]):
+                rechunking_happened = True
+                src_dataset = src_dataset.map(rechunk_text, batched=True, 
+                                            batch_size=min(text_rechunk_size*8, processing_max_batch_size),
+                                            num_proc=num_cpus)
+            
+            # Perform rechunking after filtering, if source is not a "text" based 
+            # dataset and text_rechunk_force is enabled
+            if kargs["source"] != "text" and kargs["text_rechunk_force"]:
+                rechunking_happened = True
+                src_dataset = src_dataset.map(rechunk_text, batched=True, 
+                                            batch_size=min(text_rechunk_size*8, processing_max_batch_size),
+                                            num_proc=num_cpus)
 
         # Check if the dataset does not have a test split
         # and if so, perform the split
@@ -730,7 +744,7 @@ def prepare_data_static(**kargs):
 
             # Perform the dataset packing
             src_dataset['train'] = src_dataset['train'].map(pack_dataset_in_sequence, batched=True, 
-                                        batch_size=processing_max_batch_size,
+                                        batch_size=min(packing_min_ctx_len*2*3*5, processing_max_batch_size),
                                         num_proc=num_cpus)
         else:
             # Remove the sample_length column, as it is no longer needed
@@ -922,8 +936,7 @@ class RWKVDataModule(LightningDataModule):
         # Batch size scanning range, used for deciding the max number of documents
         # to process simultaneously at a time. This is used to prevent OOM errors
         # while rearranging the dataset, etc. Used for both packing / sorting operations
-        # ( Defaults to all records )
-        processing_max_batch_size: int = -1,
+        processing_max_batch_size: int = 100000,
 
         # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
         skip_datapath_setup: bool = False
