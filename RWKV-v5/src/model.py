@@ -904,13 +904,14 @@ class RWKV(L.LightningModule):
                                     reduction="none")
             submask = mask.view(-1)[:token_loss.shape[0]]
 
+            # Sample loss, without backprop 
+            with torch.no_grad():
+                sample_loss = (torch.sum(token_loss * submask) / total_mask_sum).clone().detach().requires_grad_(False)
+            
             # The training loss to use
             train_loss = torch.sum(token_loss * submask) / total_mask_sum  
             train_token_count = torch.sum(submask)
 
-            # Sample loss, without backprop 
-            sample_loss = torch.sum(token_loss * submask) / total_mask_sum
-            
             # L2Wrap for the backprop process
             segment_train_loss = L2Wrap.apply(train_loss, logits, total_mask_sum, submask)
 
@@ -1090,18 +1091,13 @@ class RWKV(L.LightningModule):
                     # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
                     learning_loss = segment_train_loss / gradient_accumulation_steps
 
-                    # Perform the backward pass accordingly, for valid segments (besides the last segment)
-                    if i == start_learning_segment + backward_segment_count - 1:
-                        # This is the last backward pass, we let the default pytorch lightning handle the backward pass
-                        # and return the segment loss as part of the total loss
-                        training_loss = training_loss + segment_train_loss
-                    else:
-                        # Undocumented multiple backward pass support
-                        # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
-                        self.manual_backward(learning_loss, optimizer, retain_graph=True)
-            
-                        # Accumulate without gradient, as we already did the backward pass
-                        training_loss = training_loss + segment_train_loss.clone().detach().requires_grad_(False)
+                    # Undocumented multiple backward pass support
+                    # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
+                    self.manual_backward(learning_loss, optimizer, retain_graph=True)
+        
+                    # Accumulate without gradient, as we already did the backward pass
+                    # This does mean, that a single backward pass is "wasted" at the end
+                    training_loss = training_loss + segment_train_loss.clone().detach().requires_grad_(False)
                 else:
                     # Even if its not the segments we use for backward pass, we still need to accumulate the loss
                     training_loss = training_loss + segment_train_loss.clone().detach().requires_grad_(False)
@@ -1167,12 +1163,12 @@ class RWKV(L.LightningModule):
             # Log the line values
             wandb.log({
                 # The original loss and ctx_len (averaged by batch size)
-                'train/loss': sampling_loss,
                 'train/ctx_len': batch_ctx_len / microbatch_size, 
+                'train/data_loss': sampling_loss,
 
                 # The selective training tokens, and loss
                 'train/tokens': training_tokens / microbatch_size,
-                'train/sel_loss': training_loss,
+                'train/loss': training_loss,
 
                 # Perf tracking
                 f'perf/tokens_total.gpu.{global_rank}': self._counting_tokens,
