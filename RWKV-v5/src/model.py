@@ -832,6 +832,9 @@ class RWKV(L.LightningModule):
         #     # And save it as seq_mask
         #     seq_mask = final_mask.unsqueeze(0)
 
+        # Since we are no longer doing positional loss above, use seq_mask directly
+        seq_mask = ori_seq_mask
+
         ### ---
         ### Training cutoff logic handling 
         ### ---
@@ -884,7 +887,7 @@ class RWKV(L.LightningModule):
             return 0
         
         # Checkpoint steps
-        def checkpointed_step(idx, targets, mask, prev_loss, last_shift_states,
+        def checkpointed_step(idx, targets, mask, last_shift_states,
                               last_wkv_states, prev_steps):
             logits, new_shift_states, new_wkv_states = self(
                 idx, last_shift_states, last_wkv_states)
@@ -895,18 +898,26 @@ class RWKV(L.LightningModule):
             targets = targets.contiguous()
             mask = mask.contiguous()
 
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
+            # Compute the token loss
+            token_loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
                                     targets.view(-1),
                                     reduction="none")
-
-            submask = mask.view(-1)[:loss.shape[0]]
+            submask = mask.view(-1)[:token_loss.shape[0]]
             submask_sum = torch.sum(submask)
-            loss = torch.sum(loss * submask) / total_mask_sum  
 
-            loss = L2Wrap.apply(loss, logits, total_mask_sum, submask)
+            # The training loss to use
+            train_loss = torch.sum(token_loss * submask) / total_mask_sum  
+
+            # # Sample loss, without backprop 
+            # sample_loss = torch.sum(token_loss * submask) / total_mask_sum
+            
+
+
+            segment_loss = L2Wrap.apply(train_loss, logits, total_mask_sum, submask)
+
+
             new_steps = prev_steps + submask_sum
-            new_loss = prev_loss + loss
-            return new_loss, new_shift_states, new_wkv_states, new_steps
+            return segment_loss, new_shift_states, new_wkv_states, new_steps
 
         total_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
         steps = 0
@@ -1056,7 +1067,6 @@ class RWKV(L.LightningModule):
                     cur_idx,
                     cur_tar,
                     cur_msk,
-                    torch.tensor(0, dtype=self.emb.weight.dtype, device=cur_device).requires_grad_(True),
                     prv_shift_states,
                     prv_wkv_states,
                     steps,
@@ -1067,7 +1077,7 @@ class RWKV(L.LightningModule):
                 # segment_loss_arr[i] = segment_loss
 
                 # Perform the backward pass accordingly, for valid segments (besides the last segment)
-                # In this version, we do backward passes together the forward passes in the main segment loop
+                # In this version, we do backward passes together with the forward passes in the main segment loop
                 # Instead of after all segment losses are computed
                 if i >= start_learning_segment and i < start_learning_segment + backward_segment_count:
                     # The learning loss, should be normalized against the accumulation steps
@@ -1133,26 +1143,25 @@ class RWKV(L.LightningModule):
             segment_size = self.ctx_len
             for i in range(segment_count):
                 if i < segment_count-1 and is_training_run:
-                    total_loss, new_shift_states, new_wkv_states, steps = deepspeed_checkpoint(
+                    segment_loss, new_shift_states, new_wkv_states, steps = deepspeed_checkpoint(
                         checkpointed_step,
                         idx[:, i * segment_size:(i + 1) * segment_size],
                         targets[:, i * segment_size:(i + 1) * segment_size],
                         seq_mask[:, i * segment_size:(i + 1) * segment_size],
-                        total_loss,
                         states.shift_states,
                         states.wkv_states,
                         steps,
                     )
                 else:
-                    total_loss, new_shift_states, new_wkv_states, steps = checkpointed_step(
+                    segment_loss, new_shift_states, new_wkv_states, steps = checkpointed_step(
                         idx[:, i * segment_size:(i + 1) * segment_size],
                         targets[:, i * segment_size:(i + 1) * segment_size],
                         seq_mask[:, i * segment_size:(i + 1) * segment_size],
-                        total_loss,
                         states.shift_states,
                         states.wkv_states,
                         steps,
                     )
+                total_loss = total_loss + segment_loss
 
                 states = BlockStateList(new_shift_states, new_wkv_states)
                 gc.collect()
