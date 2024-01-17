@@ -193,9 +193,14 @@ class RWKV(L.LightningModule):
                  adam_eps: float = 1.0e-08,
                  weight_decay: float = 0.01,
                  warmup_steps: int = -1,
+
                  # loss bias start
                  position_loss_bias: float = 1.0,
                  position_loss_bias_in_validation: bool = False,
+                 
+                 # Selective loss settings
+                 selective_token_loss_threshold: float = 1.0,
+
                  # Backprop settings
                  grad_cp: bool = True,
                  bptt_learning: bool = True,
@@ -289,9 +294,10 @@ class RWKV(L.LightningModule):
             print("====================================================================")
             self.bptt_truncated_learning = True
 
-        # Save the position loss params
+        # Save the position loss params, and selective loss settings
         self.position_loss_bias = position_loss_bias
         self.position_loss_bias_in_validation = position_loss_bias_in_validation
+        self.selective_token_loss_threshold = selective_token_loss_threshold
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
@@ -904,16 +910,29 @@ class RWKV(L.LightningModule):
                                     reduction="none")
             submask = mask.view(-1)[:token_loss.shape[0]]
 
-            # Sample loss, without backprop 
-            with torch.no_grad():
-                sample_loss = (torch.sum(token_loss * submask) / total_mask_sum).clone().detach().requires_grad_(False)
-            
-            # The training loss to use
-            train_loss = torch.sum(token_loss * submask) / total_mask_sum  
-            train_token_count = torch.sum(submask)
+            # Selective token loss logic
+            if self.selective_token_loss_threshold > 0.0:
+
+                # Sample loss, without backprop 
+                with torch.no_grad():
+                    sample_loss = (torch.sum(token_loss * submask) / total_mask_sum).clone().detach().requires_grad_(False)
+
+                # Selective loss gating
+                above_threshold = token_loss > self.selective_token_loss_threshold
+                train_mask = submask * above_threshold
+                
+                # The training loss to use
+                train_loss = torch.sum(token_loss * train_mask) / total_mask_sum  
+                train_token_count = torch.sum(train_mask)
+
+            else:
+                train_loss = torch.sum(token_loss * submask) / total_mask_sum
+                sample_loss = train_loss.clone().detach().requires_grad_(False)
+                train_token_count = torch.sum(submask)
+                train_mask = submask
 
             # L2Wrap for the backprop process
-            segment_train_loss = L2Wrap.apply(train_loss, logits, total_mask_sum, submask)
+            segment_train_loss = L2Wrap.apply(train_loss, logits, total_mask_sum, train_mask)
 
             # Return the checkpoint values
             return sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
