@@ -803,34 +803,34 @@ class RWKV(L.LightningModule):
         # should not be allowed
         num_devices = self.trainer.num_devices
 
-        ### ---
-        ### Positional loss bias handling
-        ### ---
+        # ### ---
+        # ### Positional loss bias handling
+        # ### ---
         
-        # Get the starting and ending loss bias
-        loss_bias_start = self.position_loss_bias
-        loss_bias_end   = 2.0 - loss_bias_start
+        # # Get the starting and ending loss bias
+        # loss_bias_start = self.position_loss_bias
+        # loss_bias_end   = 2.0 - loss_bias_start
 
-        # Skip loss bias calculation, if loss_bias_start is 1.0
-        if loss_bias_start == 1.0 or (is_training_run == False and self.position_loss_bias_in_validation == False):
-            seq_mask = ori_seq_mask
-        else:
-            # Lets get the torch mask sum
-            total_mask_sum = torch.sum(ori_seq_mask)
+        # # Skip loss bias calculation, if loss_bias_start is 1.0
+        # if loss_bias_start == 1.0 or (is_training_run == False and self.position_loss_bias_in_validation == False):
+        #     seq_mask = ori_seq_mask
+        # else:
+        #     # Lets get the torch mask sum
+        #     total_mask_sum = torch.sum(ori_seq_mask)
 
-            # Lets get a linear multiplier for the loss bias
-            # seq_mask_sum = torch.sum(ori_seq_mask)
-            bias_mask = torch.linspace(loss_bias_start, loss_bias_end, int(total_mask_sum.item()), device=ori_seq_mask.device)
+        #     # Lets get a linear multiplier for the loss bias
+        #     # seq_mask_sum = torch.sum(ori_seq_mask)
+        #     bias_mask = torch.linspace(loss_bias_start, loss_bias_end, int(total_mask_sum.item()), device=ori_seq_mask.device)
 
-            # Boolean flag of seq_mask > 0
-            seq_mask_index = ori_seq_mask[0] > 0
+        #     # Boolean flag of seq_mask > 0
+        #     seq_mask_index = ori_seq_mask[0] > 0
 
-            # Apply the bias mask only to positive seq_mask values
-            final_mask = torch.zeros(ori_seq_mask.shape[1], device=ori_seq_mask.device)
-            final_mask[seq_mask_index] = ori_seq_mask[0][seq_mask_index] * bias_mask
+        #     # Apply the bias mask only to positive seq_mask values
+        #     final_mask = torch.zeros(ori_seq_mask.shape[1], device=ori_seq_mask.device)
+        #     final_mask[seq_mask_index] = ori_seq_mask[0][seq_mask_index] * bias_mask
 
-            # And save it as seq_mask
-            seq_mask = final_mask.unsqueeze(0)
+        #     # And save it as seq_mask
+        #     seq_mask = final_mask.unsqueeze(0)
 
         ### ---
         ### Training cutoff logic handling 
