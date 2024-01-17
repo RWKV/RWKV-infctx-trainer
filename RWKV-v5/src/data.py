@@ -268,6 +268,15 @@ def prepare_data_static(**kargs):
 
                     conversation_enabled = True
 
+            # Apply the data_prefix_skip_mask to the given mask
+            # where relevent, and disables the training mask for the first X tokens
+            data_prefix_skip_mask_enabled = kargs["data_prefix_skip_mask"] is not None
+            def apply_data_prefix_skip_mask(mask):
+                if data_prefix_skip_mask_enabled > 0:
+                    for i in range(data_prefix_skip_mask_enabled):
+                        mask[i] = 0
+                return mask
+            
             # Maps the dataset record to the tokenized result
             # handles a wide variety of format according to the data configuration
             #
@@ -375,7 +384,7 @@ def prepare_data_static(**kargs):
                     return {
                         'input_ids': input_ids,
                         'token_type_ids': token_type_ids,
-                        'attention_mask': attention_mask
+                        'attention_mask': apply_data_prefix_skip_mask(attention_mask)
                     }
                         
                 # Multi column merging support
@@ -443,7 +452,7 @@ def prepare_data_static(**kargs):
                         return {
                             'input_ids': input_ids,
                             'token_type_ids': token_type_ids,
-                            'attention_mask': attention_mask
+                            'attention_mask': apply_data_prefix_skip_mask(attention_mask)
                         }
 
                 # Prompt completion support
@@ -472,12 +481,17 @@ def prepare_data_static(**kargs):
                     return {
                         'input_ids': input_ids,
                         'token_type_ids': token_type_ids,
-                        'attention_mask': attention_mask,
+                        'attention_mask': apply_data_prefix_skip_mask(attention_mask),
                     }
                 
                 # Fallback to standard text tokenization
                 if 'text' in x:
-                    return encodeTokens(x['text'])
+                    ret = encodeTokens(x['text'])
+                    return {
+                        'input_ids': ret['input_ids'],
+                        'token_type_ids': ret['token_type_ids'],
+                        'attention_mask': apply_data_prefix_skip_mask(ret['attention_mask']),
+                    }
                 
                 raise ValueError('Invalid dataset format, must contain either the configured "multi column" or prompt/completion or text')
 
@@ -901,6 +915,18 @@ class RWKVDataModule(LightningDataModule):
 
         # prompt/completion format masking support
         disable_prompt_completion_mask: bool = False,
+
+        # ----------------------------
+        # Selective loss training
+        # ----------------------------
+
+        # Prefix token masking
+        #
+        # The rationale behind this, is that the first X tokens should not be "backpropped"
+        # for any new training record. As its unfair to expect the model (or a human) make
+        # any resonable guesses at that stage. As such this is used to "mask" the first X tokens
+        # from the loss calculation, and thus not backpropped.
+        data_prefix_skip_mask: int = 0,
 
         # ----------------------------
         # dataset packing support
