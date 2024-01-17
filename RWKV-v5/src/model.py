@@ -126,7 +126,7 @@ class Block(nn.Module):
 class L2Wrap(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, loss, y, token_amount, currentMask):
+    def forward(ctx, loss, y, factor, currentMask):
         # Currently (8th July 2023), save_for_backward, causes an issue with
         # pytorch.compile (see: https://github.com/pytorch/pytorch/blob/e600505e3209eaf539e8bc99870ea55236cefbf5/torch/_dynamo/variables/higher_order_ops.py#L735)
         # 
@@ -135,15 +135,13 @@ class L2Wrap(torch.autograd.Function):
         #
         # See also:
         # - checkpointed_step
-        ctx.save_for_backward(y, token_amount, currentMask)
+        ctx.save_for_backward(y, factor, currentMask)
         return loss
 
     @staticmethod
     def backward(ctx, grad_output):
-        y, token_amount, currentMask = ctx.saved_tensors
+        y, factor, currentMask = ctx.saved_tensors
 
-        # to encourage the logits to be close to 0
-        factor = 1e-4 / token_amount
         maxx, ids = torch.max(y, -1, keepdim=True)
         gy = torch.zeros_like(y)
         gy.scatter_(-1, ids, maxx * factor)
@@ -910,6 +908,10 @@ class RWKV(L.LightningModule):
                                     reduction="none")
             submask = mask.view(-1)[:token_loss.shape[0]]
 
+            # to encourage the logits to be close to 0
+            # factor_divisor is typically the total token count
+            L2Wrap_factor = 1e-4 / total_mask_sum
+            
             # Selective token loss logic
             if self.selective_token_loss_threshold > 0.0:
 
@@ -925,6 +927,9 @@ class RWKV(L.LightningModule):
                 train_loss = torch.sum(token_loss * train_mask) / total_mask_sum  
                 train_token_count = torch.sum(train_mask)
 
+                # Adjust the factor accordingly
+                L2Wrap_factor = L2Wrap_factor * (torch.sum(submask) / train_token_count)
+
             else:
                 train_loss = torch.sum(token_loss * submask) / total_mask_sum
                 sample_loss = train_loss.clone().detach().requires_grad_(False)
@@ -932,7 +937,7 @@ class RWKV(L.LightningModule):
                 train_mask = submask
 
             # L2Wrap for the backprop process
-            segment_train_loss = L2Wrap.apply(train_loss, logits, total_mask_sum, train_mask)
+            segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
 
             # Return the checkpoint values
             return sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
