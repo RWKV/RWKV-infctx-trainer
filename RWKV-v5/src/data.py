@@ -583,6 +583,8 @@ def prepare_data_static(**kargs):
                 return False
             if kargs["max_token_size"] > 0 and row_length > kargs["max_token_size"]:
                 return False
+            if sum(x["attention_mask"]) <= 0:
+                return False
             return True
         src_dataset = src_dataset.filter(dataset_filter, num_proc=num_cpus)
 
