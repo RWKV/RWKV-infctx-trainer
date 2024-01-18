@@ -126,7 +126,7 @@ class Block(nn.Module):
 class L2Wrap(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, loss, y, token_amount, currentMask):
+    def forward(ctx, loss, y, factor, currentMask):
         # Currently (8th July 2023), save_for_backward, causes an issue with
         # pytorch.compile (see: https://github.com/pytorch/pytorch/blob/e600505e3209eaf539e8bc99870ea55236cefbf5/torch/_dynamo/variables/higher_order_ops.py#L735)
         # 
@@ -135,15 +135,13 @@ class L2Wrap(torch.autograd.Function):
         #
         # See also:
         # - checkpointed_step
-        ctx.save_for_backward(y, token_amount, currentMask)
+        ctx.save_for_backward(y, factor, currentMask)
         return loss
 
     @staticmethod
     def backward(ctx, grad_output):
-        y, token_amount, currentMask = ctx.saved_tensors
+        y, factor, currentMask = ctx.saved_tensors
 
-        # to encourage the logits to be close to 0
-        factor = 1e-4 / token_amount
         maxx, ids = torch.max(y, -1, keepdim=True)
         gy = torch.zeros_like(y)
         gy.scatter_(-1, ids, maxx * factor)
@@ -193,9 +191,15 @@ class RWKV(L.LightningModule):
                  adam_eps: float = 1.0e-08,
                  weight_decay: float = 0.01,
                  warmup_steps: int = -1,
+
                  # loss bias start
                  position_loss_bias: float = 1.0,
                  position_loss_bias_in_validation: bool = False,
+                 
+                 # Selective loss settings
+                 token_loss_threshold: float = 0.0,
+                 token_dropout_rate: float = 0.0, # Dropout rate should be between 0-1
+
                  # Backprop settings
                  grad_cp: bool = True,
                  bptt_learning: bool = True,
@@ -289,9 +293,11 @@ class RWKV(L.LightningModule):
             print("====================================================================")
             self.bptt_truncated_learning = True
 
-        # Save the position loss params
+        # Save the position loss params, and selective loss settings
         self.position_loss_bias = position_loss_bias
         self.position_loss_bias_in_validation = position_loss_bias_in_validation
+        self.token_loss_threshold = token_loss_threshold
+        self.token_dropout_rate = token_dropout_rate
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
@@ -803,34 +809,37 @@ class RWKV(L.LightningModule):
         # should not be allowed
         num_devices = self.trainer.num_devices
 
-        ### ---
-        ### Positional loss bias handling
-        ### ---
+        # ### ---
+        # ### Positional loss bias handling
+        # ### ---
         
-        # Get the starting and ending loss bias
-        loss_bias_start = self.position_loss_bias
-        loss_bias_end   = 2.0 - loss_bias_start
+        # # Get the starting and ending loss bias
+        # loss_bias_start = self.position_loss_bias
+        # loss_bias_end   = 2.0 - loss_bias_start
 
-        # Skip loss bias calculation, if loss_bias_start is 1.0
-        if loss_bias_start == 1.0 or (is_training_run == False and self.position_loss_bias_in_validation == False):
-            seq_mask = ori_seq_mask
-        else:
-            # Lets get the torch mask sum
-            total_mask_sum = torch.sum(ori_seq_mask)
+        # # Skip loss bias calculation, if loss_bias_start is 1.0
+        # if loss_bias_start == 1.0 or (is_training_run == False and self.position_loss_bias_in_validation == False):
+        #     seq_mask = ori_seq_mask
+        # else:
+        #     # Lets get the torch mask sum
+        #     total_mask_sum = torch.sum(ori_seq_mask)
 
-            # Lets get a linear multiplier for the loss bias
-            # seq_mask_sum = torch.sum(ori_seq_mask)
-            bias_mask = torch.linspace(loss_bias_start, loss_bias_end, int(total_mask_sum.item()), device=ori_seq_mask.device)
+        #     # Lets get a linear multiplier for the loss bias
+        #     # seq_mask_sum = torch.sum(ori_seq_mask)
+        #     bias_mask = torch.linspace(loss_bias_start, loss_bias_end, int(total_mask_sum.item()), device=ori_seq_mask.device)
 
-            # Boolean flag of seq_mask > 0
-            seq_mask_index = ori_seq_mask[0] > 0
+        #     # Boolean flag of seq_mask > 0
+        #     seq_mask_index = ori_seq_mask[0] > 0
 
-            # Apply the bias mask only to positive seq_mask values
-            final_mask = torch.zeros(ori_seq_mask.shape[1], device=ori_seq_mask.device)
-            final_mask[seq_mask_index] = ori_seq_mask[0][seq_mask_index] * bias_mask
+        #     # Apply the bias mask only to positive seq_mask values
+        #     final_mask = torch.zeros(ori_seq_mask.shape[1], device=ori_seq_mask.device)
+        #     final_mask[seq_mask_index] = ori_seq_mask[0][seq_mask_index] * bias_mask
 
-            # And save it as seq_mask
-            seq_mask = final_mask.unsqueeze(0)
+        #     # And save it as seq_mask
+        #     seq_mask = final_mask.unsqueeze(0)
+
+        # Since we are no longer doing positional loss above, use seq_mask directly
+        seq_mask = ori_seq_mask
 
         ### ---
         ### Training cutoff logic handling 
@@ -884,8 +893,8 @@ class RWKV(L.LightningModule):
             return 0
         
         # Checkpoint steps
-        def checkpointed_step(idx, targets, mask, prev_loss, last_shift_states,
-                              last_wkv_states, prev_steps):
+        def checkpointed_step(idx, targets, mask, last_shift_states,
+                              last_wkv_states):
             logits, new_shift_states, new_wkv_states = self(
                 idx, last_shift_states, last_wkv_states)
             
@@ -895,25 +904,79 @@ class RWKV(L.LightningModule):
             targets = targets.contiguous()
             mask = mask.contiguous()
 
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
+            # Compute the token loss
+            token_loss = F.cross_entropy(logits.view(-1, logits.size(-1)),
                                     targets.view(-1),
                                     reduction="none")
+            submask = mask.view(-1)[:token_loss.shape[0]]
 
-            submask = mask.view(-1)[:loss.shape[0]]
-            submask_sum = torch.sum(submask)
-            loss = torch.sum(loss * submask) / total_mask_sum  
+            # to encourage the logits to be close to 0
+            # factor_divisor is typically the total token count
+            L2Wrap_factor = 1e-4 / total_mask_sum
 
-            loss = L2Wrap.apply(loss, logits, total_mask_sum, submask)
-            new_steps = prev_steps + submask_sum
-            new_loss = prev_loss + loss
-            return new_loss, new_shift_states, new_wkv_states, new_steps
+            # Submask count
+            submask_count = torch.sum(submask)
+            
+            # Selective token loss logic
+            if submask_count <= 0.0:
+                train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
+                sample_loss = train_loss.clone().detach().requires_grad_(False)
+                train_token_count = 0
+                train_mask = submask
 
-        total_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
-        steps = 0
+            elif self.token_loss_threshold > 0.0 or self.token_dropout_rate > 0.0:
+
+                # Sample loss, without backprop 
+                with torch.no_grad():
+                    sample_loss = (torch.sum(token_loss * submask) / total_mask_sum).clone().detach().requires_grad_(False)
+
+                # Building the training mask
+                train_mask = submask
+
+                # Selective loss gating
+                if self.token_loss_threshold > 0.0:
+                    above_threshold = token_loss > self.token_loss_threshold
+                    train_mask = train_mask * above_threshold
+
+                # Dropout logic
+                if self.token_dropout_rate > 0.0:
+                    dropout_mask = torch.rand(train_mask.shape, device=train_mask.device) > self.token_dropout_rate
+                    train_mask = train_mask * dropout_mask
+                
+                # The training loss to use
+                train_loss = torch.sum(token_loss * train_mask) / total_mask_sum  
+                train_token_count = torch.sum(train_mask)
+
+                # Adjust the factor accordingly
+                L2Wrap_factor = L2Wrap_factor * (submask_count / train_token_count)
+
+            else:
+                train_loss = torch.sum(token_loss * submask) / total_mask_sum
+                sample_loss = train_loss.clone().detach().requires_grad_(False)
+                train_token_count = submask_count
+                train_mask = submask
+
+            if train_loss <= 0.0:
+                segment_train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
+            else:
+                # L2Wrap for the backprop process
+                segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
+
+            # Return the checkpoint values
+            return sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
+
+        # Initialize the states, and compute the segment count
         states = BlockStateList.create(self.n_layer, B, C, 
                                        self.n_head, self.head_size,
                                        seq.device, self.emb.weight.dtype)
         segment_count = math.ceil(T / self.ctx_len)
+
+        # Initialize the training loss, and the token count
+        training_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
+        training_tokens = 0
+
+        # Raw sample loss (before selective token training)
+        sampling_loss = 0
 
         ### ---
         ### Learning process logic (BPTT or not)
@@ -1052,14 +1115,12 @@ class RWKV(L.LightningModule):
                     cur_msk = dummy_2d_zero
 
                 # Segmented learning, applies the forward/pass over each chunk seperately
-                segment_loss, new_shift_states, new_wkv_states, steps = checkpointed_step(
+                segment_sample_loss, segment_train_loss, new_shift_states, new_wkv_states, segment_train_tokens = checkpointed_step(
                     cur_idx,
                     cur_tar,
                     cur_msk,
-                    torch.tensor(0, dtype=self.emb.weight.dtype, device=cur_device).requires_grad_(True),
                     prv_shift_states,
-                    prv_wkv_states,
-                    steps,
+                    prv_wkv_states
                 )
                 states = BlockStateList(new_shift_states, new_wkv_states)
 
@@ -1067,93 +1128,65 @@ class RWKV(L.LightningModule):
                 # segment_loss_arr[i] = segment_loss
 
                 # Perform the backward pass accordingly, for valid segments (besides the last segment)
-                # In this version, we do backward passes together the forward passes in the main segment loop
+                # In this version, we do backward passes together with the forward passes in the main segment loop
                 # Instead of after all segment losses are computed
+                #
+                # In the past, we have implemented to do all forward, and all backwards. But this was found to be "slow"
                 if i >= start_learning_segment and i < start_learning_segment + backward_segment_count:
                     # The learning loss, should be normalized against the accumulation steps
                     # as we are bypassing the pytorch lightning normalization
                     # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
-                    learning_loss = segment_loss / gradient_accumulation_steps
+                    learning_loss = segment_train_loss / gradient_accumulation_steps
 
-                    # Perform the backward pass accordingly, for valid segments (besides the last segment)
-                    if i == start_learning_segment + backward_segment_count - 1:
-                        # This is the last backward pass, we let the default pytorch lightning handle the backward pass
-                        # and return the segment loss as part of the total loss
-                        total_loss = total_loss + segment_loss
-                    else:
-                        # Undocumented multiple backward pass support
-                        # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
-                        self.manual_backward(learning_loss, optimizer, retain_graph=True)
-            
-                        # Accumulate without gradient, as we already did the backward pass
-                        total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
+                    # Undocumented multiple backward pass support
+                    # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
+                    self.manual_backward(learning_loss, optimizer, retain_graph=True)
+        
+                    # Accumulate without gradient, as we already did the backward pass
+                    # This does mean, that a single backward pass is "wasted" at the end
+                    training_loss = training_loss + segment_train_loss.clone().detach().requires_grad_(False)
                 else:
                     # Even if its not the segments we use for backward pass, we still need to accumulate the loss
-                    total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
+                    training_loss = training_loss + segment_train_loss.clone().detach().requires_grad_(False)
                 
+                # Add token count and raw sampling loss
+                training_tokens = training_tokens + segment_train_tokens
+                sampling_loss = sampling_loss + segment_sample_loss
+
                 # GC collect unused memory
                 # gc.collect()
                 # torch.cuda.empty_cache()
-
-            # # Lets backpass the respective segments, in reverse
-            # # (including dummy backpass)
-            # for i in range(forward_segment_count-1, -1, -1):
-            #     # Get the segment loss
-            #     segment_loss = segment_loss_arr[i]
-            #
-            #     # Compute the backward pass for the segment
-            #     if i >= start_learning_segment and i < start_learning_segment + backward_segment_count:
-            #         # The learning loss, should be normalized against the accumulation steps
-            #         # as we are bypassing the pytorch lightning normalization
-            #         # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
-            #         learning_loss = segment_loss / gradient_accumulation_steps
-            #
-            #         # Perform the backward pass accordingly, for valid segments (besides the start_learning_segment)
-            #         if i > start_learning_segment:
-            #             # Undocumented multiple backward pass support
-            #             # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
-            #             self.manual_backward(learning_loss, optimizer, retain_graph=True)
-            #
-            #             # Accumulate without gradient, as we already did the backward pass
-            #             total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
-            #         else:
-            #             # This is the last backward pass, we let the default pytorch lightning handle the backward pass
-            #             # and return the segment loss as part of the total loss
-            #             total_loss = total_loss + segment_loss
-            #     else:
-            #         # Even if its not the segments we use for backward pass, we still need to accumulate the loss
-            #         total_loss = total_loss + segment_loss.clone().detach().requires_grad_(False)
-            #
-            #    # GC collect unused memory
-            #    gc.collect()
-            #    # torch.cuda.empty_cache()
         else:
 
+            #
             # Normal operations without BPTT
+            #
             segment_size = self.ctx_len
             for i in range(segment_count):
                 if i < segment_count-1 and is_training_run:
-                    total_loss, new_shift_states, new_wkv_states, steps = deepspeed_checkpoint(
+                    segment_sample_loss, segment_train_loss, new_shift_states, new_wkv_states, segment_train_tokens = deepspeed_checkpoint(
                         checkpointed_step,
                         idx[:, i * segment_size:(i + 1) * segment_size],
                         targets[:, i * segment_size:(i + 1) * segment_size],
                         seq_mask[:, i * segment_size:(i + 1) * segment_size],
-                        total_loss,
                         states.shift_states,
-                        states.wkv_states,
-                        steps,
+                        states.wkv_states
                     )
                 else:
-                    total_loss, new_shift_states, new_wkv_states, steps = checkpointed_step(
+                    segment_sample_loss, segment_train_loss, new_shift_states, new_wkv_states, segment_train_tokens = checkpointed_step(
                         idx[:, i * segment_size:(i + 1) * segment_size],
                         targets[:, i * segment_size:(i + 1) * segment_size],
                         seq_mask[:, i * segment_size:(i + 1) * segment_size],
-                        total_loss,
                         states.shift_states,
-                        states.wkv_states,
-                        steps,
+                        states.wkv_states
                     )
+                
+                # Add them up
+                training_loss = training_loss + segment_train_loss
+                training_tokens = training_tokens + segment_train_tokens
+                sampling_loss = sampling_loss + segment_sample_loss
 
+                # Update the states
                 states = BlockStateList(new_shift_states, new_wkv_states)
                 gc.collect()
                 # torch.cuda.empty_cache()
@@ -1162,24 +1195,34 @@ class RWKV(L.LightningModule):
         if wandb.run is not None and is_training_run:
             global_rank = self.global_rank
             global_device_count = self.trainer.num_devices * self.trainer.num_nodes
+            microbatch_size = self.trainer.microbatch_size
 
             # Get the total dataset context length
             batch_ctx_len = 0
             if "data_ctx_len" in batch:
                 batch_ctx_len = torch.sum(batch["data_ctx_len"]).item()
             else:
-                batch_ctx_len = T * self.trainer.microbatch_size
+                batch_ctx_len = T * microbatch_size
 
             # Increment the counting tokens, and log it accordingly
             self._counting_tokens += batch_ctx_len
 
             # Log the line values
             wandb.log({
-                'global_rank': global_rank, 
-                'data_ctx_len': batch_ctx_len / self.trainer.microbatch_size, 
-                'train/loss': total_loss,
+                # The original loss and ctx_len (averaged by batch size)
+                'train/ctx_len': batch_ctx_len / microbatch_size, 
+                'train/data_loss': sampling_loss,
+
+                # The selective training tokens, and loss
+                'train/tokens': training_tokens / microbatch_size,
+                'train/loss': training_loss,
+
+                # Perf tracking
                 f'perf/tokens_total.gpu.{global_rank}': self._counting_tokens,
                 f'perf/tokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
+
+                # Step and trainer tracking
+                'global_rank': global_rank, 
                 'substep': (batch_idx * global_device_count + global_rank),
                 'trainer/global_step':self.global_step,
                 'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
@@ -1187,8 +1230,8 @@ class RWKV(L.LightningModule):
             })
 
         # Throw if total loss is NaN
-        assert not torch.isnan(total_loss), "total_loss is NaN"
-        return total_loss
+        assert not torch.isnan(training_loss), "training_loss is NaN"
+        return training_loss
 
     #
     # Training and validation steps

@@ -46,6 +46,19 @@ def prepare_data_static(**kargs):
         
         # =====================================================
 
+        # Util functions
+        #--------------------------------
+
+        # Apply the data_prefix_skip_mask to the given mask
+        # where relevent, and disables the training mask for the first X tokens
+        data_prefix_skip_mask_val = int(kargs["data_prefix_skip_mask"])
+        def apply_data_prefix_skip_mask(mask):
+            mask_len = len(mask)
+            if data_prefix_skip_mask_val > 0 and mask_len:
+                for i in range(max(data_prefix_skip_mask_val, mask_len)):
+                    mask[i] = 0
+            return mask
+        
         # Special handling for binidx
         #--------------------------------
 
@@ -66,7 +79,7 @@ def prepare_data_static(**kargs):
                     yield {
                         'input_ids': tokens,
                         'token_type_ids': [0] * len(tokens),
-                        'attention_mask': [1] * len(tokens)
+                        'attention_mask': apply_data_prefix_skip_mask([1] * len(tokens))
                     }
 
             # Load the huggingface dataset from the generator
@@ -375,7 +388,7 @@ def prepare_data_static(**kargs):
                     return {
                         'input_ids': input_ids,
                         'token_type_ids': token_type_ids,
-                        'attention_mask': attention_mask
+                        'attention_mask': apply_data_prefix_skip_mask(attention_mask)
                     }
                         
                 # Multi column merging support
@@ -443,7 +456,7 @@ def prepare_data_static(**kargs):
                         return {
                             'input_ids': input_ids,
                             'token_type_ids': token_type_ids,
-                            'attention_mask': attention_mask
+                            'attention_mask': apply_data_prefix_skip_mask(attention_mask)
                         }
 
                 # Prompt completion support
@@ -472,12 +485,17 @@ def prepare_data_static(**kargs):
                     return {
                         'input_ids': input_ids,
                         'token_type_ids': token_type_ids,
-                        'attention_mask': attention_mask,
+                        'attention_mask': apply_data_prefix_skip_mask(attention_mask),
                     }
                 
                 # Fallback to standard text tokenization
                 if 'text' in x:
-                    return encodeTokens(x['text'])
+                    ret = encodeTokens(x['text'])
+                    return {
+                        'input_ids': ret['input_ids'],
+                        'token_type_ids': ret['token_type_ids'],
+                        'attention_mask': apply_data_prefix_skip_mask(ret['attention_mask']),
+                    }
                 
                 raise ValueError('Invalid dataset format, must contain either the configured "multi column" or prompt/completion or text')
 
@@ -519,7 +537,7 @@ def prepare_data_static(**kargs):
                 # with the newline token in between
                 full_input_ids += x["input_ids"][i] + endOfDoc_tokenSet["input_ids"][0]
                 full_token_type_ids += x["token_type_ids"][i] + endOfDoc_tokenSet["token_type_ids"][0]
-                full_attention_mask += x["attention_mask"][i] + endOfDoc_tokenSet["attention_mask"][0]
+                full_attention_mask += apply_data_prefix_skip_mask( x["attention_mask"][i] ) + endOfDoc_tokenSet["attention_mask"][0]
             
             # Total length, and sample count
             # note that thte "remainder" will be discarded
@@ -540,7 +558,7 @@ def prepare_data_static(**kargs):
                 # Push the sample to the output arrays
                 out_input_ids.append(full_input_ids[start:end])
                 out_token_type_ids.append(full_token_type_ids[start:end])
-                out_attention_mask.append(full_attention_mask[start:end])
+                out_attention_mask.append(apply_data_prefix_skip_mask( full_attention_mask[start:end] ))
             
             # Prepare and return the output object
             ret = {
@@ -564,6 +582,8 @@ def prepare_data_static(**kargs):
             if kargs["min_token_size"] > 0 and row_length < kargs["min_token_size"]:
                 return False
             if kargs["max_token_size"] > 0 and row_length > kargs["max_token_size"]:
+                return False
+            if sum(x["attention_mask"]) <= 0:
                 return False
             return True
         src_dataset = src_dataset.filter(dataset_filter, num_proc=num_cpus)
@@ -901,6 +921,18 @@ class RWKVDataModule(LightningDataModule):
 
         # prompt/completion format masking support
         disable_prompt_completion_mask: bool = False,
+
+        # ----------------------------
+        # Selective loss training
+        # ----------------------------
+
+        # Prefix token masking
+        #
+        # The rationale behind this, is that the first X tokens should not be "backpropped"
+        # for any new training record. As its unfair to expect the model (or a human) make
+        # any resonable guesses at that stage. As such this is used to "mask" the first X tokens
+        # from the loss calculation, and thus not backpropped.
+        data_prefix_skip_mask: int = 0,
 
         # ----------------------------
         # dataset packing support
