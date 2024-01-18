@@ -197,7 +197,7 @@ class RWKV(L.LightningModule):
                  position_loss_bias_in_validation: bool = False,
                  
                  # Selective loss settings
-                 selective_token_loss_threshold: float = 1.0,
+                 selective_token_loss_threshold: float = 0.0,
 
                  # Backprop settings
                  grad_cp: bool = True,
