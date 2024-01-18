@@ -46,6 +46,19 @@ def prepare_data_static(**kargs):
         
         # =====================================================
 
+        # Util functions
+        #--------------------------------
+
+        # Apply the data_prefix_skip_mask to the given mask
+        # where relevent, and disables the training mask for the first X tokens
+        data_prefix_skip_mask_enabled = kargs["data_prefix_skip_mask"] is not None
+        def apply_data_prefix_skip_mask(mask):
+            mask_len = len(mask)
+            if data_prefix_skip_mask_enabled > 0 and mask_len:
+                for i in range(max(data_prefix_skip_mask_enabled, mask_len)):
+                    mask[i] = 0
+            return mask
+        
         # Special handling for binidx
         #--------------------------------
 
@@ -66,7 +79,7 @@ def prepare_data_static(**kargs):
                     yield {
                         'input_ids': tokens,
                         'token_type_ids': [0] * len(tokens),
-                        'attention_mask': [1] * len(tokens)
+                        'attention_mask': apply_data_prefix_skip_mask([1] * len(tokens))
                     }
 
             # Load the huggingface dataset from the generator
@@ -268,16 +281,6 @@ def prepare_data_static(**kargs):
 
                     conversation_enabled = True
 
-            # Apply the data_prefix_skip_mask to the given mask
-            # where relevent, and disables the training mask for the first X tokens
-            data_prefix_skip_mask_enabled = kargs["data_prefix_skip_mask"] is not None
-            def apply_data_prefix_skip_mask(mask):
-                mask_len = len(mask)
-                if data_prefix_skip_mask_enabled > 0 and mask_len:
-                    for i in range(max(data_prefix_skip_mask_enabled, mask_len)):
-                        mask[i] = 0
-                return mask
-            
             # Maps the dataset record to the tokenized result
             # handles a wide variety of format according to the data configuration
             #
