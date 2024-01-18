@@ -272,8 +272,9 @@ def prepare_data_static(**kargs):
             # where relevent, and disables the training mask for the first X tokens
             data_prefix_skip_mask_enabled = kargs["data_prefix_skip_mask"] is not None
             def apply_data_prefix_skip_mask(mask):
-                if data_prefix_skip_mask_enabled > 0:
-                    for i in range(data_prefix_skip_mask_enabled):
+                mask_len = len(mask)
+                if data_prefix_skip_mask_enabled > 0 and mask_len:
+                    for i in range(max(data_prefix_skip_mask_enabled, mask_len)):
                         mask[i] = 0
                 return mask
             
@@ -533,7 +534,7 @@ def prepare_data_static(**kargs):
                 # with the newline token in between
                 full_input_ids += x["input_ids"][i] + endOfDoc_tokenSet["input_ids"][0]
                 full_token_type_ids += x["token_type_ids"][i] + endOfDoc_tokenSet["token_type_ids"][0]
-                full_attention_mask += x["attention_mask"][i] + endOfDoc_tokenSet["attention_mask"][0]
+                full_attention_mask += apply_data_prefix_skip_mask( x["attention_mask"][i] ) + endOfDoc_tokenSet["attention_mask"][0]
             
             # Total length, and sample count
             # note that thte "remainder" will be discarded
@@ -554,7 +555,7 @@ def prepare_data_static(**kargs):
                 # Push the sample to the output arrays
                 out_input_ids.append(full_input_ids[start:end])
                 out_token_type_ids.append(full_token_type_ids[start:end])
-                out_attention_mask.append(full_attention_mask[start:end])
+                out_attention_mask.append(apply_data_prefix_skip_mask( full_attention_mask[start:end] ))
             
             # Prepare and return the output object
             ret = {
