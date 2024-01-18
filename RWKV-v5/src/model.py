@@ -911,9 +911,18 @@ class RWKV(L.LightningModule):
             # to encourage the logits to be close to 0
             # factor_divisor is typically the total token count
             L2Wrap_factor = 1e-4 / total_mask_sum
+
+            # Submask count
+            submask_count = torch.sum(submask)
             
             # Selective token loss logic
-            if self.selective_token_loss_threshold > 0.0:
+            if submask_count <= 0.0:
+                train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
+                sample_loss = train_loss.clone().detach().requires_grad_(False)
+                train_token_count = 0
+                train_mask = submask
+
+            elif self.selective_token_loss_threshold > 0.0:
 
                 # Sample loss, without backprop 
                 with torch.no_grad():
@@ -928,16 +937,19 @@ class RWKV(L.LightningModule):
                 train_token_count = torch.sum(train_mask)
 
                 # Adjust the factor accordingly
-                L2Wrap_factor = L2Wrap_factor * (torch.sum(submask) / train_token_count)
+                L2Wrap_factor = L2Wrap_factor * (submask_count / train_token_count)
 
             else:
                 train_loss = torch.sum(token_loss * submask) / total_mask_sum
                 sample_loss = train_loss.clone().detach().requires_grad_(False)
-                train_token_count = torch.sum(submask)
+                train_token_count = submask_count
                 train_mask = submask
 
-            # L2Wrap for the backprop process
-            segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
+            if train_loss <= 0.0:
+                segment_train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
+            else:
+                # L2Wrap for the backprop process
+                segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
 
             # Return the checkpoint values
             return sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
