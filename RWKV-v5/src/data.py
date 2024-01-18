@@ -51,11 +51,11 @@ def prepare_data_static(**kargs):
 
         # Apply the data_prefix_skip_mask to the given mask
         # where relevent, and disables the training mask for the first X tokens
-        data_prefix_skip_mask_enabled = kargs["data_prefix_skip_mask"] is not None
+        data_prefix_skip_mask_val = int(kargs["data_prefix_skip_mask"])
         def apply_data_prefix_skip_mask(mask):
             mask_len = len(mask)
-            if data_prefix_skip_mask_enabled > 0 and mask_len:
-                for i in range(max(data_prefix_skip_mask_enabled, mask_len)):
+            if data_prefix_skip_mask_val > 0 and mask_len:
+                for i in range(max(data_prefix_skip_mask_val, mask_len)):
                     mask[i] = 0
             return mask
         
