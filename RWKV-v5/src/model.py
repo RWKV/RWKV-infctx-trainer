@@ -355,7 +355,7 @@ class RWKV(L.LightningModule):
             gc.collect()
 
         # Training based timings to track, and initialize
-        self._counting_tokens = 0
+        self._counting_tokens = 0.0
         self._counting_time_start = 0
 
     def configure_optimizers(self):
@@ -516,7 +516,7 @@ class RWKV(L.LightningModule):
                 if self.lr_period_type == "step":
                     lr_total_step = self.lr_period
                 elif self.lr_period_type == "epoch":
-                    lr_total_step = self.lr_period * self.num_step_per_epoch()
+                    lr_total_step = self.lr_period * self.num_step_per_epoch() * self.trainer.num_devices # * self.trainer.microbatch_size
                 else:
                     raise ValueError(f"lr_period_type {self.lr_period_type} not supported.")
 
@@ -1206,7 +1206,7 @@ class RWKV(L.LightningModule):
                 batch_ctx_len = T * microbatch_size
 
             # Increment the counting tokens, and log it accordingly
-            self._counting_tokens += batch_ctx_len
+            self._counting_tokens += batch_ctx_len / 1000.0
 
             # Log the line values
             wandb.log({
@@ -1219,8 +1219,10 @@ class RWKV(L.LightningModule):
                 'train/loss': training_loss,
 
                 # Perf tracking
-                f'perf/tokens_total.gpu.{global_rank}': self._counting_tokens,
-                f'perf/tokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
+                f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
+
+                # This was disabled, cause it was confusing as it restarts every epoch
+                # f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
 
                 # Step and trainer tracking
                 'global_rank': global_rank, 
@@ -1263,6 +1265,11 @@ class RWKV(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         total_loss = self.compute_loss(batch, batch_idx, False)
         self.log('validation/loss', total_loss, prog_bar=True, sync_dist=True)
+
+        # Reset the token tracking accordingly
+        self._counting_tokens = 0
+        self._counting_time_start = time.time()
+
         return total_loss
 
 ### ---

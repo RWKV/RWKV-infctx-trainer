@@ -43,7 +43,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/selective-loss/baseline
+      dirpath: ../checkpoint/selective-loss/all-resources
       filename: null
       
       # Save the top/last K checkpoints
@@ -174,6 +174,15 @@ model:
   # -1 means to apply for all segments
   bptt_learning_range: -1
 
+  # ----------------------------
+  # Selective loss training
+  # ----------------------------
+
+  # Skip tokens that are already learnt, and are below the target threshold
+  token_loss_threshold: 1.0
+  # Perform token based drop out at random, to the target % rate
+  token_dropout_rate: 0.1
+
 data:
   # Skip the datapath setup
   # ignored if using the preload_datapath.py
@@ -184,7 +193,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/enwiki_100k-world-16k-packing/
+  data_path: ../datapath/sloss-enwiki_100k-world-16k-packing/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -261,6 +270,18 @@ data:
   # use this flag to disable this default behaviour
   # ---
   # disable_prompt_completion_mask: false
+
+  # ----------------------------
+  # Selective loss training
+  # ----------------------------
+
+  # Prefix token masking
+  #
+  # The rationale behind this, is that the first X tokens should not be "backpropped"
+  # for any new training record. As its unfair to expect the model (or a human) make
+  # any resonable guesses at that stage. As such this is used to "mask" the first X tokens
+  # from the loss calculation, and thus not backpropped.
+  data_prefix_skip_mask: 8
 
   # ----------------------------
   # Dataset packing support
