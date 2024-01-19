@@ -1,4 +1,5 @@
 # We start from the CUDA base image
+# todo: consider other base images?
 FROM nvidia/12.3.1-devel-ubuntu20.04
 
 # Install ninja, and several common stuff
