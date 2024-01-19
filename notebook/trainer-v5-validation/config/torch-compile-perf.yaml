@@ -171,14 +171,14 @@ trainer:
 ########################################
 model:
   # Model to start the finetune/training process from
-  load_model: ../model/Echo-A-1B5-Init.pth
+  load_model: ../model/L16-D2048-world-v5-init.pth
 
-  # The model size setting, this MUST match
-  # your current model settings, refer to the model card
-  # of the downloaded model for more details
-  n_embd: 2048
-  n_layer: 24
-  vocab_size: 50277
+  # # The model size setting, this MUST match
+  # # your current model settings, refer to the model card
+  # # of the downloaded model for more details
+  # n_embd: 2048
+  # n_layer: 24
+  # vocab_size: 50277
 
   # Context length to use for the training process
   # the larger the number (and batch size) the larger the vram usage
@@ -258,6 +258,10 @@ model:
   dim_att: null
   dim_ffn: null
 data:
+  # Skip the datapath setup
+  # ignored if using the preload_datapath.py
+  skip_datapath_setup: True
+
   # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
   #
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
@@ -293,7 +297,7 @@ data:
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
   # If using a custom tokenizer, provide the tokenizer file path
   # ---
-  tokenizer: neox
+  tokenizer: world
 
   # Minimum / Maximum token size of the dataset to use
   # useful for filtering out small noisy data samples from large datasets

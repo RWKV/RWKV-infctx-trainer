@@ -42,7 +42,10 @@ from packaging import version
 def is_torch_version_above(required_version):
     torch_version = version.parse(torch.__version__.split('+')[0])
     return torch_version >= version.parse(required_version)
-IS_TORCH_2_1_COMPATIBLE = is_torch_version_above("2.0.9999")
+
+# Torch versioning flags
+IS_TORCH_2_1_COMPATIBLE = is_torch_version_above("2.1.0")
+IS_TORCH_2_1_2_COMPATIBLE = is_torch_version_above("2.1.2")
 
 # Get the JIT / torch compile option flags from the environment
 # This default is FOR inference mode, the trainer mode default is configured in the lightning_trainer.py
@@ -58,8 +61,8 @@ global RWKV_NO_CUDA
 if 'RWKV_NO_CUDA' not in globals():
     RWKV_NO_CUDA = os.getenv("RWKV_NO_CUDA", f"0").lower() in ("1", "true", "yes")
 
-# Disable torch compile if its not atleast v2.1
-if not IS_TORCH_2_1_COMPATIBLE:
+# Disable torch compile if its not atleast v2.1.2
+if not IS_TORCH_2_1_2_COMPATIBLE:
     RWKV_TORCH_COMPILE = False
 
 # We enable JITMod*/Function when supporting torch.jit
@@ -85,14 +88,19 @@ if RWKV_TORCH_COMPILE:
     # However this was found to basically just match JIT level of performance exactly
     # ---
     # TCompileMax          = lambda x: x
-    # TCompileBaseline     = lambda x: torch.compile(x, fullgraph=False)
+    # TCompileBaseline     = lambda x: torch.compile(x, backend='default', fullgraph=False)
 
     # Alternatively, we can perform a much more aggressive optimization on critical functions
     # that we know are compatible with torch.compile(fullgraph=True) - which provides the highest
     # level of optimization possible with torch.compile
     # ---
-    TCompileMax        = lambda x: torch.compile(x, mode="max-autotune", fullgraph=True)
-    TCompileBaseline   = lambda x: x
+
+    # mode="max-autotune" gives issues presently?
+    TCompileMax        = lambda x: torch.compile(x, mode="default", fullgraph=True)
+    TCompileBaseline   = lambda x: torch.compile(x, mode='default', fullgraph=False)
+
+    # Running in eager mode?   
+    torch._dynamo.config.suppress_errors = True
 
     # ---
     # Because torch.compile is expected to change overtime, the two options should 
@@ -100,6 +108,14 @@ if RWKV_TORCH_COMPILE:
     #
     # and we should switch over to the broaded automated approach if its "faster"
     # ---
+
+    # ---
+    # For debugging, disable everything
+    # ---
+
+    # TCompileMax        = lambda x: x
+    # TCompileBaseline   = lambda x: x
+    # TCompileDisable    = lambda x: x
 
     # Used to wrap functions which are **not** torch.compile compatible
     TCompileDisable    = torch._dynamo.disable
@@ -132,4 +148,4 @@ else:
     TCompileBaseline   = lambda x: x
     TCompileDisable    = lambda x: x
 
-print(f"[RWKV.model] Running RWKV model using '{RWKV_TORCH_RUN_MODE}' with torch '{torch.__version__}'")
+print(f"[RWKV.model] Running RWKV infctx using '{RWKV_TORCH_RUN_MODE}' with torch '{torch.__version__}'")
