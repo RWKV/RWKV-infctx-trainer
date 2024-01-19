@@ -125,6 +125,9 @@ if RWKV_TORCH_COMPILE:
     # `torch._inductor.utils: [WARNING] DeviceCopy in input program` 
     # https://discuss.pytorch.org/t/what-can-cause-warning-devicecopy-in-input-program/175566
 
+    # Added warning
+    print(f"[RWKV.model][WARNING] - torch.compile is enabled, but this has been observed to perform worse, or even crash in some setup. Ensure to test if you actually measure speedups over JIT before using for large training runs'")
+
 elif RWKV_JIT_ON:
     RWKV_TORCH_RUN_MODE = "torch-jit"
     JITModClass  = torch.jit.ScriptModule

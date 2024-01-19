@@ -783,6 +783,7 @@ class RWKV(L.LightningModule):
     #
     # Main compute_loss function, this is called by the trainer loop
     #
+    @TCompileBaseline
     def compute_loss(self, batch, batch_idx, is_training_run: bool):
 
         # Used for token/second performance tracking
@@ -1236,7 +1237,6 @@ class RWKV(L.LightningModule):
     #
     # Training and validation steps
     #
-    @TCompileBaseline
     def training_step(self, batch, batch_idx):
 
         # print("=== BATCH ID SHAPE ===", batch["input_ids"].shape)
