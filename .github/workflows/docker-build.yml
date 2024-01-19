@@ -7,11 +7,11 @@ on:
     tags: [ 'v*.*.*' ]
     # Reduce build to only for the valid path
     paths:
-      - docker/**
+      - docker/env-cuda-12-3/
   pull_request:
     branches: [ "main" ]
     paths:
-      - docker/**
+      - docker/env-cuda-12-3/
 
 env:
   # Use docker.io for Docker Hub if empty
