@@ -42,9 +42,9 @@ conda update conda
 conda create -n rwkv-infctx python=3.11 pip
 conda activate rwkv-infctx
 
-# Install pytorch (>=2.0.1)
-conda install -y pytorch==2.0.1 torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
-python -m pip install lightning==2.0.5 deepspeed==0.10.0
+# Install pytorch (>=2.1.2)
+conda install -y pytorch==2.1.2 torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
+python -m pip install lightning==2.1.3 deepspeed==0.12.6
 
 # Currently for torch.compile + 3.11 to work, for some platform, you will need the nightly build
 # if so you may need to try the following instead - this is considered highly "unstable"

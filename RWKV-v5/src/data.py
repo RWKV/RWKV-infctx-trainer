@@ -54,8 +54,8 @@ def prepare_data_static(**kargs):
         data_prefix_skip_mask_val = int(kargs["data_prefix_skip_mask"])
         def apply_data_prefix_skip_mask(mask):
             mask_len = len(mask)
-            if data_prefix_skip_mask_val > 0 and mask_len:
-                for i in range(max(data_prefix_skip_mask_val, mask_len)):
+            if data_prefix_skip_mask_val > 0 and mask_len > 0:
+                for i in range(min(data_prefix_skip_mask_val, mask_len)):
                     mask[i] = 0
             return mask
         

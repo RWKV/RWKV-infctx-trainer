@@ -325,6 +325,13 @@ model:
   # dim_att: null
   # dim_ffn: null
 data:
+  # Skip the datapath setup
+  #
+  # ignored if using the preload_datapath.py, useful for speeding up the trainer startup
+  # provided you have your datasets all properly preinitialized
+  # ---
+  # skip_datapath_setup: True
+
   # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
   #
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
