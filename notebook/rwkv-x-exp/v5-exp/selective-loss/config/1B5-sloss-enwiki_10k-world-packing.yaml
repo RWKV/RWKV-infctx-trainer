@@ -47,7 +47,7 @@ trainer:
       filename: null
       
       # Save the top/last K checkpoints
-      save_top_k: 3
+      save_top_k: 1
       # Choose by the most recent checkpoints (step based)
       monitor: 'step'
       mode: max
@@ -181,7 +181,7 @@ model:
   # Skip tokens that are already learnt, and are below the target threshold
   token_loss_threshold: 1.0
   # Perform token based drop out at random, to the target % rate
-  token_dropout_rate: 0.1
+  token_dropout_rate: 0.05
 
 data:
   # Skip the datapath setup
