@@ -174,6 +174,15 @@ model:
   # -1 means to apply for all segments
   bptt_learning_range: -1
 
+  # ----------------------------
+  # Selective loss training
+  # ----------------------------
+
+  # Skip tokens that are already learnt, and are below the target threshold
+  token_loss_threshold: 1.0
+  # Perform token based drop out at random, to the target % rate
+  token_dropout_rate: 0.1
+
 data:
   # Skip the datapath setup
   # ignored if using the preload_datapath.py
@@ -261,6 +270,18 @@ data:
   # use this flag to disable this default behaviour
   # ---
   # disable_prompt_completion_mask: false
+
+  # ----------------------------
+  # Selective loss training
+  # ----------------------------
+
+  # Prefix token masking
+  #
+  # The rationale behind this, is that the first X tokens should not be "backpropped"
+  # for any new training record. As its unfair to expect the model (or a human) make
+  # any resonable guesses at that stage. As such this is used to "mask" the first X tokens
+  # from the loss calculation, and thus not backpropped.
+  data_prefix_skip_mask: 8
 
   # ----------------------------
   # Dataset packing support
