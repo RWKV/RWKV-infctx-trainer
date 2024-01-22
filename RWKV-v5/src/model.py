@@ -1214,7 +1214,7 @@ class RWKV(L.LightningModule):
             self._counting_tokens += batch_ctx_len / 1000.0
 
             # Log the line values
-            wandb.log({
+            log_line = dict({
                 # The original loss and ctx_len (averaged by batch size)
                 'train/ctx_len': batch_ctx_len / microbatch_size, 
                 'train/data_loss': sampling_loss,
@@ -1222,9 +1222,6 @@ class RWKV(L.LightningModule):
                 # The selective training tokens, and loss
                 'train/tokens': training_tokens / microbatch_size,
                 'train/loss': training_loss,
-
-                # Perf tracking
-                f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
 
                 # This was disabled, cause it was confusing as it restarts every epoch
                 # f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
@@ -1236,6 +1233,12 @@ class RWKV(L.LightningModule):
                 'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
                 'batchidx': batch_idx
             })
+
+            # Perf tracking, only if its more then 30 seconds
+            time_taken = time.time() - self._counting_time_start
+            if time_taken > 30.0:
+                log_line[f'perf/kTokens_per_sec.gpu.{global_rank}'] = self._counting_tokens / time_taken,
+            wandb.log(log_line)
 
         # Throw if total loss is NaN
         assert not torch.isnan(training_loss), "training_loss is NaN"
