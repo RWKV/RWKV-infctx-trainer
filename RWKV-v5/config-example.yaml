@@ -511,6 +511,16 @@ data:
   # this can be used together with sort_by_length, otherwise a shuffle will be done
   packing_in_sequence: False
 
+  # ----------------------------
+  # Specal use caes flags
+  # ----------------------------
+
+  # Reverse the training dataset order before saving, this is useful for,
+  # optimizing dataset packing process, when using packing_in_sequence
+  # and sort_by_length desc order together
+  reverse_train_dataset_before_save: False
+
+
 # Path to the current checkpoint to continue training from
 # this should be the directory path, and ends with `.ckpt/`
 ckpt_path: null
