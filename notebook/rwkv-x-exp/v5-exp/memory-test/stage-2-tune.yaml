@@ -35,7 +35,7 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'Stage-1-memory-finetune-1 (bs=256, train-ctx=512)'
+      name: 'stage-2-memory-finetune-1 (bs=256, train-ctx=512)'
       # name: 'Echo-B-1B4 Foundation'
       project: 'RWKV-Memory-Experiment'
       tags: ['RWKV', 'memory-exp']
@@ -80,7 +80,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/v5-exp/memory-test/stage-1-memory-finetune/
+      dirpath: ../checkpoint/v5-exp/memory-test/stage-2-memory-finetune/
       filename: null
       
       # Save the top/last K checkpoints
@@ -192,13 +192,13 @@ model:
   # Learning rate of the training process
   # ---
   # Initia learning rate of the process
-  lr_init: 8e-4
+  lr_init: 4e-4
   # Final learning rate after the learning rate period
   # learning rate will stay at final value from then onwards
   #
   # NOTE: lr_final / lr_period does not work with warmup_steps
   #       and will be ignored (or replaced) with the warmup_steps logic instead
-  lr_final: 4e-4
+  lr_final: 3e-4
 
   # Number of epoch to reduce the learning rate from lr_init to lr_final
   #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
@@ -253,7 +253,7 @@ model:
 
   # Skip tokens that are already learnt, and are below the target threshold
   token_loss_threshold: 0.02
-
+  
   # Perform token based drop out at random, to the target % rate
   # token_dropout_rate: 0.0
 
@@ -267,7 +267,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/v5-exp/memory-test/stage-1/
+  data_path: ../datapath/v5-exp/memory-test/stage-2/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -305,7 +305,7 @@ data:
   #
   # This is ignored, if set to -1
   min_token_size: -1
-  max_token_size: 4096
+  max_token_size: 8192
 
   # Rechunking of text dataset, this is done only when source is set as 'text'
   # and will merge the various sentencees, into larger chunks up to the target size
