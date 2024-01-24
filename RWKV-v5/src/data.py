@@ -797,6 +797,13 @@ def prepare_data_static(**kargs):
             # Get the subset of the dataset
             src_dataset["train"] = src_dataset["train"].select(range(offset_val, offset_val + length_val))
 
+        # Dataset flipping (if needed)
+        if kargs["reverse_train_dataset_before_save"]:
+            train_dataset = src_dataset["train"]
+            def reverse_dataset(x, idx):
+                return train_dataset[train_dataset.num_rows - idx - 1]
+            src_dataset["train"] = src_dataset["train"].map(reverse_dataset, with_indices=True, num_proc=num_cpus)
+
         # Save the dataset to disk
         src_dataset.save_to_disk(kargs["data_path"])
 
@@ -960,6 +967,15 @@ class RWKVDataModule(LightningDataModule):
         # Pack the data sequentially if possible, in accordance to the dataset sequence
         # this can be used together with sort_by_length, otherwise a shuffle will be done
         packing_in_sequence: bool = False,
+
+        # ----------------------------
+        # Specal use caes flags
+        # ----------------------------
+
+        # Reverse the training dataset order before saving, this is useful for,
+        # optimizing dataset packing process, when using packing_in_sequence
+        # and sort_by_length desc order together
+        reverse_train_dataset_before_save: bool = False,
 
         # ----------------------------
         # System tweaks

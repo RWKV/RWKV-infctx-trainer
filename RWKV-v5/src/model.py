@@ -1139,13 +1139,18 @@ class RWKV(L.LightningModule):
                     # https://lightning.ai/docs/pytorch/2.0.4/common/lightning_module.html#backward
                     learning_loss = segment_train_loss / gradient_accumulation_steps
 
-                    # Undocumented multiple backward pass support
-                    # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
-                    self.manual_backward(learning_loss, optimizer, retain_graph=True)
-        
-                    # Accumulate without gradient, as we already did the backward pass
-                    # This does mean, that a single backward pass is "wasted" at the end
-                    training_loss = training_loss + segment_train_loss.clone().detach().requires_grad_(False)
+                    # Perform the backward pass accordingly, for valid segments (besides the last segment)
+                    if i == start_learning_segment + backward_segment_count - 1:
+                        # This is the last backward pass, we let the default pytorch lightning handle the backward pass
+                        # and return the segment loss as part of the total loss
+                        training_loss = training_loss + segment_train_loss
+                    else:
+                        # Undocumented multiple backward pass support
+                        # https://github.com/Lightning-AI/lightning/blob/678f642808c54e4c490caee4df5d357301c976bb/tests/trainer/optimization/test_manual_optimization.py#L251
+                        self.manual_backward(learning_loss, optimizer, retain_graph=True)
+
+                        # Accumulate without gradient, as we already did the backward pass
+                        training_loss = training_loss + segment_train_loss.clone().detach().requires_grad_(False)
                 else:
                     # Even if its not the segments we use for backward pass, we still need to accumulate the loss
                     training_loss = training_loss + segment_train_loss.clone().detach().requires_grad_(False)
@@ -1234,7 +1239,7 @@ class RWKV(L.LightningModule):
 
         # Throw if total loss is NaN
         assert not torch.isnan(training_loss), "training_loss is NaN"
-        return training_loss
+        return sampling_loss, training_loss
 
     #
     # Training and validation steps
@@ -1244,9 +1249,9 @@ class RWKV(L.LightningModule):
         # print("=== BATCH ID SHAPE ===", batch["input_ids"].shape)
         # print("=== BATCH AM SHAPE ===", batch["attention_mask"].shape)
 
-        total_loss = self.compute_loss(batch, batch_idx, True)
+        sampling_loss, training_loss = self.compute_loss(batch, batch_idx, True)
 
-        self.log('train/loss', total_loss, prog_bar=True)
+        self.log('train/loss', training_loss, prog_bar=True)
         # If set - forces the above train/loss log line to always be on a new line
         if self.substep_logging:
             print("")
@@ -1256,21 +1261,21 @@ class RWKV(L.LightningModule):
             torch.cuda.empty_cache()
 
         # if loss not a number return None
-        if torch.isnan(total_loss):
+        if torch.isnan(training_loss):
             return None
 
-        return total_loss
+        return training_loss
 
     @TCompileBaseline
     def validation_step(self, batch, batch_idx):
-        total_loss = self.compute_loss(batch, batch_idx, False)
-        self.log('validation/loss', total_loss, prog_bar=True, sync_dist=True)
+        sampling_loss, training_loss = self.compute_loss(batch, batch_idx, False)
+        self.log('validation/loss', sampling_loss, prog_bar=True, sync_dist=True)
 
         # Reset the token tracking accordingly
         self._counting_tokens = 0
         self._counting_time_start = time.time()
 
-        return total_loss
+        return sampling_loss
 
 ### ---
 # SimpleRWKV, a wrapper for RWKV that allows for simple usage of the model
