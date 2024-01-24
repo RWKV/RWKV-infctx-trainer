@@ -516,7 +516,7 @@ class RWKV(L.LightningModule):
                 if self.lr_period_type == "step":
                     lr_total_step = self.lr_period
                 elif self.lr_period_type == "epoch":
-                    lr_total_step = self.lr_period * self.num_step_per_epoch() * self.trainer.num_devices # * self.trainer.microbatch_size
+                    lr_total_step = self.lr_period * self.num_step_per_epoch() # * self.trainer.microbatch_size
                 else:
                     raise ValueError(f"lr_period_type {self.lr_period_type} not supported.")
 
