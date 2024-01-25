@@ -801,9 +801,9 @@ class RWKV(L.LightningModule):
     def compute_loss(self, batch, batch_idx, is_training_run: bool):
 
         # Used for token/second performance tracking
-        if self._counting_tokens is None or batch_idx == 0:
+        if self._counting_tokens is None:
             self._counting_tokens = 0
-        if self._counting_time_start is None or batch_idx == 0:
+        if self._counting_time_start is None or self._counting_time_start == 0:
             self._counting_time_start = time.time()
         
         # Get the input sequence, and attention mask
@@ -1239,9 +1239,7 @@ class RWKV(L.LightningModule):
 
                 # Perf tracking
                 f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
-
-                # This was disabled, cause it was confusing as it restarts every epoch
-                # f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
+                f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
 
                 # Step and trainer tracking
                 'global_rank': global_rank, 
@@ -1286,8 +1284,8 @@ class RWKV(L.LightningModule):
         self.log('validation/loss', sampling_loss, prog_bar=True, sync_dist=True)
 
         # Reset the token tracking accordingly
-        self._counting_tokens = 0
-        self._counting_time_start = time.time()
+        # self._counting_tokens = 0
+        # self._counting_time_start = time.time()
 
         return sampling_loss
 
