@@ -917,7 +917,7 @@ class RWKVDataModule(LightningDataModule):
         # ---
         # Tokenizer settings
         # ---
-        tokenizer: str = "neox",
+        tokenizer: str = "world",
         autoTokenizer = None,
 
         # Add <|endoftext|> string token to the world tokenizer, at index 0
