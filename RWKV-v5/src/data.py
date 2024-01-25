@@ -31,7 +31,7 @@ def prepare_data_static(**kargs):
     # Check if skip_datapath_setup is enabled
     # useful for extra large datasets
     if kargs["skip_datapath_setup"] == True:
-        return
+        return None
 
     # Special handling of world_add_endoftext_token (if enabled)
     if kargs["world_add_endoftext_token"]:
@@ -804,8 +804,49 @@ def prepare_data_static(**kargs):
                 return train_dataset[train_dataset.num_rows - idx - 1]
             src_dataset["train"] = src_dataset["train"].map(reverse_dataset, with_indices=True, num_proc=num_cpus)
 
-        # Save the dataset to disk
-        src_dataset.save_to_disk(kargs["data_path"])
+        # # Convert to iterable datasets (does not support saving to disk???)
+        # src_dataset["train"] = src_dataset["train"].to_iterable_dataset()
+        # src_dataset["test"] = src_dataset["test"].to_iterable_dataset()
+
+        # Save the dataset to disk (if enabled)
+        # For the skip datapath saving string
+        # We intentionally used several filesystem illegal characters, to ensure it
+        # is not accidentally used by the user for a real file
+        if kargs["data_path"] != ".//<#|=@%!$skip_datapath$!%@=|#>//.":
+            if kargs["data_path_storage_options"]:
+                
+                # import s3fs
+                # fs = s3fs.S3FileSystem(
+                #     key=kargs["data_path_storage_options"]["key"],
+                #     secret=kargs["data_path_storage_options"]["secret"],
+                #     endpoint_url=kargs["data_path_storage_options"]["endpoint_url"],
+                #     client_kwargs={
+                #         'region_name': 'sfo3'
+                #     },
+                #     # asynchronous=True,
+                #     config_kwargs={
+                #         'signature_version': 's3v4',
+                #         's3': {
+                #             'addressing_style': 'virtual'
+                #         }
+                #     }
+                # )
+                # print("fs.ls", fs.ls(""))
+
+                src_dataset.save_to_disk(
+                    kargs["data_path"], 
+                    storage_options=kargs["data_path_storage_options"]
+                )
+            else:
+                src_dataset.save_to_disk(
+                    kargs["data_path"]
+                )
+
+        # Return the dataset object itself
+        return src_dataset
+    else:
+        # there is nothing, return none
+        return None
 
 # Dataloader collator for merging multiple dataset records together
 # we use token 0 for padding, with a learning mask value of 0
@@ -855,6 +896,11 @@ class RWKVDataModule(LightningDataModule):
         self, 
         # load_from_disk(dataset_path) param
         data_path: str,
+        # Data path storage options, this is used to support cloud storage
+        # via the huggingface dataset API. See:
+        # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
+        # Note: As of Jan 2023, these options seems very buggy, YMMV
+        data_path_storage_options:dict = None,
         # load_dataset(path) param
         source: str = None,
         # load_dataset(data_dir) param
@@ -871,7 +917,7 @@ class RWKVDataModule(LightningDataModule):
         # ---
         # Tokenizer settings
         # ---
-        tokenizer: str = "neox",
+        tokenizer: str = "world",
         autoTokenizer = None,
 
         # Add <|endoftext|> string token to the world tokenizer, at index 0
@@ -891,9 +937,6 @@ class RWKVDataModule(LightningDataModule):
         # Sort by length
         sort_by_length: bool = False,
         sort_asc: bool = True,
-
-        # Dataloader shuffling, disabled if "sort_by_length" is enabled
-        training_dataloader_shuffle_auto: bool = True,
 
         # Dataset offset and limit controls
         dataset_offset: float = -1,
@@ -981,13 +1024,23 @@ class RWKVDataModule(LightningDataModule):
         # System tweaks
         # ----------------------------
 
+        # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
+        skip_datapath_setup: bool = False,
+        
         # Batch size scanning range, used for deciding the max number of documents
         # to process simultaneously at a time. This is used to prevent OOM errors
         # while rearranging the dataset, etc. Used for both packing / sorting operations
-        processing_max_batch_size: int = 100000,
+        processing_max_batch_size: int = 100 * 1000,
 
-        # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
-        skip_datapath_setup: bool = False
+        # Dataloader shuffling, disabled if "sort_by_length" is enabled
+        dataloader_shuffle_training: bool = False,
+
+        # With a total of 4 batches prefetched into memory
+        dataloader_prefetch_factor:int = 4,
+
+        # Pin the preloaded documents into GPU memory in advance
+        # very small overhead, slight speed bump, disable if your deperate for vram
+        dataloader_pin_memory: bool = True,
     ):
         # Capture the init parameters
         self._init_locals = locals()
@@ -996,9 +1049,13 @@ class RWKVDataModule(LightningDataModule):
         
         super().__init__()
         self.data_path = data_path
-        self._loaded_dataset = None
+        self.data_path_storage_options = data_path_storage_options
+        self.dataloader_prefetch_factor = dataloader_prefetch_factor
+        self.dataloader_pin_memory = dataloader_pin_memory
+        self.dataloader_shuffle_training = dataloader_shuffle_training
         self.sort_by_length = sort_by_length
-        self.training_dataloader_shuffle_auto = training_dataloader_shuffle_auto
+
+        self._loaded_dataset = None
 
         # Log to wandb
         if wandb.run is not None:
@@ -1011,7 +1068,10 @@ class RWKVDataModule(LightningDataModule):
     # Setup process that is universal
     def _internal_setup(self):
         if self._loaded_dataset is None:
-            self._loaded_dataset = load_from_disk(self.data_path).with_format('torch')
+            if self.data_path_storage_options:
+                self._loaded_dataset = load_from_disk(self.data_path, storage_options=self.data_path_storage_options).with_format('torch')
+            else:
+                self._loaded_dataset = load_from_disk(self.data_path).with_format('torch')
 
     # Called once for every process in DDP
     def setup(self, stage):
@@ -1023,7 +1083,38 @@ class RWKVDataModule(LightningDataModule):
         dataset = self._loaded_dataset['train'];
         sampler = DistributedSampler(
             dataset, 
-            shuffle=self.training_dataloader_shuffle_auto and not self.sort_by_length,
+            shuffle=self.dataloader_shuffle_training and not self.sort_by_length,
+            num_replicas=self.trainer.world_size,
+            rank=self.trainer.global_rank,
+        )
+
+        microbatch_size = 1
+        if hasattr(self, "trainer") and hasattr(self.trainer, "microbatch_size"):
+            microbatch_size = self.trainer.microbatch_size
+
+        return DataLoader(
+            dataset, 
+            sampler=sampler,
+            shuffle=False,
+            # 4 prefetch workers per GPU
+            num_workers=4, 
+            # Prefetching of X batches
+            prefetch_factor=self.dataloader_prefetch_factor,
+            # Of batch sizeed datasets
+            batch_size=microbatch_size, 
+            # The collation function
+            collate_fn=dataloader_collator_fn,
+            # Pinned in GPU memory
+            pin_memory=self.dataloader_pin_memory
+        )
+    
+    # Return the validation dataloader
+    def val_dataloader(self):
+        self._internal_setup()
+        dataset = self._loaded_dataset['test'];
+        sampler = DistributedSampler(
+            dataset, 
+            shuffle=False, 
             num_replicas=self.trainer.world_size,
             rank=self.trainer.global_rank,
         )
@@ -1039,35 +1130,11 @@ class RWKVDataModule(LightningDataModule):
             # 4 prefetch workers per GPU
             num_workers=4, 
             # Prefetching 8 batches
-            prefetch_factor=8,
-            # Of batch size 1 datasets
+            prefetch_factor=self.dataloader_prefetch_factor,
+            # Of batch sized datasets
             batch_size=microbatch_size, 
             # The collation function
             collate_fn=dataloader_collator_fn,
             # Pinned in GPU memory
-            pin_memory=True
-        )
-    
-    # Return the validation dataloader
-    def val_dataloader(self):
-        self._internal_setup()
-        dataset = self._loaded_dataset['test'];
-        sampler = DistributedSampler(
-            dataset, 
-            shuffle=False, 
-            num_replicas=self.trainer.world_size,
-            rank=self.trainer.global_rank,
-        )
-        return DataLoader(
-            dataset, 
-            sampler=sampler,
-            shuffle=False,
-            # 4 prefetch workers per GPU
-            num_workers=4, 
-            # Prefetching 8 batches
-            prefetch_factor=8,
-            # Of batch size 1 datasets
-            batch_size=1, 
-            # Pinned in GPU memory
-            pin_memory=True
+            pin_memory=self.dataloader_pin_memory
         )

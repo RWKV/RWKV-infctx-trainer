@@ -341,6 +341,23 @@ data:
   # If using relative path, this should be relative to the trainer script path
   data_path: /path/to/store/your/data_path/
 
+  # Data path storage options, this is used to support cloud storage
+  # via the huggingface dataset API. See:
+  # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
+  #
+  # Note: As of Jan 2023, these options has been only tested to work with AWS S3, and backblaze. YMMV
+  #       For S3 bucket support you will also need to install s3fs `python3 -m pip install s3fs`
+  #
+  # If you want to reduce the risk of accidental key/secret commits, you can use
+  # `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables instead
+  #
+  # For datapath, it should use the `s3://bucket-name/subpath` format
+  # ---
+  # data_path_storage_options:
+  #   key: <example S3 key>
+  #   secret: <example S3 secret>
+  #   endpoint_url: <example S3 endpoint>
+  
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
   #
@@ -425,7 +442,6 @@ data:
   # multi_column_suffix: ["\n\n", "\n\n", "\n\n"]
   # multi_column_train_mask: [true, false, true]
   # multi_column_separator: "\n\n"
-  
   
   # Conversation merging process
   # useful for merging full conversational datasets, into single documents
