@@ -3,6 +3,8 @@ from .CoreDependencies import *
 from .OptimizedOps import modified_lerp
 import os
 
+from .rwkv_inner import rwkv_inner
+
 # Current code file path
 code_file_path = os.path.realpath(__file__)
 code_dir = os.path.dirname(code_file_path)
@@ -274,8 +276,11 @@ class RWKV_TimeMix(JITModClass):
             return self._forward_cuda(x, last_state)
         
         # Run without cuda (cpu mode, etc)
-        return self._forward_nocuda(x, last_state)
+        return self._forward_nocuda_optimized(x, last_state)
      
+        # Run without cuda (cpu mode, etc)
+        #return self._forward_nocuda(x, last_state)
+
     def _forward_cuda(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
         # Get the x sizing
         B, TT, C = x.size()
@@ -306,6 +311,44 @@ class RWKV_TimeMix(JITModClass):
             self.time_decay.float(), 
             self.time_faaaa.to(r.dtype)
         )
+
+        # Reshape and normalize the logits
+        x_logits = self._x_logits_gate(x_logits, g)
+
+        # Return the logits and the state
+        return (x_logits, (x[:,-1],state))
+
+    @TCompileMax 
+    @JITModMethod  
+    def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
+        # Get the x sizing
+        B, T, C = x.size()
+        H = self.n_head
+        K = self.head_size
+        V = K
+
+        # Perform the tokenshift, and get the respective state
+        xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
+    
+        # Get the xk, xv, xr, xg, and rkvg
+        xk = modified_lerp(x, self.time_mix_k, xx)
+        xv = modified_lerp(x, self.time_mix_v, xx)
+        xr = modified_lerp(x, self.time_mix_r, xx)
+        xg = modified_lerp(x, self.time_mix_g, xx)
+
+        r = self.receptance(xr).view(B, T, H, K).transpose(1, 2) # BHTK
+        k = self.key(xk).view(B, T, H, K).transpose(1, 2)      # BHTK
+        v = self.value(xv).view(B, T, H, V).transpose(1, 2)    # BHTV
+        g = F.silu(self.gate(xg))
+
+        w = torch.exp(-torch.exp(self.time_decay.float())).view(1,H,1,K).expand(1,H,T,K)
+        u = self.time_faaaa.view(1,H,1,K).to(r.dtype)
+
+        # Logits and state
+        state = last_state[1].to(r.dtype)
+
+        x_logits, state = rwkv_inner(r, k, v, w, u, state) 
+        x_logits = x_logits.transpose(1,2).reshape(B,T,C)
 
         # Reshape and normalize the logits
         x_logits = self._x_logits_gate(x_logits, g)
