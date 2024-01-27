@@ -321,6 +321,14 @@ class RWKV_TimeMix(JITModClass):
     @TCompileMax 
     @JITModMethod  
     def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
+        shift_state_out = x[:,-1]
+
+        # padding to support fast path for non-exact chunk size multiple sequence lengths
+        chunk_len = 32
+        n_padding = (chunk_len - x.size(-2) % chunk_len) % chunk_len
+        if n_padding != 0:
+            x = F.pad(x, [0, 0, 0, n_padding, 0, 0])
+
         # Get the x sizing
         B, T, C = x.size()
         H = self.n_head
@@ -345,16 +353,19 @@ class RWKV_TimeMix(JITModClass):
         u = self.time_faaaa.view(1,H,1,K).to(r.dtype)
 
         # Logits and state
-        state = last_state[1].to(r.dtype)
+        wkv_state = last_state[1].to(r.dtype)
 
-        x_logits, state = rwkv_inner(r, k, v, w, u, state) 
+        x_logits, wkv_state = rwkv_inner(r, k, v, w, u, wkv_state, chunk_len=chunk_len) 
         x_logits = x_logits.transpose(1,2).reshape(B,T,C)
 
         # Reshape and normalize the logits
         x_logits = self._x_logits_gate(x_logits, g)
 
+        if n_padding != 0:
+            x_logits = x_logits[..., :-n_padding, :] # BHTV
+
         # Return the logits and the state
-        return (x_logits, (x[:,-1],state))
+        return (x_logits, (shift_state_out,wkv_state))
 
     # Doing the forward pass withotu CUDA, this is currently rather slow
     # and is not recommended - but it works (awaiting future optimization)
