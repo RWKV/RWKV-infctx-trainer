@@ -360,7 +360,7 @@ class RWKV(L.LightningModule):
 
         # Training based timings to track, and initialize
         self._counting_tokens = 0.0
-        self._counting_time_start = 0
+        self._counting_time_start = None
 
     def configure_optimizers(self):
         if self.bptt_learning == False:
@@ -799,11 +799,10 @@ class RWKV(L.LightningModule):
     #
     @TCompileBaseline
     def compute_loss(self, batch, batch_idx, is_training_run: bool):
-
         # Used for token/second performance tracking
-        if self._counting_tokens is None or batch_idx == 0:
+        # Reset the token tracking accordingly
+        if self._counting_time_start is None or batch_idx <= 1:
             self._counting_tokens = 0
-        if self._counting_time_start is None or batch_idx == 0:
             self._counting_time_start = time.time()
         
         # Get the input sequence, and attention mask
