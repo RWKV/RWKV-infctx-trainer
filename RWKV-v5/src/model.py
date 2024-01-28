@@ -798,7 +798,7 @@ class RWKV(L.LightningModule):
     # Main compute_loss function, this is called by the trainer loop
     #
     @TCompileBaseline
-    def compute_loss(self, batch, batch_idx, is_training_run: bool):
+    def compute_loss(self, batch, batch_idx, is_training_run: bool = False, is_validation_run: bool = False):
 
         # Used for token/second performance tracking
         if self._counting_tokens is None:
@@ -810,6 +810,15 @@ class RWKV(L.LightningModule):
         seq = batch['input_ids']
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
         ori_seq_mask = batch['attention_mask']
+
+        # Get the dataset index
+        dataset_index = 0
+        dataset_name = "dataset_0"
+        if "dataset_index" in batch:
+            dataset_index = batch["dataset_index"]
+            dataset_name = f"dataset_{dataset_index}"
+        if "dataset_name" in batch and dataset_name is not None:
+            dataset_name = batch["dataset_name"]
 
         # Check if attent mask is set, if not initialize it
         if ori_seq_mask is None or ori_seq_mask.ndim != 2:
@@ -1227,15 +1236,27 @@ class RWKV(L.LightningModule):
             # Increment the counting tokens, and log it accordingly
             self._counting_tokens += batch_ctx_len / 1000.0
 
+            # Calculate various log values
+            ctx_len = batch_ctx_len / microbatch_size
+            tokens = training_tokens / microbatch_size
+
             # Log the line values
             wandb.log({
                 # The original loss and ctx_len (averaged by batch size)
-                'train/ctx_len': batch_ctx_len / microbatch_size, 
+                'train/ctx_len': ctx_len, 
                 'train/data_loss': sampling_loss,
 
                 # The selective training tokens, and loss
-                'train/tokens': training_tokens / microbatch_size,
+                'train/tokens': tokens,
                 'train/loss': training_loss,
+                "train/dataset_index": dataset_index,
+
+                # Dataset based tracking
+                f'dataset/train/{dataset_index}.loss': training_loss,
+                f'dataset/train/{dataset_index}.data_loss': sampling_loss,
+                f'dataset/train/{dataset_index}.tokens': tokens,
+                f'dataset/train/{dataset_index}.ctx_len': ctx_len,
+                f'dataset/train/{dataset_index}.name': dataset_name,
 
                 # Perf tracking
                 f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
@@ -1246,6 +1267,32 @@ class RWKV(L.LightningModule):
                 'substep': (batch_idx * global_device_count + global_rank),
                 'trainer/global_step':self.global_step,
                 'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
+                'batchidx': batch_idx
+            })
+        if wandb.run is not None and is_validation_run:
+            global_rank = self.global_rank
+
+            # Log the line values
+            wandb.log({
+                # The original loss and ctx_len (averaged by batch size)
+                'validation/ctx_len': T, 
+                'validation/data_loss': sampling_loss,
+
+                # The selective training tokens, and loss
+                'validation/tokens': training_tokens,
+                'validation/loss': training_loss,
+                "validation/dataset_index": dataset_index,
+
+                # Dataset based tracking
+                f'dataset/validation/{dataset_index}.loss': training_loss,
+                f'dataset/validation/{dataset_index}.data_loss': sampling_loss,
+                f'dataset/validation/{dataset_index}.tokens': tokens,
+                f'dataset/validation/{dataset_index}.ctx_len': ctx_len,
+                f'dataset/validation/{dataset_index}.name': dataset_name,
+
+                # Step and trainer tracking
+                'global_rank': global_rank, 
+                'trainer/global_step':self.global_step,
                 'batchidx': batch_idx
             })
 
@@ -1261,7 +1308,7 @@ class RWKV(L.LightningModule):
         # print("=== BATCH ID SHAPE ===", batch["input_ids"].shape)
         # print("=== BATCH AM SHAPE ===", batch["attention_mask"].shape)
 
-        sampling_loss, training_loss = self.compute_loss(batch, batch_idx, True)
+        sampling_loss, training_loss = self.compute_loss(batch, batch_idx, True, False)
 
         self.log('train/loss', training_loss, prog_bar=True)
         # If set - forces the above train/loss log line to always be on a new line
@@ -1280,7 +1327,7 @@ class RWKV(L.LightningModule):
 
     @TCompileBaseline
     def validation_step(self, batch, batch_idx):
-        sampling_loss, training_loss = self.compute_loss(batch, batch_idx, False)
+        sampling_loss, training_loss = self.compute_loss(batch, batch_idx, False, True)
         self.log('validation/loss', sampling_loss, prog_bar=True, sync_dist=True)
 
         # Reset the token tracking accordingly

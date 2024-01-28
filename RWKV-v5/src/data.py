@@ -183,7 +183,7 @@ def prepare_data_static(
         # Dataset name, and index
         # This is only useful for multi dataset packing 
         dataset_name: str = None,
-        dataset_index: int = -2,
+        dataset_index: int = 0,
         is_random_datapack: bool = False,
 
         # Additional kargs
@@ -981,7 +981,7 @@ def prepare_data_static(
             def label_dataset(x):
                 if kargs["dataset_name"] is not None:
                     x["dataset_name"] = kargs["dataset_name"]
-                if kargs["dataset_index"] >= -1:
+                if kargs["dataset_index"] >= 0:
                     x["dataset_index"] = kargs["dataset_index"]
                 return x
             
@@ -1056,20 +1056,36 @@ def dataloader_collator_fn(records):
     out_attention_mask = torch.zeros((records_len, attention_mask_len), dtype=first_row["attention_mask"].dtype)
     out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
 
+    out_index = 0
+    out_name = None
+    # Add dataset_index if its set
+    if "dataset_index" in records:
+        out_index = records[0]["dataset_index"]
+    if "dataset_name" in records:
+        out_name = records[0]["dataset_name"]
+    
+
     # Loop through the records and copy the values to the output arrays
     for i in range(records_len):
         out_input_ids[i][:len(records[i]["input_ids"])] = records[i]["input_ids"]
         out_token_type_ids[i][:len(records[i]["token_type_ids"])] = records[i]["token_type_ids"]
         out_attention_mask[i][:len(records[i]["attention_mask"])] = records[i]["attention_mask"]
         out_data_ctx_len[i] = len(records[i]["input_ids"])
+
+        if i > 0 and out_index > 0 and out_index != records[i]["dataset_index"]:
+            out_index = -1
+            out_name = "mixed"
     
     # Build & return the output object
     out = {
         'input_ids': out_input_ids,
         'token_type_ids': out_token_type_ids,
         'attention_mask': out_attention_mask,
-        'data_ctx_len': out_data_ctx_len
+        'data_ctx_len': out_data_ctx_len,
+        'dataset_index': out_index,
+        'dataset_name': out_name
     }
+
     return out
 
 # Build the datapack given the given settings
@@ -1101,6 +1117,10 @@ def prepare_datapack_static(**kargs):
         # Insert the "dataset_name" if "name" is set
         if dataset_in["name"] is not None:
             one_dataset_config = { **one_dataset_config, **{ "dataset_name": dataset_in["name"] } }
+        elif dataset_in["dataset_name"] is not None:
+            one_dataset_config = { **one_dataset_config, **{ "dataset_name": dataset_in["dataset_name"] } }
+        else:
+            one_dataset_config = { **one_dataset_config, **{ "dataset_name": "dataset_"+str(i) } }
 
         # Prepapre the datapath, use the dataset overried if set
         if "data_path" in dataset_in and dataset_in["data_path"] is not None:
