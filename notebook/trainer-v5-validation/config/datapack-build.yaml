@@ -217,7 +217,7 @@ default:
   # ----------------------------
 
   # Boolean flag to enable / disable dataset packing
-  packing_enable: False
+  packing_enable: True
 
   # Used to ensure all training samples wihin this batch size is the same length
   # Ideally this should align exactly with your real "batch size"
@@ -251,12 +251,12 @@ default:
   # and sort_by_length desc order together
   reverse_train_dataset_before_save: False
 
-  # Oversampling logic used
-  # - none : No oversampling is done, dataset is skipped when exhausted
-  # - halt : Halt the generation of the datapack, when exhausted
-  # - loop : Loop the dataset, when exhausted
-  # - shuffle : Reset and shuffle, when exhausted
-  oversampling: "none"
+  # # (NOT IMPLEMENTED) Oversampling logic used
+  # # - none : No oversampling is done, dataset is skipped when exhausted
+  # # - halt : Halt the generation of the datapack, when exhausted
+  # # - loop : Loop the dataset, when exhausted
+  # # - shuffle : Reset and shuffle, when exhausted
+  # oversampling: "none"
 
 #
 # The dataset specific settings
@@ -299,12 +299,14 @@ dataset:
 
     # All other settings found in default can be overriden here
     # ---
-    # ...
+    text_rechunk_force: True
+    text_rechunk_size: 4096
+    
+    # # (NOT IMPLEMENTED) 
+    # # Increase the dataset weightage, to increase the amount of data used
+    # # Defaults to 1.0 
+    # dataset_weight: 1.0
 
-    # Increase the dataset weightage, to increase the amount of data used
-    # Defaults to 1.0
-    dataset_weight: 1.0
-  
   - # provide the source path, which is used as huggingface dataset path
     # this will be used to populate the dataset_path
     #
@@ -337,11 +339,11 @@ dataset:
 
     # All other settings found in default can be overriden here
     # ---
-    # ...
+    packing_enable: True
 
-    # Increase the dataset weightage, to increase the amount of data used
-    # Defaults to 1.0
-    dataset_weight: 1.0
-
+    # # (NOT IMPLEMENTED) 
+    # # Increase the dataset weightage, to increase the amount of data used
+    # # Defaults to 1.0 
+    # dataset_weight: 1.0
 
 

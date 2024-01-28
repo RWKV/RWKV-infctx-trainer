@@ -4,9 +4,9 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import DistributedSampler
 
-import math, random
+import math, random, numpy
 import wandb
-from datasets import load_from_disk, load_dataset, Dataset, Features, Value, Sequence
+from datasets import load_from_disk, load_dataset, concatenate_datasets, Dataset, Features, Value, Sequence
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
 num_cpus = cpu_count()
@@ -63,9 +63,9 @@ def prepare_data_static(
         # ---
         # Min / Max token size filtering
         #
-        # default min token size of 1 is chosen, to filter out empty records
+        # default min token size of 2 is chosen, to filter out empty records
         # which causes errors in the trainer
-        min_token_size: int = 1,
+        min_token_size: int = 2,
         max_token_size: int = -1,
         
         # Sort by length
@@ -744,7 +744,7 @@ def prepare_data_static(
         # and perform min/max length filtering (if configured)
         def dataset_filter(x):
             row_length = len(x["input_ids"])
-            if row_length <= 0:
+            if row_length <= 1:
                 return False
             if kargs["min_token_size"] > 0 and row_length < kargs["min_token_size"]:
                 return False
@@ -1147,7 +1147,6 @@ def prepare_datapack_static(**kargs):
     # Compute the number of batches for each dataset
     datasets_train_batches = []
     datasets_test_batches = []
-    weighted_train_count = []
 
     # Compute the number of batches for each dataset
     for i in range(len(dataset_config_arr)):
@@ -1155,40 +1154,29 @@ def prepare_datapack_static(**kargs):
         if "dataset_weight" in datasets_config_merged_arr[i]:
             dataset_weight = datasets_config_merged_arr[i]["dataset_weight"]
 
+        # Throw if dataset_weight != 1.0 (not yet supported)
+        if dataset_weight != 1.0:
+            raise ValueError("dataset_weight != 1.0 is not yet supported")
+
         # Initialize empty values, if not set
         if i >= len(datasets_train_batches):
             datasets_train_batches.append(0)
             datasets_test_batches.append(0)
-            weighted_train_count.append(0)
         
         # Compute the number of batches for each dataset
-        weighted_train_count[i] = math.ceil( datasets_train_count[i] * dataset_weight )
-        datasets_train_batches[i] = math.ceil( datasets_train_count[i] * dataset_weight * full_batch_percentage / datapack_batchsize )
-        datasets_test_batches[i] = math.ceil( datasets_test_count[i] / datapack_batchsize )
+        datasets_train_batches[i] = math.floor( datasets_train_count[i] * dataset_weight * full_batch_percentage / datapack_batchsize )
+        datasets_test_batches[i] = math.floor( datasets_test_count[i] / datapack_batchsize )
 
     # Compute the total number of batches for training
-    total_weighted_train_count = sum( weighted_train_count )
-    total_train_batches = math.ceil( total_weighted_train_count / datapack_batchsize )
+    total_train_batches = math.floor( total_train_count / datapack_batchsize )
     total_full_batches = sum( datasets_train_batches )
 
-    print(">> Total train batches ( full | random ) :", total_train_batches, " ( ", total_full_batches, " | ", total_train_batches - total_full_batches, " )")
+    print(">> Total approx train batches ( full | random ) :", total_train_batches, " ( ", total_full_batches, " | ", total_train_batches - total_full_batches, " )")
 
-    # Probability distribution for each dataset (for random sampling)
-    dataset_random_distribution_weight = []
-
-    # Lets prepared the ordered array of dataset indexes
-    # This is so we can plan in advance, which dataset to use for each batch
-    dataset_batch_index_arr = []
-    dataset_batch_none_index = []
-    for i in range(len(dataset_config_arr)):
-        dataset_batch_index_arr += [i] * datasets_train_batches[i]
-        dataset_batch_none_index += [None] * datasets_train_batches[i]
-        # Normalize (softmax?) the dataset random distribution
-        dataset_random_distribution_weight += [weighted_train_count[i] / total_weighted_train_count]
-    dataset_batch_index_arr += [-1] * (total_train_batches - total_full_batches)
-
+    # ---
     # The full dataset will contain the following columns
     # input_ids, token_type_ids, attention_mask, sample_length, dataset_index, dataset_name
+    # ---
 
     # Int type for the dataset (based on index:0 dataset)
     # Note: these are hugging face "Value(dtype=x)", and not the dtype itself
@@ -1197,7 +1185,7 @@ def prepare_datapack_static(**kargs):
     dataset_attention_mask_type = datasets_arr[0]["train"].features["attention_mask"].feature
 
     # Setup the dataset features
-    fullset_features = Features({
+    final_dataset_features = Features({
         'input_ids': Sequence(dataset_input_id_type),
         'token_type_ids': Sequence(dataset_token_type_id_type),
         'attention_mask': Sequence(dataset_attention_mask_type),
@@ -1205,21 +1193,117 @@ def prepare_datapack_static(**kargs):
         'dataset_name': Value(dtype="string"),
     })
     
-    # Initial dataset dicitionary
-    initial_fullset_dict = {
-        "input_ids": dataset_batch_none_index.clone(),
-        "token_type_ids": dataset_batch_none_index.clone(),
-        "attention_mask": dataset_batch_none_index.clone(),
-        "dataset_index": dataset_batch_index_arr,
-        "dataset_name": dataset_batch_none_index.clone(),
-    }
+    # Build the full train / test split dataset slices
+    train_fullset_arr = []
+    train_randomset_arr = []
+    test_fullset_arr = []
 
-    # Create the full dataset
-    fullset = Dataset.from_dict(initial_fullset_dict, features=fullset_features)
+    # For each dataset, build the full and random sets
+    for i in range(len(datasets_arr)):
+        if datasets_train_batches[i] > 0:
+            train_fullset_arr.append( datasets_arr[i]["train"].select(numpy.arange(0, datasets_train_batches[i]*datapack_batchsize)) )
+            train_randomset_arr.append( datasets_arr[i]["train"].select(numpy.arange(datasets_train_batches[i]*datapack_batchsize, datasets_train_count[i])) )
+        else:
+            train_randomset_arr.append( datasets_arr[i]["train"] )
+        test_fullset_arr.append( datasets_arr[i]["test"] )
 
+    # Concat the full dataset
+    train_fullset = concatenate_datasets(train_fullset_arr)
+    train_randomset = concatenate_datasets(train_randomset_arr)
+    test_fullset = concatenate_datasets(test_fullset_arr)
+
+    # Shuffle the train random sets, and merge it
+    train_randomset_len = len(train_randomset)
+    train_randomset = train_randomset.shuffle(seed=101)
+    train_randomset_chunks = math.floor( train_randomset_len / datapack_batchsize )
+
+    if train_randomset_chunks > 0:
+        train_fullset = concatenate_datasets([train_fullset,train_randomset.select(numpy.arange(0, train_randomset_chunks*datapack_batchsize))])
+        train_last_randomset_chunk = train_randomset.select(numpy.arange(train_randomset_chunks*datapack_batchsize, train_randomset_len))
+    else:
+        train_last_randomset_chunk = train_randomset
     
+    # Get the total fullset chunks
+    train_fullset_chunks = math.floor( len(train_fullset) / datapack_batchsize )
 
+    # Lets prepare an array of the various dataset indexes
+    dataset_shuffle_index_arr = list( numpy.arange(0, train_fullset_chunks) )
+    random.Random(101).shuffle(dataset_shuffle_index_arr)
     
+    # Label shuffle index
+    def label_shuffle_index(x, idx):
+        x["shuffle_index"] = idx
+        return x
+
+    # Add a shuffled index to the fullset 
+    train_fullset = train_fullset.map(
+        label_shuffle_index,
+        with_indices=True,
+        batched=True,
+        batch_size=datapack_batchsize,
+        num_proc=num_cpus,
+    )
+    
+    # Sort the fullset by the shuffle index
+    train_fullset = train_fullset.sort("shuffle_index")
+
+    # Remove the shuffle index
+    train_fullset = train_fullset.remove_columns(["shuffle_index"])
+
+    # Add the last randomset chunk to the fullset
+    train_fullset = concatenate_datasets([train_fullset, train_last_randomset_chunk])
+
+    # Build the full train / test split dataset
+    final_dataset = Dataset.from_dict({key: [None,None] for key in final_dataset_features}, features=final_dataset_features)
+    final_dataset = final_dataset.train_test_split(1,1)
+
+    # Lets override the full dataset
+    final_dataset["train"] = train_fullset
+    final_dataset["test"] = test_fullset
+
+    # # Full dataset chunks slices
+    # fullset_chunks_slices = []
+    # for i in range(len(datasets_arr)):
+    #     fullset_chunks_slices.append( [] )
+
+    # Log the finished dataset sizes
+    print(">> Final dataset sizes ( train ) :", len(final_dataset["train"]))
+    print(">> Final dataset sizes ( test  ) :", len(final_dataset["test"]))
+
+    # # Lets iterate each row of the training datset
+    # # and log the various attribute sizes
+    # print(">> [START] DEBUGGING LOGS")
+    # for i in range(len(final_dataset["train"])):
+    #     # Get the row
+    #     row = final_dataset["train"][i]
+    #
+    #     # Get size map
+    #     log_map = {
+    #         "index": i,
+    #         "input_ids": len(row["input_ids"]),
+    #         "token_type_ids": len(row["token_type_ids"]),
+    #         "attention_mask": len(row["attention_mask"]),
+    #         "dataset_index": row["dataset_index"],
+    #         "dataset_name": row["dataset_name"],
+    #     }
+    #     print(log_map)
+    # print(">> [ENDIN] DEBUGGING LOGS")
+
+    # Log the saving process
+    print(">> Saving dataset to data_path : ", datapack_config["data_path"])
+
+    # Finally save to disk
+    if "data_path_storage_options" in datapack_config and datapack_config["data_path_storage_options"]:
+        final_dataset.save_to_disk(
+            datapack_config["data_path"], 
+            storage_options=datapack_config["data_path_storage_options"]
+        )
+    else:
+        final_dataset.save_to_disk(
+            datapack_config["data_path"]
+        )
+
+    print(">> Dataset saved to data_path")
     
 
 class RWKVDataModule(LightningDataModule):
@@ -1263,7 +1347,7 @@ class RWKVDataModule(LightningDataModule):
         #
         # default min token size of 1 is chosen, to filter out empty records
         # which causes errors in the trainer
-        min_token_size: int = 1,
+        min_token_size: int = 2,
         max_token_size: int = -1,
         
         # Sort by length

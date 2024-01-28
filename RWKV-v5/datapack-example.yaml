@@ -243,7 +243,7 @@ default:
 
   # Pack the data sequentially if possible, in accordance to the dataset sequence
   # this can be used together with sort_by_length, otherwise a shuffle will be done
-  packing_in_sequence: False
+  packing_in_sequence: True
 
   # ----------------------------
   # Specal use caes flags
@@ -253,13 +253,6 @@ default:
   # optimizing dataset packing process, when using packing_in_sequence
   # and sort_by_length desc order together
   reverse_train_dataset_before_save: False
-
-  # # (NOT IMPLEMENTED) Oversampling logic used
-  # # - none : No oversampling is done, dataset is skipped when exhausted
-  # # - halt : Halt the generation of the datapack, when exhausted
-  # # - loop : Loop the dataset, when exhausted
-  # # - shuffle : Reset and shuffle, when exhausted
-  # oversampling: "none"
 
 #
 # The dataset specific settings
@@ -304,11 +297,6 @@ dataset:
     # ---
     # ...
 
-    # # (NOT IMPLEMENTED) 
-    # # Increase the dataset weightage, to increase the amount of data used
-    # # Defaults to 1.0 
-    # dataset_weight: 1.0
-  
   - # provide the source path, which is used as huggingface dataset path
     # this will be used to populate the dataset_path
     #
@@ -342,11 +330,4 @@ dataset:
     # All other settings found in default can be overriden here
     # ---
     # ...
-
-    # # (NOT IMPLEMENTED) 
-    # # Increase the dataset weightage, to increase the amount of data used
-    # # Defaults to 1.0 
-    # dataset_weight: 1.0
-
-
 
