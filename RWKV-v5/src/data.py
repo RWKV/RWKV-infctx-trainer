@@ -517,7 +517,6 @@ def prepare_data_static(**kargs):
             'attention_mask': [[1]],
         }
 
-
         # See if rechunking is needed, this is useful mostly for "text" based datasets
         # where we would need to split them into "digestable" context length sizes 
         # used for foundation training
@@ -807,6 +806,21 @@ def prepare_data_static(**kargs):
         # # Convert to iterable datasets (does not support saving to disk???)
         # src_dataset["train"] = src_dataset["train"].to_iterable_dataset()
         # src_dataset["test"] = src_dataset["test"].to_iterable_dataset()
+            
+        # Dataset labeling, for custom wandb graphing
+        if kargs["dataset_name"] is not None or kargs["dataset_index"] >= 0:
+            # Lets label every sample with the dataset name or index
+            def label_dataset(x):
+                if kargs["dataset_name"] is not None:
+                    x["dataset_name"] = kargs["dataset_name"]
+
+                if kargs["dataset_index"] >= 0:
+                    x["dataset_index"] = kargs["dataset_index"]
+                return x
+            
+            # Apply the label function
+            src_dataset["train"] = src_dataset["train"].map(label_dataset, num_proc=num_cpus)
+            src_dataset["test"] = src_dataset["test"].map(label_dataset, num_proc=num_cpus)
 
         # Save the dataset to disk (if enabled)
         # For the skip datapath saving string
@@ -891,6 +905,77 @@ def dataloader_collator_fn(records):
     }
     return out
 
+# Build the datapack given the given settings
+def prepare_datapack_static(**kargs):
+    # Get the config groups
+    datapack_config = kargs["datapack"]
+    default_config = kargs["default"]
+    dataset_config_arr = kargs["dataset"]
+    
+    # Join the various default settings
+    defaultVals = { "packing_batchsize": datapack_config["batchsize"], "dataset_weight": 1.0 }
+    defaultVals = { **defaultVals, **default_config }
+
+    # Prepare the array of all the datasets to be merged
+    datasets_arr = []
+    datasets_train_len = []
+    datasets_test_len = []
+
+    # Reset a dataset array
+    def reset_dataset_arr_item(i):
+        # Get the dataset config
+        dataset_in = dataset_config_arr[i]
+
+        # Merge the default config
+        dataset = { **defaultVals, **dataset_in }
+
+        # Prepapre the datapath, use the dataset overried if set
+        if dataset_in["datapath"] is not None:
+            dataset["datapath"] = dataset_in["datapath"]
+        elif default_config["datapath"] is not None:
+            dataset["datapath"] = default_config["datapath"]+"/"+i+"/"
+        else:
+            dataset["datapath"] = ".//<#|=@%!$skip_datapath$!%@=|#>//."
+
+        # Build the datasets individually
+        datasets_arr[i] = prepare_data_static(**dataset)
+
+        # Get the dataset lengths
+        datasets_train_len[i] = len(datasets_arr[i]["train"])
+        datasets_test_len[i] = len(datasets_arr[i]["test"])
+
+    # Loop through the dataset config
+    for i in range(len(dataset_config_arr)):
+        reset_dataset_arr_item(i)
+
+    # Compute the total dataset lengths
+    total_train_len = sum(datasets_train_len)
+
+    # Get the datapack batchsize
+    datapack_batchsize = datapack_config["batchsize"]
+    mixed_batch_percentage = datapack_config["mixed_batch_percentage"]
+    full_batch_percentage = 1.0 - mixed_batch_percentage
+
+    # Override batch percentage if needed
+    if datapack_config["mixing_mode"] != "batch":
+        mixed_batch_percentage = 1.0
+        full_batch_percentage = 0.0
+
+    # Compute the number of batches for each dataset
+    datasets_train_batches = []
+    datasets_test_batches = []
+
+    # Compute the number of batches for each dataset
+    for i in range(len(dataset_config_arr)):
+        datasets_train_batches[i] = math.ceil( datasets_train_len[i] * datapack_config["dataset_weight"] / datapack_batchsize )
+        datasets_test_batches[i] = math.ceil( datasets_test_len[i] / datapack_batchsize )
+
+    # Compute the total number of batches for training
+    total_train_batches = sum(datasets_train_batches)
+
+    
+    
+
 class RWKVDataModule(LightningDataModule):
     def __init__(
         self, 
@@ -901,6 +986,12 @@ class RWKVDataModule(LightningDataModule):
         # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
         # Note: As of Jan 2023, these options seems very buggy, YMMV
         data_path_storage_options:dict = None,
+
+        # Dataset name, and index
+        # This is only useful for multi dataset packing 
+        dataset_name: str = None,
+        dataset_index: int = -1,
+
         # load_dataset(path) param
         source: str = None,
         # load_dataset(data_dir) param
