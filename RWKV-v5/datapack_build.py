@@ -2,7 +2,7 @@
 import sys
 import yaml 
 import os
-from src.data import RWKVDataModule
+from src.data import prepare_datapack_static
 
 # ----
 # This script is used to preload the huggingface dataset
@@ -37,3 +37,7 @@ assert 'dataset'  in datapack_config, "`dataset` is not configured in the config
 # # Run the preload data process
 # dataMod = RWKVDataModule(**data)
 # dataMod.prepare_data()
+
+# Log the start of the process
+print(">> Starting datapack build process for: " + config_file)
+prepare_datapack_static(**datapack_config)

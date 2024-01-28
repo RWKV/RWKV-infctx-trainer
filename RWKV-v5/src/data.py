@@ -4,9 +4,9 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import DistributedSampler
 
-import math
+import math, random
 import wandb
-from datasets import load_from_disk, load_dataset, Dataset
+from datasets import load_from_disk, load_dataset, Dataset, Features, Value, Sequence
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
 num_cpus = cpu_count()
@@ -26,8 +26,173 @@ import numpy as np
 # ```
 # Parameter 'function'=<function RWKVDataModule.prepare_data.<locals>.map_tokenizer at 0x7f7672c5e340> of the transform datasets.arrow_dataset.Dataset._map_single couldn't be hashed properly, a random hash was used instead. Make sure your transforms and parameters are serializable with pickle or dill for the dataset fingerprinting and caching to work. If you reuse this transform, the caching mechanism will consider it to be different from the previous calls and recompute everything. This warning is only showed once. Subsequent hashing failures won't be showed.
 # ```
-def prepare_data_static(**kargs):
+def prepare_data_static(
+        # load_from_disk(dataset_path) param
+        data_path: str,
+        # Data path storage options, this is used to support cloud storage
+        # via the huggingface dataset API. See:
+        # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
+        # Note: As of Jan 2023, these options seems very buggy, YMMV
+        data_path_storage_options:dict = None,
 
+        # load_dataset(path) param
+        source: str = None,
+        # load_dataset(data_dir) param
+        source_data_dir: str = None,
+        # Additional dataset params
+        source_dataset_params: dict = None,
+        # Test split of source data, if it was not already done
+        test_split: float = 0.01,
+        test_split_shuffle: bool = False,
+        # Text rechunking size
+        text_rechunk_size: int = 4096,
+        text_rechunk_auto: bool = True,
+        text_rechunk_force: bool = False,
+        # ---
+        # Tokenizer settings
+        # ---
+        tokenizer: str = "world",
+        autoTokenizer = None,
+
+        # Add <|endoftext|> string token to the world tokenizer, at index 0
+        # this was missing from the original world trie_tokenizer
+        world_add_endoftext_token: bool = True,
+
+        # ---
+        # HF dataset conversion helpers
+        # ---
+        # Min / Max token size filtering
+        #
+        # default min token size of 1 is chosen, to filter out empty records
+        # which causes errors in the trainer
+        min_token_size: int = 1,
+        max_token_size: int = -1,
+        
+        # Sort by length
+        sort_by_length: bool = False,
+        sort_asc: bool = True,
+
+        # Dataset offset and limit controls
+        dataset_offset: float = -1,
+        dataset_length: float = -1,
+        
+        # Custom 'text' column to support, mostly used for dataset where the 
+        # desired train data is in another column (eg. 'code')
+        custom_text_key: str = None,
+        # Multi column merging support, used for instruct/input/output datasets
+        # or similar varients where the input and output are in different columns
+        # and need to be merged
+        multi_column_keys: list = None,
+        multi_column_prefix: list = None,
+        multi_column_suffix: list = None,
+        multi_column_train_mask: list = None,
+        multi_column_separator: str = None,
+        # Conversation format support
+        conversation_format: str = None,
+        conversation_key: str = None,
+
+        # conversation_format == 'iopairs'
+        conversation_input_key_prefix_map: dict = None,
+        conversation_input_key_mask: dict = None,
+
+        # conversation_format == 'sender'
+        conversation_sender_key: str = None,
+        conversation_sender_value_map: dict = None,
+        conversation_input_key_map: dict = None,
+        conversation_sender_suffix: dict = None,
+        conversation_sender_mask: dict = None,
+        conversation_end_of_conversation: str = None,
+
+        # prompt/completion format masking support
+        disable_prompt_completion_mask: bool = False,
+
+        # ----------------------------
+        # Selective loss training
+        # ----------------------------
+
+        # Prefix token masking
+        #
+        # The rationale behind this, is that the first X tokens should not be "backpropped"
+        # for any new training record. As its unfair to expect the model (or a human) make
+        # any resonable guesses at that stage. As such this is used to "mask" the first X tokens
+        # from the loss calculation, and thus not backpropped.
+        data_prefix_skip_mask: int = 0,
+
+        # ----------------------------
+        # dataset packing support
+        # ----------------------------
+
+        # Boolean flag to enable / disable dataset packing
+        packing_enable: bool = False,
+
+        # Used to ensure all training samples wihin this batch size is the same length
+        # Ideally this should align exactly with your real "batch size"
+        #
+        # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
+        # a large number of batch size combinations. This helps reduce the amount of
+        # misaligned batches, and thus reduce the amount of wasted training time.
+        packing_batchsize: int = 20160,
+
+        # Chunking size to align within each batch, this ideally should be equal to
+        # the training context length used.
+        packing_chunksize: int = 4096,
+
+        # Minimum size to pack up to, this should be a multiple of packing_chunksize
+        # defautls to -1, which equals to packing_chunksize
+        packing_min_ctx_len: int = -1,
+
+        # Pack the data sequentially if possible, in accordance to the dataset sequence
+        # this can be used together with sort_by_length, otherwise a shuffle will be done
+        packing_in_sequence: bool = False,
+
+        # ----------------------------
+        # Specal use caes flags
+        # ----------------------------
+
+        # Reverse the training dataset order before saving, this is useful for,
+        # optimizing dataset packing process, when using packing_in_sequence
+        # and sort_by_length desc order together
+        reverse_train_dataset_before_save: bool = False,
+
+        # ----------------------------
+        # System tweaks
+        # ----------------------------
+
+        # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
+        skip_datapath_setup: bool = False,
+        
+        # Batch size scanning range, used for deciding the max number of documents
+        # to process simultaneously at a time. This is used to prevent OOM errors
+        # while rearranging the dataset, etc. Used for both packing / sorting operations
+        processing_max_batch_size: int = 100 * 1000,
+
+        # Dataloader shuffling, disabled if "sort_by_length" is enabled
+        dataloader_shuffle_training: bool = False,
+
+        # With a total of 4 batches prefetched into memory
+        dataloader_prefetch_factor:int = 4,
+
+        # Pin the preloaded documents into GPU memory in advance
+        # very small overhead, slight speed bump, disable if your deperate for vram
+        dataloader_pin_memory: bool = True,
+
+        # ----------------------------
+        # Data oacj soecufuc
+        # ----------------------------
+
+        # Dataset name, and index
+        # This is only useful for multi dataset packing 
+        dataset_name: str = None,
+        dataset_index: int = -2,
+        is_random_datapack: bool = False,
+
+        # Additional kargs
+        **kargs
+    ):
+
+    # Capture the init parameters
+    kargs = locals()
+    
     # Check if skip_datapath_setup is enabled
     # useful for extra large datasets
     if kargs["skip_datapath_setup"] == True:
@@ -120,7 +285,10 @@ def prepare_data_static(**kargs):
                 for k, v in source_dataset_params.items():
                     load_dataset_params[k] = v
 
-            # Load the dataset
+            # Log the whole load_dataset_params
+            # print("load_dataset_params: " + str(load_dataset_params))
+
+            # Load the dataset)
             src_dataset = load_dataset(**load_dataset_params)
 
             # If for some reason the dataset is a "test" only split, and missing a "train" split, we remap it as a "train" split
@@ -813,8 +981,7 @@ def prepare_data_static(**kargs):
             def label_dataset(x):
                 if kargs["dataset_name"] is not None:
                     x["dataset_name"] = kargs["dataset_name"]
-
-                if kargs["dataset_index"] >= 0:
+                if kargs["dataset_index"] >= -1:
                     x["dataset_index"] = kargs["dataset_index"]
                 return x
             
@@ -918,8 +1085,10 @@ def prepare_datapack_static(**kargs):
 
     # Prepare the array of all the datasets to be merged
     datasets_arr = []
-    datasets_train_len = []
-    datasets_test_len = []
+    datasets_train_count = []
+    datasets_test_count = []
+    datasets_train_used_count = []
+    datasets_config_merged_arr = []
 
     # Reset a dataset array
     def reset_dataset_arr_item(i):
@@ -927,29 +1096,43 @@ def prepare_datapack_static(**kargs):
         dataset_in = dataset_config_arr[i]
 
         # Merge the default config
-        dataset = { **defaultVals, **dataset_in }
+        one_dataset_config = { **defaultVals, **dataset_in, **{ "dataset_index": i } }
+
+        # Insert the "dataset_name" if "name" is set
+        if dataset_in["name"] is not None:
+            one_dataset_config = { **one_dataset_config, **{ "dataset_name": dataset_in["name"] } }
 
         # Prepapre the datapath, use the dataset overried if set
-        if dataset_in["datapath"] is not None:
-            dataset["datapath"] = dataset_in["datapath"]
-        elif default_config["datapath"] is not None:
-            dataset["datapath"] = default_config["datapath"]+"/"+i+"/"
+        if "data_path" in dataset_in and dataset_in["data_path"] is not None:
+            one_dataset_config["data_path"] = dataset_in["data_path"]
+        elif "data_path" in default_config and  default_config["data_path"] is not None:
+            one_dataset_config["data_path"] = default_config["data_path"]+"/"+str(i)+"/"
         else:
-            dataset["datapath"] = ".//<#|=@%!$skip_datapath$!%@=|#>//."
+            one_dataset_config["data_path"] = ".//<#|=@%!$skip_datapath$!%@=|#>//."
 
-        # Build the datasets individually
-        datasets_arr[i] = prepare_data_static(**dataset)
+        # Initialize the array indexing if needed
+        if i >= len(datasets_arr):
+            datasets_arr.append( None )
+            datasets_config_merged_arr.append( None )
+            datasets_train_count.append(0)
+            datasets_test_count.append(0)
+            datasets_train_used_count.append(0)
+            
+        datasets_arr[i] = prepare_data_static(**one_dataset_config)
+        datasets_config_merged_arr[i] = one_dataset_config
 
         # Get the dataset lengths
-        datasets_train_len[i] = len(datasets_arr[i]["train"])
-        datasets_test_len[i] = len(datasets_arr[i]["test"])
+        datasets_train_count[i] = len(datasets_arr[i]["train"])
+        datasets_test_count[i] = len(datasets_arr[i]["test"])
+        datasets_train_used_count[i] = 0
 
     # Loop through the dataset config
     for i in range(len(dataset_config_arr)):
+        print(">> Preparing dataset - index: ", i)
         reset_dataset_arr_item(i)
 
     # Compute the total dataset lengths
-    total_train_len = sum(datasets_train_len)
+    total_train_count = sum(datasets_train_count)
 
     # Get the datapack batchsize
     datapack_batchsize = datapack_config["batchsize"]
@@ -964,14 +1147,77 @@ def prepare_datapack_static(**kargs):
     # Compute the number of batches for each dataset
     datasets_train_batches = []
     datasets_test_batches = []
+    weighted_train_count = []
 
     # Compute the number of batches for each dataset
     for i in range(len(dataset_config_arr)):
-        datasets_train_batches[i] = math.ceil( datasets_train_len[i] * datapack_config["dataset_weight"] / datapack_batchsize )
-        datasets_test_batches[i] = math.ceil( datasets_test_len[i] / datapack_batchsize )
+        dataset_weight = 1.0
+        if "dataset_weight" in datasets_config_merged_arr[i]:
+            dataset_weight = datasets_config_merged_arr[i]["dataset_weight"]
+
+        # Initialize empty values, if not set
+        if i >= len(datasets_train_batches):
+            datasets_train_batches.append(0)
+            datasets_test_batches.append(0)
+            weighted_train_count.append(0)
+        
+        # Compute the number of batches for each dataset
+        weighted_train_count[i] = math.ceil( datasets_train_count[i] * dataset_weight )
+        datasets_train_batches[i] = math.ceil( datasets_train_count[i] * dataset_weight * full_batch_percentage / datapack_batchsize )
+        datasets_test_batches[i] = math.ceil( datasets_test_count[i] / datapack_batchsize )
 
     # Compute the total number of batches for training
-    total_train_batches = sum(datasets_train_batches)
+    total_weighted_train_count = sum( weighted_train_count )
+    total_train_batches = math.ceil( total_weighted_train_count / datapack_batchsize )
+    total_full_batches = sum( datasets_train_batches )
+
+    print(">> Total train batches ( full | random ) :", total_train_batches, " ( ", total_full_batches, " | ", total_train_batches - total_full_batches, " )")
+
+    # Probability distribution for each dataset (for random sampling)
+    dataset_random_distribution_weight = []
+
+    # Lets prepared the ordered array of dataset indexes
+    # This is so we can plan in advance, which dataset to use for each batch
+    dataset_batch_index_arr = []
+    dataset_batch_none_index = []
+    for i in range(len(dataset_config_arr)):
+        dataset_batch_index_arr += [i] * datasets_train_batches[i]
+        dataset_batch_none_index += [None] * datasets_train_batches[i]
+        # Normalize (softmax?) the dataset random distribution
+        dataset_random_distribution_weight += [weighted_train_count[i] / total_weighted_train_count]
+    dataset_batch_index_arr += [-1] * (total_train_batches - total_full_batches)
+
+    # The full dataset will contain the following columns
+    # input_ids, token_type_ids, attention_mask, sample_length, dataset_index, dataset_name
+
+    # Int type for the dataset (based on index:0 dataset)
+    # Note: these are hugging face "Value(dtype=x)", and not the dtype itself
+    dataset_input_id_type = datasets_arr[0]["train"].features["input_ids"].feature
+    dataset_token_type_id_type = datasets_arr[0]["train"].features["token_type_ids"].feature
+    dataset_attention_mask_type = datasets_arr[0]["train"].features["attention_mask"].feature
+
+    # Setup the dataset features
+    fullset_features = Features({
+        'input_ids': Sequence(dataset_input_id_type),
+        'token_type_ids': Sequence(dataset_token_type_id_type),
+        'attention_mask': Sequence(dataset_attention_mask_type),
+        'dataset_index': Value(dtype="int16"),
+        'dataset_name': Value(dtype="string"),
+    })
+    
+    # Initial dataset dicitionary
+    initial_fullset_dict = {
+        "input_ids": dataset_batch_none_index.clone(),
+        "token_type_ids": dataset_batch_none_index.clone(),
+        "attention_mask": dataset_batch_none_index.clone(),
+        "dataset_index": dataset_batch_index_arr,
+        "dataset_name": dataset_batch_none_index.clone(),
+    }
+
+    # Create the full dataset
+    fullset = Dataset.from_dict(initial_fullset_dict, features=fullset_features)
+
+    
 
     
     
@@ -986,11 +1232,6 @@ class RWKVDataModule(LightningDataModule):
         # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
         # Note: As of Jan 2023, these options seems very buggy, YMMV
         data_path_storage_options:dict = None,
-
-        # Dataset name, and index
-        # This is only useful for multi dataset packing 
-        dataset_name: str = None,
-        dataset_index: int = -1,
 
         # load_dataset(path) param
         source: str = None,

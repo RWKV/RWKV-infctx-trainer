@@ -6,7 +6,7 @@ datapack:
   # dataset_path for the prebuilt dataset, to save into using HF `save _to_disk()`
   #
   # If using relative path, this should be relative to the trainer script path
-  data_path: /path/to/store/your/data_path/
+  data_path: ../datapath/v5-validation/example-datapack/
 
   # Data path storage options, this is used to support cloud storage
   # via the huggingface dataset API. See:
@@ -31,7 +31,7 @@ datapack:
   # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
   # a large number of batch size combinations. This helps reduce the amount of
   # misaligned batches, and thus reduce the amount of wasted training time
-  batchsize: 20160
+  batchsize: 2048
 
   # Mixing mode to use, this is used to alternate between datasets
   #
@@ -50,9 +50,6 @@ datapack:
   # instad of limiting each batch to a single dataset
   #
   # Use 0, to disable mixed batches, sampled mixing_mode is the equavalent of mixed batch 1.0
-  #
-  # NOTE: This is a guideline percentage, and is not guaranteed to be exact
-  #       if a partial batch is built, it may get converted to a mixed batch
   mixed_batch_percentage: 0.2
 
 #
@@ -68,7 +65,7 @@ default:
   #
   # The dataset index will be appended to the default value, if set
   # ---
-  # data_path: /path/to/store/your/data_path_dir/
+  data_path: ../datapath/v5-validation/example-datapack-cache/
 
   # Data path storage options, this is used to support cloud storage
   # via the huggingface dataset API. See:
@@ -202,7 +199,7 @@ default:
   # This is ignored, if source is not set as text (unless text_rechunk_force)
   # This is ignored, if set to zero / -1
   # ---
-  text_rechunk_size: 2048
+  text_rechunk_size: 4096
 
   # Apply text rechunk to the dataset, even if its not a 'text' source
   # This is done only after dataset filtering, and if source is not 'text'
@@ -254,12 +251,12 @@ default:
   # and sort_by_length desc order together
   reverse_train_dataset_before_save: False
 
-  # # (NOT IMPLEMENTED) Oversampling logic used
-  # # - none : No oversampling is done, dataset is skipped when exhausted
-  # # - halt : Halt the generation of the datapack, when exhausted
-  # # - loop : Loop the dataset, when exhausted
-  # # - shuffle : Reset and shuffle, when exhausted
-  # oversampling: "none"
+  # Oversampling logic used
+  # - none : No oversampling is done, dataset is skipped when exhausted
+  # - halt : Halt the generation of the datapack, when exhausted
+  # - loop : Loop the dataset, when exhausted
+  # - shuffle : Reset and shuffle, when exhausted
+  oversampling: "none"
 
 #
 # The dataset specific settings
@@ -288,7 +285,7 @@ dataset:
     # Datapath to use, if source is disabled
     # alternatively if source is provided, save to the following datapath instead
     # ---
-    # data_path: null
+    # datapath: null
 
     # Advance datapath storage options, see previous examples for more details
     # ---
@@ -304,10 +301,9 @@ dataset:
     # ---
     # ...
 
-    # # (NOT IMPLEMENTED) 
-    # # Increase the dataset weightage, to increase the amount of data used
-    # # Defaults to 1.0 
-    # dataset_weight: 1.0
+    # Increase the dataset weightage, to increase the amount of data used
+    # Defaults to 1.0
+    dataset_weight: 1.0
   
   - # provide the source path, which is used as huggingface dataset path
     # this will be used to populate the dataset_path
@@ -322,12 +318,12 @@ dataset:
     #
     # source: null                 # Disabled
     # source: text                 # Text mode, used with source_data_dir
-    source: "BI55/MedText"   # Hugging face dataset
+    source: "teknium/openhermes"   # Hugging face dataset
 
     # Datapath to use, if source is disabled
     # alternatively if source is provided, save to the following datapath instead
     # ---
-    # data_path: null
+    # datapath: null
 
     # Advance datapath storage options, see previous examples for more details
     # ---
@@ -337,16 +333,15 @@ dataset:
     #   endpoint_url: <example S3 endpoint>
 
     # Optional, provide a name for the dataset
-    name: "MedText"
+    name: "openhermes"
 
     # All other settings found in default can be overriden here
     # ---
     # ...
 
-    # # (NOT IMPLEMENTED) 
-    # # Increase the dataset weightage, to increase the amount of data used
-    # # Defaults to 1.0 
-    # dataset_weight: 1.0
+    # Increase the dataset weightage, to increase the amount of data used
+    # Defaults to 1.0
+    dataset_weight: 1.0
 
 
 
