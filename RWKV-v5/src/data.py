@@ -4,9 +4,9 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import DistributedSampler
 
-import math
+import math, random, numpy
 import wandb
-from datasets import load_from_disk, load_dataset, Dataset
+from datasets import load_from_disk, load_dataset, concatenate_datasets, Dataset, Features, Value, Sequence
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
 num_cpus = cpu_count()
@@ -26,8 +26,173 @@ import numpy as np
 # ```
 # Parameter 'function'=<function RWKVDataModule.prepare_data.<locals>.map_tokenizer at 0x7f7672c5e340> of the transform datasets.arrow_dataset.Dataset._map_single couldn't be hashed properly, a random hash was used instead. Make sure your transforms and parameters are serializable with pickle or dill for the dataset fingerprinting and caching to work. If you reuse this transform, the caching mechanism will consider it to be different from the previous calls and recompute everything. This warning is only showed once. Subsequent hashing failures won't be showed.
 # ```
-def prepare_data_static(**kargs):
+def prepare_data_static(
+        # load_from_disk(dataset_path) param
+        data_path: str,
+        # Data path storage options, this is used to support cloud storage
+        # via the huggingface dataset API. See:
+        # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
+        # Note: As of Jan 2023, these options seems very buggy, YMMV
+        data_path_storage_options:dict = None,
 
+        # load_dataset(path) param
+        source: str = None,
+        # load_dataset(data_dir) param
+        source_data_dir: str = None,
+        # Additional dataset params
+        source_dataset_params: dict = None,
+        # Test split of source data, if it was not already done
+        test_split: float = 0.01,
+        test_split_shuffle: bool = False,
+        # Text rechunking size
+        text_rechunk_size: int = 4096,
+        text_rechunk_auto: bool = True,
+        text_rechunk_force: bool = False,
+        # ---
+        # Tokenizer settings
+        # ---
+        tokenizer: str = "world",
+        autoTokenizer = None,
+
+        # Add <|endoftext|> string token to the world tokenizer, at index 0
+        # this was missing from the original world trie_tokenizer
+        world_add_endoftext_token: bool = True,
+
+        # ---
+        # HF dataset conversion helpers
+        # ---
+        # Min / Max token size filtering
+        #
+        # default min token size of 2 is chosen, to filter out empty records
+        # which causes errors in the trainer
+        min_token_size: int = 2,
+        max_token_size: int = -1,
+        
+        # Sort by length
+        sort_by_length: bool = False,
+        sort_asc: bool = True,
+
+        # Dataset offset and limit controls
+        dataset_offset: float = -1,
+        dataset_length: float = -1,
+        
+        # Custom 'text' column to support, mostly used for dataset where the 
+        # desired train data is in another column (eg. 'code')
+        custom_text_key: str = None,
+        # Multi column merging support, used for instruct/input/output datasets
+        # or similar varients where the input and output are in different columns
+        # and need to be merged
+        multi_column_keys: list = None,
+        multi_column_prefix: list = None,
+        multi_column_suffix: list = None,
+        multi_column_train_mask: list = None,
+        multi_column_separator: str = None,
+        # Conversation format support
+        conversation_format: str = None,
+        conversation_key: str = None,
+
+        # conversation_format == 'iopairs'
+        conversation_input_key_prefix_map: dict = None,
+        conversation_input_key_mask: dict = None,
+
+        # conversation_format == 'sender'
+        conversation_sender_key: str = None,
+        conversation_sender_value_map: dict = None,
+        conversation_input_key_map: dict = None,
+        conversation_sender_suffix: dict = None,
+        conversation_sender_mask: dict = None,
+        conversation_end_of_conversation: str = None,
+
+        # prompt/completion format masking support
+        disable_prompt_completion_mask: bool = False,
+
+        # ----------------------------
+        # Selective loss training
+        # ----------------------------
+
+        # Prefix token masking
+        #
+        # The rationale behind this, is that the first X tokens should not be "backpropped"
+        # for any new training record. As its unfair to expect the model (or a human) make
+        # any resonable guesses at that stage. As such this is used to "mask" the first X tokens
+        # from the loss calculation, and thus not backpropped.
+        data_prefix_skip_mask: int = 0,
+
+        # ----------------------------
+        # dataset packing support
+        # ----------------------------
+
+        # Boolean flag to enable / disable dataset packing
+        packing_enable: bool = False,
+
+        # Used to ensure all training samples wihin this batch size is the same length
+        # Ideally this should align exactly with your real "batch size"
+        #
+        # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
+        # a large number of batch size combinations. This helps reduce the amount of
+        # misaligned batches, and thus reduce the amount of wasted training time.
+        packing_batchsize: int = 20160,
+
+        # Chunking size to align within each batch, this ideally should be equal to
+        # the training context length used.
+        packing_chunksize: int = 4096,
+
+        # Minimum size to pack up to, this should be a multiple of packing_chunksize
+        # defautls to -1, which equals to packing_chunksize
+        packing_min_ctx_len: int = -1,
+
+        # Pack the data sequentially if possible, in accordance to the dataset sequence
+        # this can be used together with sort_by_length, otherwise a shuffle will be done
+        packing_in_sequence: bool = False,
+
+        # ----------------------------
+        # Specal use caes flags
+        # ----------------------------
+
+        # Reverse the training dataset order before saving, this is useful for,
+        # optimizing dataset packing process, when using packing_in_sequence
+        # and sort_by_length desc order together
+        reverse_train_dataset_before_save: bool = False,
+
+        # ----------------------------
+        # System tweaks
+        # ----------------------------
+
+        # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
+        skip_datapath_setup: bool = False,
+        
+        # Batch size scanning range, used for deciding the max number of documents
+        # to process simultaneously at a time. This is used to prevent OOM errors
+        # while rearranging the dataset, etc. Used for both packing / sorting operations
+        processing_max_batch_size: int = 100 * 1000,
+
+        # Dataloader shuffling, disabled if "sort_by_length" is enabled
+        dataloader_shuffle_training: bool = False,
+
+        # With a total of 4 batches prefetched into memory
+        dataloader_prefetch_factor:int = 4,
+
+        # Pin the preloaded documents into GPU memory in advance
+        # very small overhead, slight speed bump, disable if your deperate for vram
+        dataloader_pin_memory: bool = True,
+
+        # ----------------------------
+        # Data oacj soecufuc
+        # ----------------------------
+
+        # Dataset name, and index
+        # This is only useful for multi dataset packing 
+        dataset_name: str = None,
+        dataset_index: int = 0,
+        is_random_datapack: bool = False,
+
+        # Additional kargs
+        **kargs
+    ):
+
+    # Capture the init parameters
+    kargs = locals()
+    
     # Check if skip_datapath_setup is enabled
     # useful for extra large datasets
     if kargs["skip_datapath_setup"] == True:
@@ -120,7 +285,10 @@ def prepare_data_static(**kargs):
                 for k, v in source_dataset_params.items():
                     load_dataset_params[k] = v
 
-            # Load the dataset
+            # Log the whole load_dataset_params
+            # print("load_dataset_params: " + str(load_dataset_params))
+
+            # Load the dataset)
             src_dataset = load_dataset(**load_dataset_params)
 
             # If for some reason the dataset is a "test" only split, and missing a "train" split, we remap it as a "train" split
@@ -517,7 +685,6 @@ def prepare_data_static(**kargs):
             'attention_mask': [[1]],
         }
 
-
         # See if rechunking is needed, this is useful mostly for "text" based datasets
         # where we would need to split them into "digestable" context length sizes 
         # used for foundation training
@@ -577,7 +744,7 @@ def prepare_data_static(**kargs):
         # and perform min/max length filtering (if configured)
         def dataset_filter(x):
             row_length = len(x["input_ids"])
-            if row_length <= 0:
+            if row_length <= 1:
                 return False
             if kargs["min_token_size"] > 0 and row_length < kargs["min_token_size"]:
                 return False
@@ -807,6 +974,20 @@ def prepare_data_static(**kargs):
         # # Convert to iterable datasets (does not support saving to disk???)
         # src_dataset["train"] = src_dataset["train"].to_iterable_dataset()
         # src_dataset["test"] = src_dataset["test"].to_iterable_dataset()
+            
+        # Dataset labeling, for custom wandb graphing
+        if kargs["dataset_name"] is not None or kargs["dataset_index"] >= 0:
+            # Lets label every sample with the dataset name or index
+            def label_dataset(x):
+                if kargs["dataset_name"] is not None:
+                    x["dataset_name"] = kargs["dataset_name"]
+                if kargs["dataset_index"] >= 0:
+                    x["dataset_index"] = kargs["dataset_index"]
+                return x
+            
+            # Apply the label function
+            src_dataset["train"] = src_dataset["train"].map(label_dataset, num_proc=num_cpus)
+            src_dataset["test"] = src_dataset["test"].map(label_dataset, num_proc=num_cpus)
 
         # Save the dataset to disk (if enabled)
         # For the skip datapath saving string
@@ -875,21 +1056,312 @@ def dataloader_collator_fn(records):
     out_attention_mask = torch.zeros((records_len, attention_mask_len), dtype=first_row["attention_mask"].dtype)
     out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
 
+    out_index = 0
+    out_name = None
+    # Add dataset_index if its set
+    if "dataset_index" in records:
+        out_index = records[0]["dataset_index"]
+    if "dataset_name" in records:
+        out_name = records[0]["dataset_name"]
+    
+
     # Loop through the records and copy the values to the output arrays
     for i in range(records_len):
         out_input_ids[i][:len(records[i]["input_ids"])] = records[i]["input_ids"]
         out_token_type_ids[i][:len(records[i]["token_type_ids"])] = records[i]["token_type_ids"]
         out_attention_mask[i][:len(records[i]["attention_mask"])] = records[i]["attention_mask"]
         out_data_ctx_len[i] = len(records[i]["input_ids"])
+
+        if i > 0 and out_index > 0 and out_index != records[i]["dataset_index"]:
+            out_index = -1
+            out_name = "mixed"
     
     # Build & return the output object
     out = {
         'input_ids': out_input_ids,
         'token_type_ids': out_token_type_ids,
         'attention_mask': out_attention_mask,
-        'data_ctx_len': out_data_ctx_len
+        'data_ctx_len': out_data_ctx_len,
+        'dataset_index': out_index,
+        'dataset_name': out_name
     }
+
     return out
+
+# Build the datapack given the given settings
+def prepare_datapack_static(**kargs):
+    # Get the config groups
+    datapack_config = kargs["datapack"]
+    default_config = kargs["default"]
+    dataset_config_arr = kargs["dataset"]
+    
+    # Join the various default settings
+    defaultVals = { "packing_batchsize": datapack_config["batchsize"], "dataset_weight": 1.0 }
+    defaultVals = { **defaultVals, **default_config }
+
+    # Prepare the array of all the datasets to be merged
+    datasets_arr = []
+    datasets_train_count = []
+    datasets_test_count = []
+    datasets_train_used_count = []
+    datasets_config_merged_arr = []
+
+    # Reset a dataset array
+    def reset_dataset_arr_item(i):
+        # Get the dataset config
+        dataset_in = dataset_config_arr[i]
+
+        # Merge the default config
+        one_dataset_config = { **defaultVals, **dataset_in, **{ "dataset_index": i } }
+
+        # Insert the "dataset_name" if "name" is set
+        if dataset_in["name"] is not None:
+            one_dataset_config = { **one_dataset_config, **{ "dataset_name": dataset_in["name"] } }
+        elif dataset_in["dataset_name"] is not None:
+            one_dataset_config = { **one_dataset_config, **{ "dataset_name": dataset_in["dataset_name"] } }
+        else:
+            one_dataset_config = { **one_dataset_config, **{ "dataset_name": "dataset_"+str(i) } }
+
+        # Prepapre the datapath, use the dataset overried if set
+        if "data_path" in dataset_in and dataset_in["data_path"] is not None:
+            one_dataset_config["data_path"] = dataset_in["data_path"]
+        elif "data_path" in default_config and  default_config["data_path"] is not None:
+            one_dataset_config["data_path"] = default_config["data_path"]+"/"+str(i)+"/"
+        else:
+            one_dataset_config["data_path"] = ".//<#|=@%!$skip_datapath$!%@=|#>//."
+
+        # Initialize the array indexing if needed
+        if i >= len(datasets_arr):
+            datasets_arr.append( None )
+            datasets_config_merged_arr.append( None )
+            datasets_train_count.append(0)
+            datasets_test_count.append(0)
+            datasets_train_used_count.append(0)
+            
+        datasets_arr[i] = prepare_data_static(**one_dataset_config)
+        datasets_config_merged_arr[i] = one_dataset_config
+
+        # Get the dataset lengths
+        datasets_train_count[i] = len(datasets_arr[i]["train"])
+        datasets_test_count[i] = len(datasets_arr[i]["test"])
+        datasets_train_used_count[i] = 0
+
+    # Loop through the dataset config
+    for i in range(len(dataset_config_arr)):
+        print(">> Preparing dataset - index: ", i)
+        reset_dataset_arr_item(i)
+
+    # Compute the total dataset lengths
+    total_train_count = sum(datasets_train_count)
+
+    # Get the datapack batchsize
+    datapack_batchsize = datapack_config["batchsize"]
+    mixed_batch_percentage = datapack_config["mixed_batch_percentage"]
+    full_batch_percentage = 1.0 - mixed_batch_percentage
+
+    # Override batch percentage if needed
+    if datapack_config["mixing_mode"] != "batch":
+        mixed_batch_percentage = 1.0
+        full_batch_percentage = 0.0
+
+    # Compute the number of batches for each dataset
+    datasets_train_batches = []
+    datasets_test_batches = []
+
+    # Compute the number of batches for each dataset
+    for i in range(len(dataset_config_arr)):
+        dataset_weight = 1.0
+        if "dataset_weight" in datasets_config_merged_arr[i]:
+            dataset_weight = datasets_config_merged_arr[i]["dataset_weight"]
+
+        # Throw if dataset_weight != 1.0 (not yet supported)
+        if dataset_weight != 1.0:
+            raise ValueError("dataset_weight != 1.0 is not yet supported")
+
+        # Initialize empty values, if not set
+        if i >= len(datasets_train_batches):
+            datasets_train_batches.append(0)
+            datasets_test_batches.append(0)
+        
+        # Compute the number of batches for each dataset
+        datasets_train_batches[i] = math.floor( datasets_train_count[i] * dataset_weight * full_batch_percentage / datapack_batchsize )
+        datasets_test_batches[i] = math.floor( datasets_test_count[i] / datapack_batchsize )
+
+    # Compute the total number of batches for training
+    total_train_batches = math.floor( total_train_count / datapack_batchsize )
+    total_full_batches = sum( datasets_train_batches )
+
+    print(">> Total approx train batches ( full | random ) :", total_train_batches, " ( ", total_full_batches, " | ", total_train_batches - total_full_batches, " )")
+
+    # ---
+    # The full dataset will contain the following columns
+    # input_ids, token_type_ids, attention_mask, sample_length, dataset_index, dataset_name
+    # ---
+
+    # Int type for the dataset (based on index:0 dataset)
+    # Note: these are hugging face "Value(dtype=x)", and not the dtype itself
+    dataset_input_id_type = datasets_arr[0]["train"].features["input_ids"].feature
+    dataset_token_type_id_type = datasets_arr[0]["train"].features["token_type_ids"].feature
+    dataset_attention_mask_type = datasets_arr[0]["train"].features["attention_mask"].feature
+
+    # Setup the dataset features
+    final_dataset_features = Features({
+        'input_ids': Sequence(dataset_input_id_type),
+        'token_type_ids': Sequence(dataset_token_type_id_type),
+        'attention_mask': Sequence(dataset_attention_mask_type),
+        'dataset_index': Value(dtype="int16"),
+        'dataset_name': Value(dtype="string"),
+    })
+    
+    # Build the full train / test split dataset slices
+    train_fullset_arr = []
+    train_randomset_arr = []
+    test_fullset_arr = []
+
+    # For each dataset, build the full and random sets
+    for i in range(len(datasets_arr)):
+        if datasets_train_batches[i] > 0:
+            train_fullset_arr.append( datasets_arr[i]["train"].select(numpy.arange(0, datasets_train_batches[i]*datapack_batchsize)) )
+            train_randomset_arr.append( datasets_arr[i]["train"].select(numpy.arange(datasets_train_batches[i]*datapack_batchsize, datasets_train_count[i])) )
+        else:
+            train_randomset_arr.append( datasets_arr[i]["train"] )
+        test_fullset_arr.append( datasets_arr[i]["test"] )
+
+    # Concat the full dataset
+    train_fullset = concatenate_datasets(train_fullset_arr)
+    train_randomset = concatenate_datasets(train_randomset_arr)
+    test_fullset = concatenate_datasets(test_fullset_arr)
+
+    # Shuffle the train random sets, and merge it
+    train_randomset_len = len(train_randomset)
+    train_randomset = train_randomset.shuffle(seed=101)
+    train_randomset_chunks = math.floor( train_randomset_len / datapack_batchsize )
+
+    if train_randomset_chunks > 0:
+        train_fullset = concatenate_datasets([train_fullset,train_randomset.select(numpy.arange(0, train_randomset_chunks*datapack_batchsize))])
+        train_last_randomset_chunk = train_randomset.select(numpy.arange(train_randomset_chunks*datapack_batchsize, train_randomset_len))
+    else:
+        train_last_randomset_chunk = train_randomset
+    
+    # Get the total fullset chunks
+    train_fullset_chunks = math.floor( len(train_fullset) / datapack_batchsize )
+
+    # Lets prepare an array of the various dataset indexes
+    dataset_shuffle_index_arr = list( numpy.arange(0, train_fullset_chunks) )
+    random.Random(101).shuffle(dataset_shuffle_index_arr)
+    
+    # Label shuffle index
+    def label_shuffle_index(x, idx):
+        x["shuffle_index"] = idx
+        return x
+
+    # Add a shuffled index to the fullset 
+    train_fullset = train_fullset.map(
+        label_shuffle_index,
+        with_indices=True,
+        batched=True,
+        batch_size=datapack_batchsize,
+        num_proc=num_cpus,
+    )
+    
+    # Sort the fullset by the shuffle index
+    train_fullset = train_fullset.sort("shuffle_index")
+
+    # Remove the shuffle index
+    train_fullset = train_fullset.remove_columns(["shuffle_index"])
+
+    # Add the last randomset chunk to the fullset
+    train_fullset = concatenate_datasets([train_fullset, train_last_randomset_chunk])
+
+    # Build the full train / test split dataset
+    final_dataset = Dataset.from_dict({key: [None,None] for key in final_dataset_features}, features=final_dataset_features)
+    final_dataset = final_dataset.train_test_split(1,1)
+
+    # Lets override the full dataset
+    final_dataset["train"] = train_fullset
+    final_dataset["test"] = test_fullset
+
+    # # Full dataset chunks slices
+    # fullset_chunks_slices = []
+    # for i in range(len(datasets_arr)):
+    #     fullset_chunks_slices.append( [] )
+
+    # # Lets iterate each row of the training datset
+    # # and log the various attribute sizes
+    # print(">> [START] DEBUGGING LOGS")
+    # for i in range(len(final_dataset["train"])):
+    #     # Get the row
+    #     row = final_dataset["train"][i]
+    #
+    #     # Get size map
+    #     log_map = {
+    #         "index": i,
+    #         "input_ids": len(row["input_ids"]),
+    #         "token_type_ids": len(row["token_type_ids"]),
+    #         "attention_mask": len(row["attention_mask"]),
+    #         "dataset_index": row["dataset_index"],
+    #         "dataset_name": row["dataset_name"],
+    #     }
+    #     print(log_map)
+    # print(">> [ENDIN] DEBUGGING LOGS")
+
+    # Log the saving process
+    print(">> Saving dataset to data_path : ", datapack_config["data_path"])
+
+    # Finally save to disk
+    if "data_path_storage_options" in datapack_config and datapack_config["data_path_storage_options"]:
+        final_dataset.save_to_disk(
+            datapack_config["data_path"], 
+            storage_options=datapack_config["data_path_storage_options"]
+        )
+    else:
+        final_dataset.save_to_disk(
+            datapack_config["data_path"]
+        )
+
+    print(">> Dataset saved to data_path")
+    print(">> -----------------------------------")
+    print(">> Performing dataset counting")
+    print(">> -----------------------------------")
+
+    # Log the finished dataset sizes
+    final_train_len = len(final_dataset["train"])
+    final_test_len = len(final_dataset["test"])
+    print(">> Final dataset count ( train ) :", "{:,}".format(final_train_len))
+    print(">> Final dataset count ( test  ) :", "{:,}".format(final_test_len))
+    print(">> -----------------------------------")
+
+    # Compute the total dataset token count
+    def compute_lengths(x):
+        return {
+            'total_tokens': len(x["input_ids"]),
+            'valid_tokens': sum(x["attention_mask"]),
+        }
+    
+    # Count the training data
+    train_counting = final_dataset["train"].map(compute_lengths, num_proc=num_cpus)
+    train_total = sum( train_counting["total_tokens"] )
+    train_valid = sum( train_counting["valid_tokens"] )
+    train_hidden = train_total - train_valid
+
+    # Count the test data
+    test_counting = final_dataset["test"].map(compute_lengths, num_proc=num_cpus)
+    test_total = sum( test_counting["total_tokens"] )
+    test_valid = sum( test_counting["valid_tokens"] )
+    test_hidden = test_total - test_valid
+
+    print(">> -----------------------------------")
+    print(">> Final 'train' dataset token count ...")
+    print(">> - Total tokens :", "{:,}".format(train_total))
+    print(">> - Valid tokens :", "{:,}".format(train_valid))
+    print(">> - Hidden tokens :", "{:,}".format(train_hidden))
+    print(">> -----------------------------------")
+    print(">> Final 'test' dataset token count ...")
+    print(">> - Total tokens :", "{:,}".format(test_total))
+    print(">> - Valid tokens :", "{:,}".format(test_valid))
+    print(">> - Hidden tokens :", "{:,}".format(test_hidden))
+    print(">> -----------------------------------")
+    
 
 class RWKVDataModule(LightningDataModule):
     def __init__(
@@ -901,6 +1373,7 @@ class RWKVDataModule(LightningDataModule):
         # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
         # Note: As of Jan 2023, these options seems very buggy, YMMV
         data_path_storage_options:dict = None,
+
         # load_dataset(path) param
         source: str = None,
         # load_dataset(data_dir) param
@@ -931,7 +1404,7 @@ class RWKVDataModule(LightningDataModule):
         #
         # default min token size of 1 is chosen, to filter out empty records
         # which causes errors in the trainer
-        min_token_size: int = 1,
+        min_token_size: int = 2,
         max_token_size: int = -1,
         
         # Sort by length
