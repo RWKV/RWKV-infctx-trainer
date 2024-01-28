@@ -300,7 +300,7 @@ dataset:
     # All other settings found in default can be overriden here
     # ---
     text_rechunk_force: True
-    text_rechunk_size: 4096
+    text_rechunk_size: 8192
     
     # # (NOT IMPLEMENTED) 
     # # Increase the dataset weightage, to increase the amount of data used
@@ -340,6 +340,7 @@ dataset:
     # All other settings found in default can be overriden here
     # ---
     packing_enable: True
+    packing_min_ctx_len: 8192
 
     # # (NOT IMPLEMENTED) 
     # # Increase the dataset weightage, to increase the amount of data used

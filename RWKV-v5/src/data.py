@@ -1266,10 +1266,6 @@ def prepare_datapack_static(**kargs):
     # for i in range(len(datasets_arr)):
     #     fullset_chunks_slices.append( [] )
 
-    # Log the finished dataset sizes
-    print(">> Final dataset sizes ( train ) :", len(final_dataset["train"]))
-    print(">> Final dataset sizes ( test  ) :", len(final_dataset["test"]))
-
     # # Lets iterate each row of the training datset
     # # and log the various attribute sizes
     # print(">> [START] DEBUGGING LOGS")
@@ -1304,6 +1300,47 @@ def prepare_datapack_static(**kargs):
         )
 
     print(">> Dataset saved to data_path")
+    print(">> -----------------------------------")
+    print(">> Performing dataset counting")
+    print(">> -----------------------------------")
+
+    # Log the finished dataset sizes
+    final_train_len = len(final_dataset["train"])
+    final_test_len = len(final_dataset["test"])
+    print(">> Final dataset count ( train ) :", "{:,}".format(final_train_len))
+    print(">> Final dataset count ( test  ) :", "{:,}".format(final_test_len))
+    print(">> -----------------------------------")
+
+    # Compute the total dataset token count
+    def compute_lengths(x):
+        return {
+            'total_tokens': len(x["input_ids"]),
+            'valid_tokens': sum(x["attention_mask"]),
+        }
+    
+    # Count the training data
+    train_counting = final_dataset["train"].map(compute_lengths, num_proc=num_cpus)
+    train_total = sum( train_counting["total_tokens"] )
+    train_valid = sum( train_counting["valid_tokens"] )
+    train_hidden = train_total - train_valid
+
+    # Count the test data
+    test_counting = final_dataset["test"].map(compute_lengths, num_proc=num_cpus)
+    test_total = sum( test_counting["total_tokens"] )
+    test_valid = sum( test_counting["valid_tokens"] )
+    test_hidden = test_total - test_valid
+
+    print(">> -----------------------------------")
+    print(">> Final 'train' dataset token count ...")
+    print(">> - Total tokens :", "{:,}".format(train_total))
+    print(">> - Valid tokens :", "{:,}".format(train_valid))
+    print(">> - Hidden tokens :", "{:,}".format(train_hidden))
+    print(">> -----------------------------------")
+    print(">> Final 'test' dataset token count ...")
+    print(">> - Total tokens :", "{:,}".format(test_total))
+    print(">> - Valid tokens :", "{:,}".format(test_valid))
+    print(">> - Hidden tokens :", "{:,}".format(test_hidden))
+    print(">> -----------------------------------")
     
 
 class RWKVDataModule(LightningDataModule):
