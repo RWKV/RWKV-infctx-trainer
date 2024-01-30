@@ -160,8 +160,9 @@ def RUN_WKV5_CUDA(
 # RWKV TimeMix module
 class RWKV_TimeMix(JITModClass):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, version = '5.2'):
         super().__init__()
+        self.version = version
         
         self.dim_att = dim_att
         self.n_layer = n_layer
@@ -181,18 +182,33 @@ class RWKV_TimeMix(JITModClass):
             for i in range(n_embd):
                 ddd[0, 0, i] = i / n_embd
 
-            # fancy time_mix
-            self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-            self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
-            self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-            self.time_mix_g = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            if version == '5.2':
+                # fancy time_mix
+                self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+                self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
+                self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+                self.time_mix_g = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            elif version == '6.0' or version == '7.0':
+                self.x_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+                self.r_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+                self.w_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+                self.k_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+                self.v_maa = nn.Parameter(1 - (torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1))
+                self.g_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+                TIME_MIX_EXTRA_DIM = 32
+                self.tm_w1 = nn.Parameter(torch.empty(n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-0.01, 0.01))
+                self.tm_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, n_embd))
+                W_MIX_EXTRA_DIM = 64
+                self.td_w1 = nn.Parameter(torch.empty(n_embd, W_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+                self.td_w2 = nn.Parameter(torch.zeros(W_MIX_EXTRA_DIM, n_embd))
 
-            # fancy time_decay
-            decay_speed = torch.ones(dim_att)
-            for n in range(dim_att):
-                decay_speed[n] = -6 + 5 * (n / (dim_att - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
-            self.time_decay = nn.Parameter(decay_speed.reshape(self.n_head, self.head_size))
-            # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
+            if version == '5.2':
+                # fancy time_decay
+                decay_speed = torch.ones(dim_att)
+                for n in range(dim_att):
+                    decay_speed[n] = -6 + 5 * (n / (dim_att - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
+                self.time_decay = nn.Parameter(decay_speed.reshape(self.n_head, self.head_size))
+                # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
             tmp = torch.zeros(dim_att)
             for n in range(dim_att):
@@ -201,13 +217,19 @@ class RWKV_TimeMix(JITModClass):
 
             self.time_faaaa = nn.Parameter(tmp.reshape(self.n_head, self.head_size))
 
+
         # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
         self.key = nn.Linear(n_embd, dim_att, bias=False)
 
         self.value = nn.Linear(n_embd, dim_att, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
-        self.gate = nn.Linear(n_embd, dim_att, bias=False)
+        if version != '7.0':
+            self.gate = nn.Linear(n_embd, dim_att, bias=False)
+        else:
+            D_GATE_LORA = 64
+            self.gate_w1 = nn.Parameter(torch.empty(n_embd, D_GATE_LORA).uniform_(-0.01, 0.01))
+            self.gate_w2 = nn.Parameter(torch.zeros(D_GATE_LORA, n_embd).uniform_(-0.01, 0.01))
         self.ln_x = nn.GroupNorm(n_head, dim_att)
 
         # Preload the CUDA kernel if needed
@@ -218,7 +240,7 @@ class RWKV_TimeMix(JITModClass):
         global wkv5_cuda_kernel, RWKV_NO_CUDA
 
         # Skip preload if cuda is disabled
-        if RWKV_NO_CUDA is True:
+        if RWKV_NO_CUDA is True or self.version != "5.2":
             self.use_cuda = False
             return
         
@@ -285,6 +307,7 @@ class RWKV_TimeMix(JITModClass):
         # Get the x sizing
         B, TT, C = x.size()
         H = self.n_head
+        version = self.version
 
         # Perform the tokenshift, and get the respective state
         xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
@@ -298,7 +321,10 @@ class RWKV_TimeMix(JITModClass):
         r = self.receptance(xr)#.view(B, TT, self.n_head, 1, -1)
         k = self.key(xk)#.view(B, TT, self.n_head, -1, 1)
         v = self.value(xv)#.view(B, TT, self.n_head, 1, -1)
-        g = F.silu(self.gate(xg))
+        if version != '7.0':
+            g = F.silu(self.gate(xg))
+        else:
+            g = torch.tanh(xg @ self.gate_w1) @ self.gate_w2
 
         # Logits and state
         state = last_state[1].clone().to(torch.float32).contiguous()
@@ -335,14 +361,39 @@ class RWKV_TimeMix(JITModClass):
         K = self.head_size
         V = K
 
-        # Perform the tokenshift, and get the respective state
-        xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
+        if self.version == '5.2':
+            # Perform the tokenshift, and get the respective state
+            xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
     
-        # Get the xk, xv, xr, xg, and rkvg
-        xk = modified_lerp(x, self.time_mix_k, xx)
-        xv = modified_lerp(x, self.time_mix_v, xx)
-        xr = modified_lerp(x, self.time_mix_r, xx)
-        xg = modified_lerp(x, self.time_mix_g, xx)
+            # Get the xk, xv, xr, xg, and rkvg
+            xk = modified_lerp(x, self.time_mix_k, xx)
+            xv = modified_lerp(x, self.time_mix_v, xx)
+            xr = modified_lerp(x, self.time_mix_r, xx)
+            xg = modified_lerp(x, self.time_mix_g, xx)
+        elif self.version == '6.0':
+            xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1) - x
+            xxx = x + xx * self.x_maa
+            xxx = torch.tanh(xxx @ self.tm_w1).view(B*T, 5, -1).transpose(0, 1)
+            xxx = torch.bmm(xxx, self.tm_w2).view(5, B, T, -1)
+            mw, mk, mv, mr, mg = xxx.unbind(dim=0)
+
+            xw = x + xx * (self.w_maa + mw)
+            xk = x + xx * (self.k_maa + mk)
+            xv = x + xx * (self.v_maa + mv)
+            xr = x + xx * (self.r_maa + mr)
+            xg = x + xx * (self.g_maa + mg)
+        elif self.version == '7.0':
+            xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1) - x
+            xxx = x + xx * self.x_maa
+            xxx = torch.tanh(xxx @ self.tm_w1).view(B*T, 5, -1).transpose(0, 1)
+            xxx = torch.bmm(xxx, self.tm_w2).view(5, B, T, -1)
+            mw, mk, mv, mr = xxx.unbind(dim=0)
+
+            xw = x + xx * (self.w_maa + mw)
+            xk = x + xx * (self.k_maa + mk)
+            xv = x + xx * (self.v_maa + mv)
+            xr = x + xx * (self.r_maa + mr)
+            xg = x + xx * (self.g_maa + mg)
 
         r = self.receptance(xr).view(B, T, H, K).transpose(1, 2) # BHTK
         k = self.key(xk).view(B, T, H, K).transpose(1, 2)      # BHTK
@@ -350,6 +401,10 @@ class RWKV_TimeMix(JITModClass):
         g = F.silu(self.gate(xg))
 
         w = torch.exp(-torch.exp(self.time_decay.float())).view(1,H,1,K).expand(1,H,T,K)
+        if self.version == '6.0':
+            w = w + (torch.tanh(xw @ self.td_w1) @ self.td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
+            w = torch.exp(-torch.exp(w))
+
         u = self.time_faaaa.view(1,H,1,K).to(r.dtype)
 
         # Logits and state
