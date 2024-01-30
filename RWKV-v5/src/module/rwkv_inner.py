@@ -36,7 +36,7 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=32,precision_dtype:torch.dtype=t
         assert(precision_dtype == torch.float32 or precision_dtype == torch.float64)
         if precision_dtype == torch.float32:
             precision_min_val = 0.005 # good for fp32 (1.175e-38 ^ (1/16.0) < 0.00426)
-        elif precision_dtype == torch.float64:
+        else: #elif precision_dtype == torch.float64:
             precision_min_val = 1e-10 # good for fp64 (1.7e-308 ^ (1/16.0) < 5.8e-20)
         w = w.clamp(precision_min_val)
 
@@ -80,17 +80,23 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=32,precision_dtype:torch.dtype=t
         v = v.view(B,H,N,T,V)
         u = u.unsqueeze(2).to(r.dtype) # (1,H,1,1,K)
 
-        r_length = torch.linalg.vector_norm(r, dim=-1).unsqueeze(-1) + 1e-14
-        r_unit_length = r / r_length
-        k_length = torch.linalg.vector_norm(k, dim=-1).unsqueeze(-1) + 1e-14
-        k_unit_length = k / k_length
+        if precision_dtype == torch.float32:
+            r_length = torch.linalg.vector_norm(r, dim=-1).unsqueeze(-1) + 1e-14
+            k_length = torch.linalg.vector_norm(k, dim=-1).unsqueeze(-1) + 1e-14
+            r_unit_length = r / r_length
+            k_unit_length = k / k_length
+        else:
+            # just to appease torch.jit compiler - we don't use these values
+            r_length, k_length = r, k
+            r_unit_length, k_unit_length = r, k
 
         # parallel calculation of all intra-chunk attention contributions
         wc_log_offset = shifted_wc_log_cum[...,T//2:T//2+1,:] # B,H,N,1,K
         r_decay = (shifted_wc_log_cum - wc_log_offset).to(precision_dtype).exp() # B,H,N,T,K
         k_inv_decay = (wc_log_offset - wc_log_cum).to(precision_dtype).exp() # B,H,N,T,K
         a = ((r_unit_length*r_decay) @ (k_unit_length*k_inv_decay).mT).to(r.dtype).tril(-1) # B,H,N,T,T
-        a = a * (r_length * k_length)
+        if precision_dtype == torch.float32:
+            a = a * (r_length * k_length)
         # add u term to attention (NOTE - the tril(-1) above zeroed the diagonal)
         a = a + torch.einsum('bhntk,bhntk->bhnt', r, u * k).diag_embed()
         out = a @ v # BHNTV

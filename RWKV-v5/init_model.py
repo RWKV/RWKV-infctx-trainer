@@ -47,6 +47,10 @@ def init_model(
         # Iterate each parameter group in state_dict
         p = model.state_dict()[n]
         shape = p.shape
+        if len(shape) != 2:
+            m[n] = p
+            continue
+
         gain = 1.0
         scale = 1.0
 
