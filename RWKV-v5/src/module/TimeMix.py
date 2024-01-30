@@ -610,7 +610,7 @@ class RWKV6_0_TimeMix(JITModClass):
         v = self.value(xv).view(B, T, H, V).transpose(1, 2)    # BHTV
         g = F.silu(self.gate(xg))
 
-        w = torch.exp(-torch.exp(self.time_decay.float())).view(1,H,1,K).expand(1,H,T,K)
+        w = self.time_decay.float().view(1,H,1,K)
         w = w + (torch.tanh(xw @ self.td_w1) @ self.td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
         w = torch.exp(-torch.exp(w))
 
@@ -675,6 +675,9 @@ class RWKV7_0_TimeMix(JITModClass):
             W_MIX_EXTRA_DIM = 64
             self.td_w1 = nn.Parameter(torch.empty(n_embd, W_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
             self.td_w2 = nn.Parameter(torch.zeros(W_MIX_EXTRA_DIM, n_embd))
+            D_GATE_LORA = 64
+            self.gate_w1 = nn.Parameter(torch.empty(n_embd, D_GATE_LORA).uniform_(-0.01, 0.01))
+            self.gate_w2 = nn.Parameter(torch.zeros(D_GATE_LORA, n_embd).uniform_(-0.01, 0.01))
 
             # fancy time_decay
             decay_speed = torch.ones(dim_att)
@@ -697,9 +700,6 @@ class RWKV7_0_TimeMix(JITModClass):
 
         self.value = nn.Linear(n_embd, dim_att, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
-        D_GATE_LORA = 64
-        self.gate_w1 = nn.Parameter(torch.empty(n_embd, D_GATE_LORA).uniform_(-0.01, 0.01))
-        self.gate_w2 = nn.Parameter(torch.zeros(D_GATE_LORA, n_embd).uniform_(-0.01, 0.01))
         self.ln_x = nn.GroupNorm(n_head, dim_att)
 
     # forwarding time mix given the model weights and the input tokens and states.
@@ -738,7 +738,7 @@ class RWKV7_0_TimeMix(JITModClass):
         xxx = x + xx * self.x_maa
         xxx = torch.tanh(xxx @ self.tm_w1).view(B*T, 5, -1).transpose(0, 1)
         xxx = torch.bmm(xxx, self.tm_w2).view(5, B, T, -1)
-        mw, mk, mv, mr = xxx.unbind(dim=0)
+        mw, mk, mv, mr, mg = xxx.unbind(dim=0)
 
         xw = x + xx * (self.w_maa + mw)
         xk = x + xx * (self.k_maa + mk)
@@ -751,7 +751,7 @@ class RWKV7_0_TimeMix(JITModClass):
         v = self.value(xv).view(B, T, H, V).transpose(1, 2)    # BHTV
         g = F.silu(self.gate(xg))
 
-        w = torch.exp(-torch.exp(self.time_decay.float())).view(1,H,1,K).expand(1,H,T,K)
+        w = self.time_decay.float().view(1,H,1,K)
         w = w + (torch.tanh(xw @ self.td_w1) @ self.td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
         w = torch.exp(-torch.exp(w))
 
