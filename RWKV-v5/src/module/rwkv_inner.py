@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 # 32 is optimal chunk length (longer will use too much memory, shorter is inefficient)
-def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=32):
+def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=32,precision_dtype:torch.dtype=torch.float32):
     """
     expects
     r : (B,H,L,K)
@@ -36,6 +36,12 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=32):
         precision_dtype, precision_min_val = torch.float32, 0.02 # good for fp32 
         #precision_dtype, precision_min_val = torch.float64, 1e-10 # good for fp64
         
+        # this has to be done to avoid numerical instability (inf/NaN) when w is used as a divisor up to chunk_length//2 places away (so precision_min_val^(T//2) has to be in fp range)
+        assert(precision_dtype == torch.float32 or precision_dtype == torch.float64)
+        if precision_dtype == torch.float32:
+            precision_min_val = 0.005 # good for fp32 (1.175e-38 ^ (1/16.0) < 0.00426)
+        elif precision_dtype == torch.float64:
+            precision_min_val = 1e-10 # good for fp64 (1.7e-308 ^ (1/16.0) < 5.8e-20)
         w = w.clamp(precision_min_val)
 
         # calculate cumulative decay in log space where it won't overflow
@@ -78,11 +84,17 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=32):
         v = v.view(B,H,N,T,V)
         u = u.unsqueeze(2).to(r.dtype) # (1,H,1,1,K)
 
+        r_length = torch.linalg.vector_norm(r, dim=-1).unsqueeze(-1)
+        r_unit_length = r / (r_length + 1e-14)
+        k_length = torch.linalg.vector_norm(k, dim=-1).unsqueeze(-1)
+        k_unit_length = k / (k_length + 1e-14)
+
         # parallel calculation of all intra-chunk attention contributions
-        wc_log_offset = shifted_wc_log_cum[:,:,:,:1,:] # B,H,N,1,K
+        wc_log_offset = shifted_wc_log_cum[...,T//2:T//2+1,:] # B,H,N,1,K
         r_decay = (shifted_wc_log_cum - wc_log_offset).to(precision_dtype).exp() # B,H,N,T,K
         k_inv_decay = (wc_log_offset - wc_log_cum).to(precision_dtype).exp() # B,H,N,T,K
-        a = ((r*r_decay) @ (k*k_inv_decay).mT).to(r.dtype).tril(-1) # B,H,N,T,T
+        a = ((r_unit_length*r_decay) @ (k_unit_length*k_inv_decay).mT).to(r.dtype).tril(-1) # B,H,N,T,T
+        a = a * (r_length * k_length)
         # add u term to attention (NOTE - the tril(-1) above zeroed the diagonal)
         a = a + torch.einsum('bhntk,bhntk->bhnt', r, u * k).diag_embed()
         out = a @ v # BHNTV
