@@ -33,10 +33,6 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=32,precision_dtype:torch.dtype=t
         N = L // T
 
         # this has to be done to avoid numerical instability (inf/NaN) when w is used as a divisor up to chunk_length//2 places away (so precision_min_val^(T//2) has to be in fp range)
-        precision_dtype, precision_min_val = torch.float32, 0.02 # good for fp32 
-        #precision_dtype, precision_min_val = torch.float64, 1e-10 # good for fp64
-        
-        # this has to be done to avoid numerical instability (inf/NaN) when w is used as a divisor up to chunk_length//2 places away (so precision_min_val^(T//2) has to be in fp range)
         assert(precision_dtype == torch.float32 or precision_dtype == torch.float64)
         if precision_dtype == torch.float32:
             precision_min_val = 0.005 # good for fp32 (1.175e-38 ^ (1/16.0) < 0.00426)
