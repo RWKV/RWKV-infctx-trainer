@@ -1,6 +1,7 @@
 # Dependencies
 from .CoreDependencies import *
 from .OptimizedOps import modified_lerp
+from .rwkv_inner import rwkv_inner
 import os
 
 # Current code file path
@@ -274,7 +275,7 @@ class RWKV_TimeMix(JITModClass):
             return self._forward_cuda(x, last_state)
         
         # Run without cuda (cpu mode, etc)
-        return self._forward_nocuda(x, last_state)
+        return self._forward_nocuda_optimized(x, last_state)
      
     def _forward_cuda(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
         # Get the x sizing
@@ -313,94 +314,55 @@ class RWKV_TimeMix(JITModClass):
         # Return the logits and the state
         return (x_logits, (x[:,-1],state))
 
-    # Doing the forward pass withotu CUDA, this is currently rather slow
-    # and is not recommended - but it works (awaiting future optimization)
-    #
-    # We intentionally split the forward pass into smaller chunks of 32
-    # to ensure it processes at a resonable rate / vram usage
     @TCompileMax 
     @JITModMethod  
-    def _forward_nocuda(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
-        # Get the x sizing
-        B, TT, C = x.size()
+    def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
+        shift_state_out = x[:,-1]
 
-        # Logits to return
-        x_logits = torch.zeros(B, TT, C, device=x.device, dtype=x.dtype)
-
-        # Process in chunks
+        # padding to support fast path for non-exact chunk size multiple sequence lengths
         chunk_len = 32
-        for i in range(0, TT, chunk_len):
-            # Get the chunk
-            chunk = x[:, i:i+chunk_len]
+        n_padding = (chunk_len - x.size(-2) % chunk_len) % chunk_len
+        if n_padding != 0:
+            x = F.pad(x, [0, 0, 0, n_padding, 0, 0])
 
-            # Process the chunk
-            chunk_logits, last_state = self._forward_nocuda_noChunking(chunk, last_state)
-
-            # Store the chunk logits
-            x_logits[:, i:i+chunk_len] = chunk_logits
-        
-        # Return the logits and the state
-        return (x_logits, last_state)
-
-    # The no chunking varient of forwarding without cuda
-    @JITModMethod  
-    def _forward_nocuda_noChunking(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
         # Get the x sizing
-        B, TT, C = x.size()
+        B, T, C = x.size()
+        H = self.n_head
+        K = self.head_size
+        V = K
 
         # Perform the tokenshift, and get the respective state
         xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
-    
-        # Get the xk, xv, xr, xg
+
+        # Get the xk, xv, xr, xg, and rkvg
         xk = modified_lerp(x, self.time_mix_k, xx)
         xv = modified_lerp(x, self.time_mix_v, xx)
         xr = modified_lerp(x, self.time_mix_r, xx)
         xg = modified_lerp(x, self.time_mix_g, xx)
 
-        r = self.receptance(xr).view(B, TT, self.n_head, 1, -1)
-        k = self.key(xk).view(B, TT, self.n_head, -1, 1)
-        v = self.value(xv).view(B, TT, self.n_head, 1, -1)
+        r = self.receptance(xr).view(B, T, H, K).transpose(1, 2) # BHTK
+        k = self.key(xk).view(B, T, H, K).transpose(1, 2)      # BHTK
+        v = self.value(xv).view(B, T, H, V).transpose(1, 2)    # BHTV
         g = F.silu(self.gate(xg))
 
-        # The WKV state to update
-        if last_state[1] is None:
-            wkv_state = torch.zeros((B, self.n_head, self.head_size, self.head_size)).to(r.dtype)
-        else:
-            wkv_state = last_state[1].clone().to(r.dtype)
-        
-        # # Compute attent and the initial output tensor
-        # at = k @ v
-        # u = self.time_faaaa.view(1,1,self.n_head, 1, -1)
+        w = torch.exp(-torch.exp(self.time_decay.float())).view(1,H,1,K).expand(1,H,T,K)
 
-        # # Slightly inefficent, but it works, lets compute all the tokens
-        # w = self.time_decay.exp().neg().exp().reshape(1, self.n_head,-1,1)
+        u = self.time_faaaa.view(1,H,1,K).to(r.dtype)
 
-        # out = (u * r) @ at
-        # for t in range(TT):
-        #     out[:,t] += r[:,t] @ wkv_state
-            
-        #     # We make a clone copy, so the previous object backprop state is tracked seperately
-        #     wkv_state = wkv_state.clone()
-        #     wkv_state *= w
-        #     wkv_state += at[:,t]
+        # Logits and state
+        wkv_state = last_state[1].to(r.dtype)
 
-        wkv_state, out = compute_wkv_state(
-            k, v, r,
-            self.time_faaaa,
-            self.time_decay,
-            wkv_state, 
-            self.n_head, self.head_size,
-            B, TT
-        )
+        x_logits, wkv_state = rwkv_inner(r, k, v, w, u, wkv_state, chunk_len=chunk_len) 
+        x_logits = x_logits.transpose(1,2).reshape(B,T,C)
 
-        # Compute the final x output
-        x_logits = out.view(-1, C)
-        x_logits = self.ln_x(x_logits / self.head_size_divisor).view(B, TT, C)
-        x_logits = self.output(x_logits * g)
+        # Reshape and normalize the logits
+        x_logits = self._x_logits_gate(x_logits, g)
+
+        if n_padding != 0:
+            x_logits = x_logits[..., :-n_padding, :] # BHTV
 
         # Return the logits and the state
-        return (x_logits, (x[:,-1],wkv_state))
-        # return x_logits, (x[:,-1],ms[-1])
+        return (x_logits, (shift_state_out,wkv_state))
     
     @TCompileMax 
     @JITModMethod  
