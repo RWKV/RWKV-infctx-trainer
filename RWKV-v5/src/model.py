@@ -1286,8 +1286,7 @@ class RWKV(L.LightningModule):
                 # Dataset based tracking
                 f'dataset/validation/{dataset_index}.loss': training_loss,
                 f'dataset/validation/{dataset_index}.data_loss': sampling_loss,
-                f'dataset/validation/{dataset_index}.tokens': tokens,
-                f'dataset/validation/{dataset_index}.ctx_len': ctx_len,
+                f'dataset/validation/{dataset_index}.ctx_len': T,
                 f'dataset/validation/{dataset_index}.name': dataset_name,
 
                 # Step and trainer tracking
