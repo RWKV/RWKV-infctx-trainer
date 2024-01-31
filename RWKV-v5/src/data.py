@@ -480,11 +480,13 @@ def prepare_data_static(
                         for i in range(len(conversation)):
                             # lets loop through each key in the io pair
                             for key, value in conversation[i].items():
+                                # Get the sender key
+                                sender = key
                                 # lets get the prefix for this key
-                                prefix = conversation_prefix_encoding_map[key] if sender in conversation_prefix_encoding_map[key] else None
+                                prefix = conversation_prefix_encoding_map[key] if sender in conversation_prefix_encoding_map else None
 
                                 # Add the prefix
-                                if prefix is not None:
+                                if prefix is not None: 
                                     input_ids += prefix['input_ids']
                                     token_type_ids += prefix['token_type_ids']
                                     attention_mask += prefix['attention_mask']
@@ -1038,22 +1040,22 @@ def dataloader_collator_fn(records):
     
     # Compute the total length of the records
     input_ids_len = 0
-    token_type_ids_len = 0
-    attention_mask_len = 0
+    # token_type_ids_len = 0
+    # attention_mask_len = 0
 
     # Loop through the records and compute the max length
     for i in range(records_len):
         input_ids_len = max(input_ids_len, len(records[i]["input_ids"]))
-        token_type_ids_len = max(token_type_ids_len, len(records[i]["token_type_ids"]))
-        attention_mask_len = max(attention_mask_len, len(records[i]["attention_mask"]))
+        # token_type_ids_len = max(token_type_ids_len, len(records[i]["token_type_ids"]))
+        # attention_mask_len = max(attention_mask_len, len(records[i]["attention_mask"]))
 
     # First row of the records
     first_row = records[0]
 
     # Create the output arrays, with the default 0 values (no learning mask)
     out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"].dtype)
-    out_token_type_ids = torch.zeros((records_len, token_type_ids_len), dtype=first_row["token_type_ids"].dtype)
-    out_attention_mask = torch.zeros((records_len, attention_mask_len), dtype=first_row["attention_mask"].dtype)
+    out_token_type_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["token_type_ids"].dtype)
+    out_attention_mask = torch.zeros((records_len, input_ids_len), dtype=first_row["attention_mask"].dtype)
     out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
 
     out_index = 0
