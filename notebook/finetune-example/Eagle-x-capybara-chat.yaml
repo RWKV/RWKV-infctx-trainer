@@ -136,8 +136,8 @@ data:
   # (eg. removal of small articles of less then 512 tokens from wikipedia)
   #
   # This is ignored, if set to -1
-  min_token_size: 32
-  max_token_size: -1
+  min_token_size: -1
+  max_token_size: 16384
 
   # Multi Column merging process, default setting is used to support and merge
   # "instruction", "input", "output", datasets. To disable set multi_column_keys to []
