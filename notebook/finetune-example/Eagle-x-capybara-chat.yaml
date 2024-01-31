@@ -18,7 +18,7 @@ trainer:
 
   # Resonable batch size, for a more realistic it/s rate
   # this is currently overwritten in the notebook
-  target_batch_size: 640
+  target_batch_size: 64
 
   # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
   # ---
@@ -41,7 +41,7 @@ trainer:
       # which will create a `rwkv_model.pth` in the checkpoint directory.
       #
       # Do not use the `zero_to_fp32.py` script as that will have export format issues
-      dirpath: ../checkpoint/finetune-example/Eagle-x-tiny-textbook/
+      dirpath: ../checkpoint/finetune-example/Eagle-x-capybara-chat/
       filename: null
       
       # Save the top/last K checkpoints
@@ -64,8 +64,8 @@ trainer:
       # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
       # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
       # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
-      every_n_train_steps: 100
-      every_n_epochs: null
+      every_n_train_steps: null
+      every_n_epochs: 1
       save_on_train_epoch_end: true
       train_time_interval: null
 
@@ -101,7 +101,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/world/tiny-textbook-rechunk-8192/
+  data_path: ../datapath/world/capybara-chat-packed-16k/
 
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
@@ -114,7 +114,7 @@ data:
   # - null
   #
   # If source is disabled, all other params, except data_path, is ignored
-  source: "teven/enwiki_10k"
+  source: "LDJnr/Capybara"
   # source: text
   # source: /home/ubuntu/RWKV-LM-LoRA/dataset-text/enwik8.txt
 
@@ -136,29 +136,8 @@ data:
   # (eg. removal of small articles of less then 512 tokens from wikipedia)
   #
   # This is ignored, if set to -1
-  min_token_size: 64
+  min_token_size: 32
   max_token_size: -1
-
-  # Rechunking of text dataset, this is done only when source is set as 'text'
-  # and will merge the various sentencees, into larger chunks up to the target size
-  #
-  # Defaults to 4096
-  #
-  # This is ignored, if source is not set as text
-  # This is ignored, if set to zero
-  # ---
-  text_rechunk_size: 16384
-
-  # Apply text rechunk to the dataset, even if its not a 'text' source
-  # This is done only after dataset filtering, and if source is not 'text'
-  # ---
-  text_rechunk_force: true
-
-  # Custom text column to use, useful for dataset with alternative training columns labels
-  # This is checked before multi column merging, default is null (disabled)
-  # eg: 'code'
-  # ---
-  custom_text_key: 'text'
 
   # Multi Column merging process, default setting is used to support and merge
   # "instruction", "input", "output", datasets. To disable set multi_column_keys to []
@@ -166,11 +145,46 @@ data:
   # A minimum of 2 columns is required, with non empty data, for the merge to occur
   # If no match is found, this will fallback to the default prompt/completion or text column, 
   # or throw an error if the default fallback is not found
+  #
+  # IMPORTANT NOTE: as newlines are commonly used for multi_column_suffix, etc. 
+  #                 you should use single quotes to ensure such values dun get escaped.
+  #                 eg. multi_column_suffix: ['\n\n']
+  #
+  # See: https://github.com/RWKV/RWKV-infctx-trainer/issues/34
+  # Need to use " or the new lines won't be tokenized properly
   # ---
-  # multi_column_keys: ['instruction', 'input', 'output']
-  # multi_column_prefix: ['Instruction:\n', 'Input:\n', 'Output:\n']
+  # multi_column_keys: ["instruction", "input", "output"]
+  # multi_column_prefix: ["Instruction:\n", "Input:\n", "Output:\n"]
+  # multi_column_suffix: ["\n\n", "\n\n", "\n\n"]
   # multi_column_train_mask: [true, false, true]
-  # multi_column_separator: '\n\n'
+  # multi_column_separator: "\n\n"
+  
+  # Conversation merging process
+  # useful for merging full conversational datasets, into single documents
+  # default is off, (or set conversation_key to [])
+  # conversation_formatting supports "iopairs" or "sender" for now.
+  # ---
+  conversation_format: 'iopairs'
+  conversation_key: 'conversation'
+  conversation_end_of_conversation: "\n\nHuman: "
+
+  # Iopairs specific config
+  # This means that every object in the conversation object is a pair of input output.
+  # In future it will also support a format where one of the keys dictates the format style
+  # if conversation_key is set to null, it will use the root object as the conversation object
+  # ---
+  conversation_input_key_prefix_map: {'input': "\n\nHuman: ", 'output': "\n\nAssistant: "}
+  conversation_input_key_mask: {'input': false, 'output': true}
+  conversation_sender_suffix: {'input': "", 'output': ""}
+
+  # Sender specific config
+  # This means that every object in the conversation object is a single message (with sender and message keys - or similar)
+  # The output is dictated by the input key map, the rest of the "sender_" config is keyed by the value of the sender key
+  # conversation_input_key_map: {'message': "\n\n{sender}: ", 'context': ''}
+  # conversation_sender_key: 'sender'
+  # conversation_sender_value_map: {'user': 'Human', 'assistant': 'Assistant', 'system': 'System'}
+  # conversation_sender_mask: {'user': false, 'assistant': true, 'system': false}
+  # conversation_sender_suffix: {'user': "", 'assistant': "", 'system': ""}
 
   # If processing prompt/completion jsonl pairs, the prompt is masked by default
   # use this flag to disable this default behaviour
@@ -182,3 +196,32 @@ data:
   # This process is skipped if set to zero
   test_split: 0.01
   test_split_shuffle: false
+
+  # ----------------------------
+  # Dataset packing support
+  # Recommended to be used with mixed documents sized finetuning
+  # For foundation model "from scratch", rechunking is typically used instead
+  # ----------------------------
+
+  # Boolean flag to enable / disable dataset packing
+  packing_enable: True
+
+  # Used to ensure all training samples wihin this batch size is the same length
+  # Ideally this should align exactly with your real "batch size"
+  #
+  # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
+  # a large number of batch size combinations. This helps reduce the amount of
+  # misaligned batches, and thus reduce the amount of wasted training time.
+  packing_batchsize: 64
+
+  # Chunking size to align within each batch, this ideally should be equal to
+  # the training context length used.
+  packing_chunksize: 8192
+
+  # Minimum size to pack up to, this should be a multiple of packing_chunksize
+  # defautls to -1, which equals to packing_chunksize
+  packing_min_ctx_len: -1
+
+  # Pack the data sequentially if possible, in accordance to the dataset sequence
+  # this can be used together with sort_by_length, otherwise a shuffle will be done
+  packing_in_sequence: False
