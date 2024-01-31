@@ -45,7 +45,7 @@ def is_torch_version_above(required_version):
 
 # Torch versioning flags
 IS_TORCH_2_1_COMPATIBLE = is_torch_version_above("2.1.0")
-IS_TORCH_2_1_2_COMPATIBLE = is_torch_version_above("2.1.2")
+# IS_TORCH_2_1_2_COMPATIBLE = is_torch_version_above("2.1.2")
 
 # Get the JIT / torch compile option flags from the environment
 # This default is FOR inference mode, the trainer mode default is configured in the lightning_trainer.py
@@ -54,7 +54,7 @@ RWKV_TORCH_RUN_MODE = None
 if 'RWKV_JIT_ON' not in globals():
     RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
 if 'RWKV_TORCH_COMPILE' not in globals():
-    RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
+    RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"1").lower() in ("1", "true", "yes")
 
 # The RWKV_NO_CUDA global
 global RWKV_NO_CUDA
@@ -63,10 +63,11 @@ if 'RWKV_NO_CUDA' not in globals():
 
 # Enforce no cuda, if there is no cuda
 if torch.cuda is None or torch.cuda.is_available() == False or torch.cuda.device_count() <= 0:
+    print(f"[RWKV.model] No CUDA device found, setting RWKV_NO_CUDA=True")
     RWKV_NO_CUDA = True
 
-# Disable torch compile if its not atleast v2.1.2
-if not IS_TORCH_2_1_2_COMPATIBLE:
+# Disable torch compile if its not atleast v2.1.0
+if not IS_TORCH_2_1_COMPATIBLE:
     RWKV_TORCH_COMPILE = False
 
 # We enable JITMod*/Function when supporting torch.jit
