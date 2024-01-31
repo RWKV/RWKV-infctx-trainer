@@ -319,8 +319,10 @@ class RWKV_TimeMix(JITModClass):
     def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
         shift_state_out = x[:,-1]
 
-        # padding to support fast path for non-exact chunk size multiple sequence lengths
-        chunk_len = 32
+        # 24 is optimal chunk length (longer will use too much memory and cause precision problems or even numerical instability, shorter is inefficient)
+        chunk_len = 24
+
+        # padding to support fast path for non-exact chunk size multiple sequence lengths        
         n_padding = (chunk_len - x.size(-2) % chunk_len) % chunk_len
         if n_padding != 0:
             x = F.pad(x, [0, 0, 0, n_padding, 0, 0])
