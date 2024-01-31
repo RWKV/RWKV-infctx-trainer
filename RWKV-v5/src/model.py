@@ -1044,7 +1044,7 @@ class RWKV(L.LightningModule):
             segment_size = min(math.ceil(T / segment_count)+2, self.ctx_len)
 
             # Dummy 2D tensor of shape [B,1], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
-            dummy_batch_zero = torch.tensor(B,1, dtype=torch.long, device=cur_device)
+            dummy_batch_zero = torch.zeros(B,1, dtype=torch.long, device=cur_device)
 
             # Get the max segment count across all GPUs, in the current substep, which is used to keep all devices are in sync
             # Once a thread has completed all its segments, it will do dummy checkpoint/forward/backprop with one token,
