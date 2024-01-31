@@ -61,6 +61,10 @@ global RWKV_NO_CUDA
 if 'RWKV_NO_CUDA' not in globals():
     RWKV_NO_CUDA = os.getenv("RWKV_NO_CUDA", f"0").lower() in ("1", "true", "yes")
 
+# Enforce no cuda, if there is no cuda
+if torch.cuda is None or torch.cuda.is_available() == False or torch.cuda.device_count() <= 0:
+    RWKV_NO_CUDA = True
+
 # Disable torch compile if its not atleast v2.1.2
 if not IS_TORCH_2_1_2_COMPATIBLE:
     RWKV_TORCH_COMPILE = False
