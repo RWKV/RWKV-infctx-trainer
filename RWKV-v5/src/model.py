@@ -6,7 +6,7 @@ global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 
 from .module.CoreDependencies import *
 from .module.ChannelMix import RWKV_ChannelMix
-from .module.TimeMix import RWKV_TimeMix
+from .module.TimeMix import RWKV_TimeMix, RWKV6_0_TimeMix, RWKV7_0_TimeMix
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
@@ -75,7 +75,7 @@ class BlockStateList:
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, version):
         super().__init__()
         self.layer_id = layer_id
 
@@ -85,7 +85,16 @@ class Block(nn.Module):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
 
-        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        if version == '5.2':
+            self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        elif version == '6.0':
+            self.att = RWKV6_0_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        elif version == '7.0':
+            self.att = RWKV7_0_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        else:
+            self.att = None
+            assert(True, 'unrecognized version')
+    
         self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
 
         # Setup droupout at block level
@@ -213,7 +222,9 @@ class RWKV(L.LightningModule):
                  dim_ffn: Optional[int] = None,
                  substep_cuda_cache_clear: bool = False,
                  substep_logging: bool = False,
-                 torch_set_float32_matmul_precision:str = 'high'
+                 torch_set_float32_matmul_precision:str = 'high',
+
+                 version: str = '5.2',
                  ):
 
         # Lets save everything in one shot
@@ -304,7 +315,7 @@ class RWKV(L.LightningModule):
         self.token_dropout_rate = token_dropout_rate
 
         dim_att = dim_att or n_embd
-        dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
+        dim_ffn = dim_ffn or (int((n_embd * 4) // 32 * 32) if version == '7.0' else int((n_embd * 3.5) // 32 * 32))
         self.dim_att = dim_att
         self.dim_ffn = dim_ffn
 
@@ -342,7 +353,7 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, version) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)

@@ -526,18 +526,18 @@ class RWKV6_0_TimeMix(JITModClass):
             for i in range(n_embd):
                 ddd[0, 0, i] = i / n_embd
 
-            self.x_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
-            self.r_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-            self.w_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
-            self.k_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
-            self.v_maa = nn.Parameter(1 - (torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1))
-            self.g_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            self.time_x_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.time_r_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            self.time_w_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.time_k_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.time_v_maa = nn.Parameter(1 - (torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1))
+            self.time_g_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
             TIME_MIX_EXTRA_DIM = 32
-            self.tm_w1 = nn.Parameter(torch.empty(n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-0.01, 0.01))
-            self.tm_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, n_embd))
+            self.time_tm_w1 = nn.Parameter(torch.empty(n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-0.01, 0.01))
+            self.time_tm_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, n_embd))
             W_MIX_EXTRA_DIM = 64
-            self.td_w1 = nn.Parameter(torch.empty(n_embd, W_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
-            self.td_w2 = nn.Parameter(torch.zeros(W_MIX_EXTRA_DIM, n_embd))
+            self.time_td_w1 = nn.Parameter(torch.empty(n_embd, W_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+            self.time_td_w2 = nn.Parameter(torch.zeros(W_MIX_EXTRA_DIM, n_embd))
 
             # fancy time_decay
             decay_speed = torch.ones(dim_att)
@@ -598,16 +598,16 @@ class RWKV6_0_TimeMix(JITModClass):
         V = K
 
         xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1) - x
-        xxx = x + xx * self.x_maa
-        xxx = torch.tanh(xxx @ self.tm_w1).view(B*T, 5, -1).transpose(0, 1)
-        xxx = torch.bmm(xxx, self.tm_w2).view(5, B, T, -1)
+        xxx = x + xx * self.time_x_maa
+        xxx = torch.tanh(xxx @ self.time_tm_w1).view(B*T, 5, -1).transpose(0, 1)
+        xxx = torch.bmm(xxx, self.time_tm_w2).view(5, B, T, -1)
         mw, mk, mv, mr, mg = xxx.unbind(dim=0)
 
-        xw = x + xx * (self.w_maa + mw)
-        xk = x + xx * (self.k_maa + mk)
-        xv = x + xx * (self.v_maa + mv)
-        xr = x + xx * (self.r_maa + mr)
-        xg = x + xx * (self.g_maa + mg)
+        xw = x + xx * (self.time_w_maa + mw)
+        xk = x + xx * (self.time_k_maa + mk)
+        xv = x + xx * (self.time_v_maa + mv)
+        xr = x + xx * (self.time_r_maa + mr)
+        xg = x + xx * (self.time_g_maa + mg)
 
         r = self.receptance(xr).view(B, T, H, K).transpose(1, 2) # BHTK
         k = self.key(xk).view(B, T, H, K).transpose(1, 2)      # BHTK
@@ -615,7 +615,7 @@ class RWKV6_0_TimeMix(JITModClass):
         g = F.silu(self.gate(xg))
 
         w = self.time_decay.float().view(1,H,1,K)
-        w = w + (torch.tanh(xw @ self.td_w1) @ self.td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
+        w = w + (torch.tanh(xw @ self.time_td_w1) @ self.time_td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
         w = torch.exp(-torch.exp(w))
 
         u = self.time_faaaa.view(1,H,1,K).to(r.dtype)
@@ -667,21 +667,21 @@ class RWKV7_0_TimeMix(JITModClass):
             for i in range(n_embd):
                 ddd[0, 0, i] = i / n_embd
 
-            self.x_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
-            self.r_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-            self.w_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
-            self.k_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
-            self.v_maa = nn.Parameter(1 - (torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1))
-            self.g_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            self.time_x_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.time_r_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            self.time_w_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.time_k_maa = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.time_v_maa = nn.Parameter(1 - (torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1))
+            self.time_g_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
             TIME_MIX_EXTRA_DIM = 32
-            self.tm_w1 = nn.Parameter(torch.empty(n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-0.01, 0.01))
-            self.tm_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, n_embd))
+            self.time_tm_w1 = nn.Parameter(torch.empty(n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-0.01, 0.01))
+            self.time_tm_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, n_embd))
             W_MIX_EXTRA_DIM = 64
-            self.td_w1 = nn.Parameter(torch.empty(n_embd, W_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
-            self.td_w2 = nn.Parameter(torch.zeros(W_MIX_EXTRA_DIM, n_embd))
+            self.time_td_w1 = nn.Parameter(torch.empty(n_embd, W_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+            self.time_td_w2 = nn.Parameter(torch.zeros(W_MIX_EXTRA_DIM, n_embd))
             D_GATE_LORA = 64
-            self.gate_w1 = nn.Parameter(torch.empty(n_embd, D_GATE_LORA).uniform_(-0.01, 0.01))
-            self.gate_w2 = nn.Parameter(torch.zeros(D_GATE_LORA, n_embd).uniform_(-0.01, 0.01))
+            self.time_gate_w1 = nn.Parameter(torch.empty(n_embd, D_GATE_LORA).uniform_(-0.01, 0.01))
+            self.time_gate_w2 = nn.Parameter(torch.zeros(D_GATE_LORA, n_embd).uniform_(-0.01, 0.01))
 
             # fancy time_decay
             decay_speed = torch.ones(dim_att)
@@ -741,24 +741,24 @@ class RWKV7_0_TimeMix(JITModClass):
         V = K
 
         xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1) - x
-        xxx = x + xx * self.x_maa
-        xxx = torch.tanh(xxx @ self.tm_w1).view(B*T, 5, -1).transpose(0, 1)
-        xxx = torch.bmm(xxx, self.tm_w2).view(5, B, T, -1)
+        xxx = x + xx * self.time_x_maa
+        xxx = torch.tanh(xxx @ self.time_tm_w1).view(B*T, 5, -1).transpose(0, 1)
+        xxx = torch.bmm(xxx, self.time_tm_w2).view(5, B, T, -1)
         mw, mk, mv, mr, mg = xxx.unbind(dim=0)
 
-        xw = x + xx * (self.w_maa + mw)
-        xk = x + xx * (self.k_maa + mk)
-        xv = x + xx * (self.v_maa + mv)
-        xr = x + xx * (self.r_maa + mr)
-        xg = x + xx * (self.g_maa + mg)
+        xw = x + xx * (self.time_w_maa + mw)
+        xk = x + xx * (self.time_k_maa + mk)
+        xv = x + xx * (self.time_v_maa + mv)
+        xr = x + xx * (self.time_r_maa + mr)
+        xg = x + xx * (self.time_g_maa + mg)
 
         r = self.receptance(xr).view(B, T, H, K).transpose(1, 2) # BHTK
         k = self.key(xk).view(B, T, H, K).transpose(1, 2)      # BHTK
         v = self.value(xv).view(B, T, H, V).transpose(1, 2)    # BHTV
-        g = F.silu(self.gate(xg))
+        g = F.silu(torch.tanh(xg @ self.time_gate_w1) @ self.time_gate_w2)
 
         w = self.time_decay.float().view(1,H,1,K)
-        w = w + (torch.tanh(xw @ self.td_w1) @ self.td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
+        w = w + (torch.tanh(xw @ self.time_td_w1) @ self.time_td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
         w = torch.exp(-torch.exp(w))
 
         u = self.time_faaaa.view(1,H,1,K).to(r.dtype)
