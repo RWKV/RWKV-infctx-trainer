@@ -919,6 +919,16 @@ class RWKV(L.LightningModule):
         # Checkpoint steps
         def checkpointed_step(idx, targets, mask, last_shift_states,
                               last_wkv_states):
+            # Skip if there is no tokens of value to learn from
+            if idx.shape[1] == 0:
+                # Prepare dummy loss
+                train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
+                sample_loss = train_loss.clone().detach().requires_grad_(False)
+
+                # Return the checkpoint values
+                return sample_loss, train_loss, last_shift_states, last_wkv_states, 0
+
+            # Get the logits, and the new states
             logits, new_shift_states, new_wkv_states = self(
                 idx, last_shift_states, last_wkv_states)
             
@@ -1041,10 +1051,10 @@ class RWKV(L.LightningModule):
             # it also helps ensure the segment cutoff points are more varied, across mixed dataset sizes
             # and avoid potentially undesired training behaviour at fixed cutoff points
             # (this only applies for segmented learning)
-            segment_size = min(math.ceil(T / segment_count)+1, self.ctx_len)
+            segment_size = min(math.ceil(T / segment_count)+2, self.ctx_len)
 
-            # Dummy 2D tensor of shape [1,1], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
-            dummy_2d_zero = torch.tensor([[0]], dtype=torch.long, device=cur_device)
+            # Dummy 2D tensor of shape [B,0], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
+            dummy_empty_zero = torch.zeros(B,0, dtype=torch.long, device=cur_device)
 
             # Get the max segment count across all GPUs, in the current substep, which is used to keep all devices are in sync
             # Once a thread has completed all its segments, it will do dummy checkpoint/forward/backprop with one token,
@@ -1134,9 +1144,9 @@ class RWKV(L.LightningModule):
                     cur_tar = targets[:, i * segment_size:(i + 1) * segment_size]
                     cur_msk = seq_mask[:, i * segment_size:(i + 1) * segment_size]
                 else:
-                    cur_idx = dummy_2d_zero
-                    cur_tar = dummy_2d_zero
-                    cur_msk = dummy_2d_zero
+                    cur_idx = dummy_empty_zero
+                    cur_tar = dummy_empty_zero
+                    cur_msk = dummy_empty_zero
 
                 # Segmented learning, applies the forward/pass over each chunk seperately
                 segment_sample_loss, segment_train_loss, new_shift_states, new_wkv_states, segment_train_tokens = checkpointed_step(
@@ -1286,8 +1296,7 @@ class RWKV(L.LightningModule):
                 # Dataset based tracking
                 f'dataset/validation/{dataset_index}.loss': training_loss,
                 f'dataset/validation/{dataset_index}.data_loss': sampling_loss,
-                f'dataset/validation/{dataset_index}.tokens': tokens,
-                f'dataset/validation/{dataset_index}.ctx_len': ctx_len,
+                f'dataset/validation/{dataset_index}.ctx_len': T,
                 f'dataset/validation/{dataset_index}.name': dataset_name,
 
                 # Step and trainer tracking
