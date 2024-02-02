@@ -320,7 +320,7 @@ class RWKV_TimeMix(JITModClass):
         shift_state_out = x[:,-1]
 
         # 24 is optimal chunk length (longer will use too much memory and cause precision problems or even numerical instability, shorter is inefficient)
-        chunk_len = 24
+        chunk_len = 128
 
         # padding to support fast path for non-exact chunk size multiple sequence lengths        
         n_padding = (chunk_len - x.size(-2) % chunk_len) % chunk_len
