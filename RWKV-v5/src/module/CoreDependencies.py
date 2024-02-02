@@ -54,7 +54,7 @@ RWKV_TORCH_RUN_MODE = None
 if 'RWKV_JIT_ON' not in globals():
     RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
 if 'RWKV_TORCH_COMPILE' not in globals():
-    RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"1").lower() in ("1", "true", "yes")
+    RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
 
 # The RWKV_NO_CUDA global
 global RWKV_NO_CUDA
