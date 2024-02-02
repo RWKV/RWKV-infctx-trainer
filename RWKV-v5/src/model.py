@@ -6,7 +6,7 @@ global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 
 from .module.CoreDependencies import *
 from .module.ChannelMix import RWKV_ChannelMix
-from .module.TimeMix import RWKV_TimeMix, RWKV6_0_TimeMix, RWKV7_0_TimeMix
+from .module.TimeMix import RWKV_TimeMix, RWKV_6_0_Upgraded_TimeMix, RWKV6_0_TimeMix, RWKV7_0_TimeMix
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
@@ -87,6 +87,8 @@ class Block(nn.Module):
 
         if version == '5.2':
             self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        elif version == '6.0_upgraded':
+            self.att = RWKV_6_0_Upgraded_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         elif version == '6.0':
             self.att = RWKV6_0_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         elif version == '7.0':
@@ -365,7 +367,7 @@ class RWKV(L.LightningModule):
 
         # load the state, and GC the original cpu copy
         if model_weights != None:
-            self.load_state_dict(model_weights)
+            self.load_state_dict(model_weights, strict=not ('_upgrade' in version))
             del model_weights
             gc.collect()
 
