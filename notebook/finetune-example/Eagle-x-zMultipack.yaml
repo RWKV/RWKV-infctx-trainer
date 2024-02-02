@@ -11,7 +11,7 @@ trainer:
 
   # Resonable batch size, for a more realistic it/s rate
   # this is currently overwritten in the notebook
-  target_batch_size: 512
+  target_batch_size: 256
 
   # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
   # ---
@@ -72,7 +72,7 @@ model:
   load_model: ../model/L6-D512-neox-init.pth
 
   # Starting and ending learning rate
-  lr_init: 5e-5
+  lr_init: 1e-5
   lr_final: 4e-5
   lr_period: 2
 
