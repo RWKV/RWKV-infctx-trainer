@@ -1,9 +1,14 @@
 ###############################################
 ##
 ## Trainer settings are kept minimal
+## with checkpoint / model saving disabled,
+## as this tutorial focuses only on datasets
+## 
+## It only runs 10 steps, enough to prove that
+## the dataset configs are valid
 ##
 ## See the full `config-example.yaml` for more
-## details on the trainer/model configs
+## detailes on the trainer/model configs
 ##
 ###############################################
 

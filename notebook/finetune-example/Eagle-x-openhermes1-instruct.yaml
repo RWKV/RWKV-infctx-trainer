@@ -150,7 +150,7 @@ data:
   # ---
   multi_column_keys: ["instruction", "input", "output"]
   multi_column_prefix: ["Instruction:\n", "Input:\n", "Output:\n"]
-  multi_column_suffix: ["\n\n", "\n\n", "\n\n"]
+  multi_column_suffix: ["", "", ""]
   multi_column_train_mask: [true, false, true]
   multi_column_separator: "\n\n"
   
