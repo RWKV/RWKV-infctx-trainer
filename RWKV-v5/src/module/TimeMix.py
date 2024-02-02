@@ -320,7 +320,7 @@ class RWKV_TimeMix(JITModClass):
         shift_state_out = x[:,-1]
 
         # 24 is optimal chunk length (longer will use too much memory and cause precision problems or even numerical instability, shorter is inefficient)
-        chunk_len = 24
+        chunk_len = 128
 
         # padding to support fast path for non-exact chunk size multiple sequence lengths        
         n_padding = (chunk_len - x.size(-2) % chunk_len) % chunk_len
@@ -354,7 +354,7 @@ class RWKV_TimeMix(JITModClass):
         # Logits and state
         wkv_state = last_state[1].to(r.dtype)
 
-        x_logits, wkv_state = rwkv_inner(r, k, v, w, u, wkv_state, chunk_len=chunk_len) 
+        x_logits, wkv_state = rwkv_inner(r, k, v, w, u, wkv_state, chunk_len=chunk_len, precision_dtype=torch.float64) 
         x_logits = x_logits.transpose(1,2).reshape(B,T,C)
 
         # Reshape and normalize the logits
