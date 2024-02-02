@@ -94,6 +94,7 @@ class Block(nn.Module):
             self.drop0 = nn.Dropout(p = dropout)
             self.drop1 = nn.Dropout(p = dropout)
 
+    @TCompileBaseline
     def forward(self, x, last_state: BlockState):
         if self.layer_id == 0:
             x = self.ln0(x)
@@ -599,7 +600,7 @@ class RWKV(L.LightningModule):
             return "stage" in cfg
         return -1
 
-    @TCompileBaseline
+    # @TCompileBaseline
     def forward(self, idx: torch.Tensor, last_shift_states: torch.Tensor = None,
                 last_wkv_states: torch.Tensor = None):
         B, T = idx.size()
@@ -797,7 +798,7 @@ class RWKV(L.LightningModule):
     #
     # Main compute_loss function, this is called by the trainer loop
     #
-    @TCompileBaseline
+    # @TCompileBaseline
     def compute_loss(self, batch, batch_idx, is_training_run: bool = False, is_validation_run: bool = False):
 
         # Used for token/second performance tracking
@@ -1334,7 +1335,7 @@ class RWKV(L.LightningModule):
 
         return training_loss
 
-    @TCompileBaseline
+    # @TCompileBaseline
     def validation_step(self, batch, batch_idx):
         sampling_loss, training_loss = self.compute_loss(batch, batch_idx, False, True)
         self.log('validation/loss', sampling_loss, prog_bar=True, sync_dist=True)

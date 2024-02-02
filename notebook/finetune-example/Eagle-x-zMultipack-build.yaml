@@ -53,7 +53,7 @@ datapack:
   #
   # NOTE: This is a guideline percentage, and is not guaranteed to be exact
   #       if a partial batch is built, it may get converted to a mixed batch
-  mixed_batch_percentage: 0.2
+  mixed_batch_percentage: 0.5
 
 #
 # Default settings used across all datasets in the datapack
@@ -239,7 +239,7 @@ default:
 
   # Minimum size to pack up to, this should be a multiple of packing_chunksize
   # defautls to -1, which equals to packing_chunksize
-  packing_min_ctx_len: -1
+  packing_min_ctx_len: 32768
 
   # Pack the data sequentially if possible, in accordance to the dataset sequence
   # this can be used together with sort_by_length, otherwise a shuffle will be done

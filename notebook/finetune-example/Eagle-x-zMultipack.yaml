@@ -58,7 +58,7 @@ trainer:
       # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
       # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
       every_n_train_steps: null
-      every_n_epochs: 10
+      every_n_epochs: 128
       save_on_train_epoch_end: true
       train_time_interval: null
 
@@ -102,5 +102,5 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: ../datapath/world/Eagle-x-multipack-partial/
+  data_path: ../datapath/world/Eagle-x-multipack/
 

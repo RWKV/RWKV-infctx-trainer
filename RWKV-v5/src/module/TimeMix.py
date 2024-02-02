@@ -314,7 +314,7 @@ class RWKV_TimeMix(JITModClass):
         # Return the logits and the state
         return (x_logits, (x[:,-1],state))
 
-    @TCompileMax 
+    # @TCompileMax 
     @JITModMethod  
     def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
         shift_state_out = x[:,-1]
@@ -366,7 +366,7 @@ class RWKV_TimeMix(JITModClass):
         # Return the logits and the state
         return (x_logits, (shift_state_out,wkv_state))
     
-    @TCompileMax 
+    # @TCompileMax 
     @JITModMethod  
     def _x_logits_gate(self, x_logits, gate):
         B, T, C = x_logits.size()
