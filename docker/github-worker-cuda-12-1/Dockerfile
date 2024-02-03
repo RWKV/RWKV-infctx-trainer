@@ -1,5 +1,5 @@
 # Temporary, until the rwkv package is public
-FROM ghcr.io/RWKV/RWKV-infctx-trainer:env-cuda-12-1
+FROM ghcr.io/rwkv/rwkv-infctx-trainer:env-cuda-12-1
 # FROM ghcr.io/rwkv/rwkv-infctx-trainer:env-cuda-12-1
 
 # Install the github runner
@@ -38,4 +38,4 @@ ENV RUNNER_REPO_URL="https://github.com/RWKV"
 # to account for the fact that we are running two runners
 #
 # This is only useful for high GPU, and high ram count machines
-ENV RUNNER_LANE2="false" 
+ENV RUNNER_LANE2="false"
