@@ -1,6 +1,6 @@
 # We start from the CUDA base image
 # todo: consider other base images?
-FROM nvidia/12.3.1-devel-ubuntu20.04
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
 
 # Install ninja, and several common stuff
 RUN apt-get update && \
