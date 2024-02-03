@@ -1254,20 +1254,20 @@ class RWKV(L.LightningModule):
             # Log the line values
             wandb.log({
                 # The original loss and ctx_len (averaged by batch size)
-                'train/ctx_len': ctx_len, 
+                'train/data_ctxlen': ctx_len, 
                 'train/data_loss': sampling_loss,
+                # "train/dataset_index": dataset_index,
 
                 # The selective training tokens, and loss
-                'train/tokens': tokens,
-                'train/loss': training_loss,
-                "train/dataset_index": dataset_index,
+                'train/learn_tokens': tokens,
+                'train/learn_loss': training_loss,
 
-                # Dataset based tracking
-                f'dataset/train/{dataset_index}.loss': training_loss,
-                f'dataset/train/{dataset_index}.data_loss': sampling_loss,
-                f'dataset/train/{dataset_index}.tokens': tokens,
-                f'dataset/train/{dataset_index}.ctx_len': ctx_len,
-                f'dataset/train/{dataset_index}.name': dataset_name,
+                # # Dataset based tracking (not working)
+                # f'dataset/train/{dataset_index}.loss': training_loss,
+                # f'dataset/train/{dataset_index}.data_loss': sampling_loss,
+                # f'dataset/train/{dataset_index}.tokens': tokens,
+                # f'dataset/train/{dataset_index}.ctx_len': ctx_len,
+                # f'dataset/train/{dataset_index}.name': dataset_name,
 
                 # Perf tracking
                 f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
@@ -1286,19 +1286,19 @@ class RWKV(L.LightningModule):
             # Log the line values
             wandb.log({
                 # The original loss and ctx_len (averaged by batch size)
-                'validation/ctx_len': T, 
+                'validation/data_ctxlen': T, 
                 'validation/data_loss': sampling_loss,
+                # "validation/dataset_index": dataset_index,
 
                 # The selective training tokens, and loss
-                'validation/tokens': training_tokens,
-                'validation/loss': training_loss,
-                "validation/dataset_index": dataset_index,
+                'validation/learn_tokens': training_tokens,
+                'validation/learn_loss': training_loss,
 
-                # Dataset based tracking
-                f'dataset/validation/{dataset_index}.loss': training_loss,
-                f'dataset/validation/{dataset_index}.data_loss': sampling_loss,
-                f'dataset/validation/{dataset_index}.ctx_len': T,
-                f'dataset/validation/{dataset_index}.name': dataset_name,
+                # # Dataset based tracking (not working)
+                # f'dataset/validation/{dataset_index}.loss': training_loss,
+                # f'dataset/validation/{dataset_index}.data_loss': sampling_loss,
+                # f'dataset/validation/{dataset_index}.ctx_len': T,
+                # f'dataset/validation/{dataset_index}.name': dataset_name,
 
                 # Step and trainer tracking
                 'global_rank': global_rank, 
