@@ -27,7 +27,7 @@ else
             --token "${RUNNER_TOKEN}" \
             --name "${RUNNER_NAME}" \
             --replace \
-            --labels "nolane,${CUDA_VER},${RUNNER_LABELS}"
+            --labels "nolane,any-gpu,gpu-count-any,${CUDA_VER},${RUNNER_LABELS}"
 
         # Run it in background, and get the PID
         ./run.sh &
@@ -41,7 +41,7 @@ else
             --token "${RUNNER_TOKEN}" \
             --name "${RUNNER_NAME}-lane1" \
             --replace \
-            --labels "lane1,${CUDA_VER},${RUNNER_LABELS}"
+            --labels "lane1,any-gpu,gpu-count-any,${CUDA_VER},${RUNNER_LABELS}"
 
         # Run it in background, and get the PID
         ./run.sh &
@@ -55,7 +55,7 @@ else
             --token "${RUNNER_TOKEN}" \
             --name "${RUNNER_NAME}-lane2" \
             --replace \
-            --labels "lane2,${CUDA_VER},${RUNNER_LABELS}"
+            --labels "lane2,any-gpu,gpu-count-any,${CUDA_VER},${RUNNER_LABELS}"
 
         # Run it in background, and get the PID
         ./run.sh &
