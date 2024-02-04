@@ -1096,9 +1096,14 @@ def prepare_datapack_static(**kargs):
     datapack_config = kargs["datapack"]
     default_config = kargs["default"]
     dataset_config_arr = kargs["dataset"]
+
+    # packing_batchsize
+    packing_batchsize = 64
+    if "packing_batchsize" in datapack_config:
+        packing_batchsize = datapack_config["packing_batchsize"]
     
     # Join the various default settings
-    defaultVals = { "packing_batchsize": datapack_config["batchsize"], "dataset_weight": 1.0 }
+    defaultVals = { "packing_batchsize": packing_batchsize, "dataset_weight": 1.0 }
     defaultVals = { **defaultVals, **default_config }
 
     # Prepare the array of all the datasets to be merged
@@ -1156,22 +1161,32 @@ def prepare_datapack_static(**kargs):
 
     # The final dataset to build together
     final_dataset = None
+    final_trainset = None
+    final_testset = None
 
     # Packing Mode
     mixing_mode = datapack_config["mixing_mode"]
     print(">> Dataset Mixing mode: ", mixing_mode)
 
-    if mixing_mode == "concat":
+    if mixing_mode == "concat" or mixing_mode == "shuffle":
         # ---------------------------------
         # Simple concatenation mode
         # ---------------------------------
-        final_dataset = concatenate_datasets(datasets_arr)
-    elif mixing_mode == "shuffle":
-        # ---------------------------------
-        # Simple concatenation and shuffle
-        # ---------------------------------
-        final_dataset = concatenate_datasets(datasets_arr)
-        final_dataset = final_dataset.shuffle(seed=101)
+        train_dataset = []
+        test_dataset = []
+
+        # Loop through the datasets and build the final dataset
+        for i in range(len(datasets_arr)):
+            train_dataset.append(datasets_arr[i]["train"])
+            test_dataset.append(datasets_arr[i]["test"])
+        
+        # Build the final training dataset
+        final_trainset = concatenate_datasets(train_dataset)
+        if mixing_mode == "shuffle":
+            final_trainset = final_trainset.shuffle(seed=101)
+
+        # And the final test set
+        final_testset = concatenate_datasets(test_dataset)
     else:
         # ---------------------------------
         # Complicated batch mixing mode
@@ -1225,12 +1240,6 @@ def prepare_datapack_static(**kargs):
         # The full dataset will contain the following columns
         # input_ids, token_type_ids, attention_mask, sample_length, dataset_index, dataset_name
         # ---
-
-        # Int type for the dataset (based on index:0 dataset)
-        # Note: these are hugging face "Value(dtype=x)", and not the dtype itself
-        dataset_input_id_type = datasets_arr[0]["train"].features["input_ids"].feature
-        dataset_token_type_id_type = datasets_arr[0]["train"].features["token_type_ids"].feature
-        dataset_attention_mask_type = datasets_arr[0]["train"].features["attention_mask"].feature
 
         # Build the full train / test split dataset slices
         train_fullset_arr = []
@@ -1291,7 +1300,20 @@ def prepare_datapack_static(**kargs):
 
         # Add the last randomset chunk to the fullset
         final_trainset = concatenate_datasets([train_fullset, train_last_randomset_chunk])
-        fianl_testset = test_fullset
+        final_testset = test_fullset
+
+    # ---------------------------------
+    # Final dataset merger
+    # ---------------------------------
+    
+    # Build the final_dataset
+    if final_dataset is None:
+        
+        # Int type for the dataset (based on index:0 dataset)
+        # Note: these are hugging face "Value(dtype=x)", and not the dtype itself
+        dataset_input_id_type = datasets_arr[0]["train"].features["input_ids"].feature
+        dataset_token_type_id_type = datasets_arr[0]["train"].features["token_type_ids"].feature
+        dataset_attention_mask_type = datasets_arr[0]["train"].features["attention_mask"].feature
 
         # Setup the dataset features
         final_dataset_features = Features({
@@ -1308,7 +1330,7 @@ def prepare_datapack_static(**kargs):
 
         # Lets override the full dataset
         final_dataset["train"] = final_trainset
-        final_dataset["test"] = fianl_testset
+        final_dataset["test"] = final_testset
 
     # Log the saving process
     print(">> Saving dataset to data_path : ", datapack_config["data_path"])
