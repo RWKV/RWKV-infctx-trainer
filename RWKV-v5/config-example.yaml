@@ -373,6 +373,10 @@ data:
   # source: "teven/enwiki_00k"   # Hugging face dataset
   # source: text                 # Text mode, used with source_data_dir
 
+  # Dataset split to use from HF dataset
+  # ---
+  # source_dataset_split: train
+
   # Additional source dataset params, used to grab subsets of the dataset
   # ---
   # source_dataset_params:
