@@ -976,20 +976,21 @@ def prepare_data_static(
         # # Convert to iterable datasets (does not support saving to disk???)
         # src_dataset["train"] = src_dataset["train"].to_iterable_dataset()
         # src_dataset["test"] = src_dataset["test"].to_iterable_dataset()
+        
+        # # @TODO: Fix dataset_index / name labels
+        # # Dataset labeling, for custom wandb graphing
+        # if kargs["dataset_name"] is not None or kargs["dataset_index"] >= 0:
+        #     # Lets label every sample with the dataset name or index
+        #     def label_dataset(x):
+        #         if kargs["dataset_name"] is not None:
+        #             x["dataset_name"] = kargs["dataset_name"]
+        #         if kargs["dataset_index"] >= 0:
+        #             x["dataset_index"] = kargs["dataset_index"]
+        #         return x
             
-        # Dataset labeling, for custom wandb graphing
-        if kargs["dataset_name"] is not None or kargs["dataset_index"] >= 0:
-            # Lets label every sample with the dataset name or index
-            def label_dataset(x):
-                if kargs["dataset_name"] is not None:
-                    x["dataset_name"] = kargs["dataset_name"]
-                if kargs["dataset_index"] >= 0:
-                    x["dataset_index"] = kargs["dataset_index"]
-                return x
-            
-            # Apply the label function
-            src_dataset["train"] = src_dataset["train"].map(label_dataset, num_proc=num_cpus)
-            src_dataset["test"] = src_dataset["test"].map(label_dataset, num_proc=num_cpus)
+        #     # Apply the label function
+        #     src_dataset["train"] = src_dataset["train"].map(label_dataset, num_proc=num_cpus)
+        #     src_dataset["test"] = src_dataset["test"].map(label_dataset, num_proc=num_cpus)
 
         # Save the dataset to disk (if enabled)
         # For the skip datapath saving string
@@ -1060,11 +1061,11 @@ def dataloader_collator_fn(records):
 
     out_index = 0
     out_name = None
-    # Add dataset_index if its set
-    if "dataset_index" in records:
-        out_index = records[0]["dataset_index"]
-    if "dataset_name" in records:
-        out_name = records[0]["dataset_name"]
+    # # Add dataset_index if its set
+    # if "dataset_index" in records:
+    #     out_index = records[0]["dataset_index"]
+    # if "dataset_name" in records:
+    #     out_name = records[0]["dataset_name"]
     
 
     # Loop through the records and copy the values to the output arrays
@@ -1074,9 +1075,9 @@ def dataloader_collator_fn(records):
         out_attention_mask[i][:len(records[i]["attention_mask"])] = records[i]["attention_mask"]
         out_data_ctx_len[i] = len(records[i]["input_ids"])
 
-        if i > 0 and out_index > 0 and out_index != records[i]["dataset_index"]:
-            out_index = -1
-            out_name = "mixed"
+        # if i > 0 and out_index > 0 and out_index != records[i]["dataset_index"]:
+        #     out_index = -1
+        #     out_name = "mixed"
     
     # Build & return the output object
     out = {
@@ -1084,8 +1085,8 @@ def dataloader_collator_fn(records):
         'token_type_ids': out_token_type_ids,
         'attention_mask': out_attention_mask,
         'data_ctx_len': out_data_ctx_len,
-        'dataset_index': out_index,
-        'dataset_name': out_name
+        # 'dataset_index': out_index,
+        # 'dataset_name': out_name
     }
 
     return out
@@ -1320,8 +1321,8 @@ def prepare_datapack_static(**kargs):
             'input_ids': Sequence(dataset_input_id_type),
             'token_type_ids': Sequence(dataset_token_type_id_type),
             'attention_mask': Sequence(dataset_attention_mask_type),
-            'dataset_index': Value(dtype="int16"),
-            'dataset_name': Value(dtype="string"),
+            # 'dataset_index': Value(dtype="int16"),
+            # 'dataset_name': Value(dtype="string"),
         })
         
         # Build the full train / test split dataset
