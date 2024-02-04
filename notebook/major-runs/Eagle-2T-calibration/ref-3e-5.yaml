@@ -107,7 +107,7 @@ data:
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
   # with source left as null. Other wise configure this to a directory which the 
   # dataset will be built and tokenized by the huggingface dataset process.
-  data_path: /datapath/world-v2.5-0.01-hfdataset/
+  data_path: /datapath/world-v2.5-0.01-hfdataset-pt0/
 
 # Path to the current checkpoint to continue training from
 # this should be the directory path, and ends with `.ckpt/`
