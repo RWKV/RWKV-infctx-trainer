@@ -1149,163 +1149,166 @@ def prepare_datapack_static(**kargs):
         datasets_train_used_count[i] = 0
 
     # Loop through the dataset config
+    # And prepare each dataset seperately
     for i in range(len(dataset_config_arr)):
         print(">> Preparing dataset - index: ", i)
         reset_dataset_arr_item(i)
 
-    # Compute the total dataset lengths
-    total_train_count = sum(datasets_train_count)
+    # The final dataset to build together
+    final_dataset = None
 
-    # Get the datapack batchsize
-    datapack_batchsize = datapack_config["batchsize"]
-    mixed_batch_percentage = datapack_config["mixed_batch_percentage"]
-    full_batch_percentage = 1.0 - mixed_batch_percentage
+    # Packing Mode
+    mixing_mode = datapack_config["mixing_mode"]
+    print(">> Dataset Mixing mode: ", mixing_mode)
 
-    # Override batch percentage if needed
-    if datapack_config["mixing_mode"] != "batch":
-        mixed_batch_percentage = 1.0
-        full_batch_percentage = 0.0
-
-    # Compute the number of batches for each dataset
-    datasets_train_batches = []
-    datasets_test_batches = []
-
-    # Compute the number of batches for each dataset
-    for i in range(len(dataset_config_arr)):
-        dataset_weight = 1.0
-        if "dataset_weight" in datasets_config_merged_arr[i]:
-            dataset_weight = datasets_config_merged_arr[i]["dataset_weight"]
-
-        # Throw if dataset_weight != 1.0 (not yet supported)
-        if dataset_weight != 1.0:
-            raise ValueError("dataset_weight != 1.0 is not yet supported")
-
-        # Initialize empty values, if not set
-        if i >= len(datasets_train_batches):
-            datasets_train_batches.append(0)
-            datasets_test_batches.append(0)
-        
-        # Compute the number of batches for each dataset
-        datasets_train_batches[i] = math.floor( datasets_train_count[i] * dataset_weight * full_batch_percentage / datapack_batchsize )
-        datasets_test_batches[i] = math.floor( datasets_test_count[i] / datapack_batchsize )
-
-    # Compute the total number of batches for training
-    total_train_batches = math.floor( total_train_count / datapack_batchsize )
-    total_full_batches = sum( datasets_train_batches )
-
-    print(">> Total approx train batches ( full | random ) :", total_train_batches, " ( ", total_full_batches, " | ", total_train_batches - total_full_batches, " )")
-
-    # ---
-    # The full dataset will contain the following columns
-    # input_ids, token_type_ids, attention_mask, sample_length, dataset_index, dataset_name
-    # ---
-
-    # Int type for the dataset (based on index:0 dataset)
-    # Note: these are hugging face "Value(dtype=x)", and not the dtype itself
-    dataset_input_id_type = datasets_arr[0]["train"].features["input_ids"].feature
-    dataset_token_type_id_type = datasets_arr[0]["train"].features["token_type_ids"].feature
-    dataset_attention_mask_type = datasets_arr[0]["train"].features["attention_mask"].feature
-
-    # Setup the dataset features
-    final_dataset_features = Features({
-        'input_ids': Sequence(dataset_input_id_type),
-        'token_type_ids': Sequence(dataset_token_type_id_type),
-        'attention_mask': Sequence(dataset_attention_mask_type),
-        'dataset_index': Value(dtype="int16"),
-        'dataset_name': Value(dtype="string"),
-    })
-    
-    # Build the full train / test split dataset slices
-    train_fullset_arr = []
-    train_randomset_arr = []
-    test_fullset_arr = []
-
-    # For each dataset, build the full and random sets
-    for i in range(len(datasets_arr)):
-        if datasets_train_batches[i] > 0:
-            train_fullset_arr.append( datasets_arr[i]["train"].select(numpy.arange(0, datasets_train_batches[i]*datapack_batchsize)) )
-            train_randomset_arr.append( datasets_arr[i]["train"].select(numpy.arange(datasets_train_batches[i]*datapack_batchsize, datasets_train_count[i])) )
-        else:
-            train_randomset_arr.append( datasets_arr[i]["train"] )
-        test_fullset_arr.append( datasets_arr[i]["test"] )
-
-    # Concat the full dataset
-    train_fullset = concatenate_datasets(train_fullset_arr)
-    train_randomset = concatenate_datasets(train_randomset_arr)
-    test_fullset = concatenate_datasets(test_fullset_arr)
-
-    # Shuffle the train random sets, and merge it
-    train_randomset_len = len(train_randomset)
-    train_randomset = train_randomset.shuffle(seed=101)
-    train_randomset_chunks = math.floor( train_randomset_len / datapack_batchsize )
-
-    if train_randomset_chunks > 0:
-        train_fullset = concatenate_datasets([train_fullset,train_randomset.select(numpy.arange(0, train_randomset_chunks*datapack_batchsize))])
-        train_last_randomset_chunk = train_randomset.select(numpy.arange(train_randomset_chunks*datapack_batchsize, train_randomset_len))
+    if mixing_mode == "concat":
+        # ---------------------------------
+        # Simple concatenation mode
+        # ---------------------------------
+        final_dataset = concatenate_datasets(datasets_arr)
+    elif mixing_mode == "shuffle":
+        # ---------------------------------
+        # Simple concatenation and shuffle
+        # ---------------------------------
+        final_dataset = concatenate_datasets(datasets_arr)
+        final_dataset = final_dataset.shuffle(seed=101)
     else:
-        train_last_randomset_chunk = train_randomset
-    
-    # Get the total fullset chunks
-    train_fullset_chunks = math.floor( len(train_fullset) / datapack_batchsize )
+        # ---------------------------------
+        # Complicated batch mixing mode
+        # ---------------------------------
 
-    # Lets prepare an array of the various dataset indexes
-    dataset_shuffle_index_arr = list( numpy.arange(0, train_fullset_chunks) )
-    random.Random(101).shuffle(dataset_shuffle_index_arr)
-    
-    # Label shuffle index
-    def label_shuffle_index(x, idx):
-        x["shuffle_index"] = idx
-        return x
+        raise ValueError("BATCH mixing mode not yet supported")
 
-    # Add a shuffled index to the fullset 
-    train_fullset = train_fullset.map(
-        label_shuffle_index,
-        with_indices=True,
-        batched=True,
-        batch_size=datapack_batchsize,
-        num_proc=num_cpus,
-    )
-    
-    # Sort the fullset by the shuffle index
-    train_fullset = train_fullset.sort("shuffle_index")
+        # Compute the total dataset lengths
+        total_train_count = sum(datasets_train_count)
 
-    # Remove the shuffle index
-    train_fullset = train_fullset.remove_columns(["shuffle_index"])
+        # Get the datapack batchsize
+        datapack_batchsize = datapack_config["batchsize"]
+        mixed_batch_percentage = datapack_config["mixed_batch_percentage"]
+        full_batch_percentage = 1.0 - mixed_batch_percentage
 
-    # Add the last randomset chunk to the fullset
-    train_fullset = concatenate_datasets([train_fullset, train_last_randomset_chunk])
+        # Override batch percentage if needed
+        if datapack_config["mixing_mode"] == "shuffle":
+            mixed_batch_percentage = 1.0
+            full_batch_percentage = 0.0
 
-    # Build the full train / test split dataset
-    final_dataset = Dataset.from_dict({key: [None,None] for key in final_dataset_features}, features=final_dataset_features)
-    final_dataset = final_dataset.train_test_split(1,1)
+        # Compute the number of batches for each dataset
+        datasets_train_batches = []
+        datasets_test_batches = []
 
-    # Lets override the full dataset
-    final_dataset["train"] = train_fullset
-    final_dataset["test"] = test_fullset
+        # Compute the number of batches for each dataset
+        for i in range(len(dataset_config_arr)):
+            dataset_weight = 1.0
+            if "dataset_weight" in datasets_config_merged_arr[i]:
+                dataset_weight = datasets_config_merged_arr[i]["dataset_weight"]
 
-    # # Full dataset chunks slices
-    # fullset_chunks_slices = []
-    # for i in range(len(datasets_arr)):
-    #     fullset_chunks_slices.append( [] )
+            # Throw if dataset_weight != 1.0 (not yet supported)
+            if dataset_weight != 1.0:
+                raise ValueError("dataset_weight != 1.0 is not yet supported")
 
-    # # Lets iterate each row of the training datset
-    # # and log the various attribute sizes
-    # print(">> [START] DEBUGGING LOGS")
-    # for i in range(len(final_dataset["train"])):
-    #     # Get the row
-    #     row = final_dataset["train"][i]
-    #
-    #     # Get size map
-    #     log_map = {
-    #         "index": i,
-    #         "input_ids": len(row["input_ids"]),
-    #         "token_type_ids": len(row["token_type_ids"]),
-    #         "attention_mask": len(row["attention_mask"]),
-    #         "dataset_index": row["dataset_index"],
-    #         "dataset_name": row["dataset_name"],
-    #     }
-    #     print(log_map)
-    # print(">> [ENDIN] DEBUGGING LOGS")
+            # Initialize empty values, if not set
+            if i >= len(datasets_train_batches):
+                datasets_train_batches.append(0)
+                datasets_test_batches.append(0)
+            
+            # Compute the number of batches for each dataset
+            datasets_train_batches[i] = math.floor( datasets_train_count[i] * dataset_weight * full_batch_percentage / datapack_batchsize )
+            datasets_test_batches[i] = math.floor( datasets_test_count[i] / datapack_batchsize )
+
+        # Compute the total number of batches for training
+        total_train_batches = math.floor( total_train_count / datapack_batchsize )
+        total_full_batches = sum( datasets_train_batches )
+
+        print(">> Total approx train batches ( full | random ) :", total_train_batches, " ( ", total_full_batches, " | ", total_train_batches - total_full_batches, " )")
+
+        # ---
+        # The full dataset will contain the following columns
+        # input_ids, token_type_ids, attention_mask, sample_length, dataset_index, dataset_name
+        # ---
+
+        # Int type for the dataset (based on index:0 dataset)
+        # Note: these are hugging face "Value(dtype=x)", and not the dtype itself
+        dataset_input_id_type = datasets_arr[0]["train"].features["input_ids"].feature
+        dataset_token_type_id_type = datasets_arr[0]["train"].features["token_type_ids"].feature
+        dataset_attention_mask_type = datasets_arr[0]["train"].features["attention_mask"].feature
+
+        # Build the full train / test split dataset slices
+        train_fullset_arr = []
+        train_randomset_arr = []
+        test_fullset_arr = []
+
+        # For each dataset, build the full and random sets
+        for i in range(len(datasets_arr)):
+            if datasets_train_batches[i] > 0:
+                train_fullset_arr.append( datasets_arr[i]["train"].select(numpy.arange(0, datasets_train_batches[i]*datapack_batchsize)) )
+                train_randomset_arr.append( datasets_arr[i]["train"].select(numpy.arange(datasets_train_batches[i]*datapack_batchsize, datasets_train_count[i])) )
+            else:
+                train_randomset_arr.append( datasets_arr[i]["train"] )
+            test_fullset_arr.append( datasets_arr[i]["test"] )
+
+        # Concat the full dataset
+        train_fullset = concatenate_datasets(train_fullset_arr)
+        train_randomset = concatenate_datasets(train_randomset_arr)
+        test_fullset = concatenate_datasets(test_fullset_arr)
+
+        # Shuffle the train random sets, and merge it
+        train_randomset_len = len(train_randomset)
+        train_randomset = train_randomset.shuffle(seed=101)
+        train_randomset_chunks = math.floor( train_randomset_len / datapack_batchsize )
+
+        if train_randomset_chunks > 0:
+            train_fullset = concatenate_datasets([train_fullset,train_randomset.select(numpy.arange(0, train_randomset_chunks*datapack_batchsize))])
+            train_last_randomset_chunk = train_randomset.select(numpy.arange(train_randomset_chunks*datapack_batchsize, train_randomset_len))
+        else:
+            train_last_randomset_chunk = train_randomset
+        
+        # Get the total fullset chunks
+        train_fullset_chunks = math.floor( len(train_fullset) / datapack_batchsize )
+
+        # Lets prepare an array of the various dataset indexes
+        dataset_shuffle_index_arr = list( numpy.arange(0, train_fullset_chunks) )
+        random.Random(101).shuffle(dataset_shuffle_index_arr)
+        
+        # Label shuffle index
+        def label_shuffle_index(x, idx):
+            x["shuffle_index"] = idx
+            return x
+
+        # Add a shuffled index to the fullset 
+        train_fullset = train_fullset.map(
+            label_shuffle_index,
+            with_indices=True,
+            batched=True,
+            batch_size=datapack_batchsize,
+            num_proc=num_cpus,
+        )
+        
+        # Sort the fullset by the shuffle index
+        train_fullset = train_fullset.sort("shuffle_index")
+
+        # Remove the shuffle index
+        train_fullset = train_fullset.remove_columns(["shuffle_index"])
+
+        # Add the last randomset chunk to the fullset
+        final_trainset = concatenate_datasets([train_fullset, train_last_randomset_chunk])
+        fianl_testset = test_fullset
+
+        # Setup the dataset features
+        final_dataset_features = Features({
+            'input_ids': Sequence(dataset_input_id_type),
+            'token_type_ids': Sequence(dataset_token_type_id_type),
+            'attention_mask': Sequence(dataset_attention_mask_type),
+            'dataset_index': Value(dtype="int16"),
+            'dataset_name': Value(dtype="string"),
+        })
+        
+        # Build the full train / test split dataset
+        final_dataset = Dataset.from_dict({key: [None,None] for key in final_dataset_features}, features=final_dataset_features)
+        final_dataset = final_dataset.train_test_split(1,1)
+
+        # Lets override the full dataset
+        final_dataset["train"] = final_trainset
+        final_dataset["test"] = fianl_testset
 
     # Log the saving process
     print(">> Saving dataset to data_path : ", datapack_config["data_path"])

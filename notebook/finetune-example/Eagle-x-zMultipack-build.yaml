@@ -25,6 +25,15 @@ datapack:
   #   secret: <example S3 secret>
   #   endpoint_url: <example S3 endpoint>
 
+  # Mixing mode to use, this is used to alternate between datasets
+  #
+  # - concat  : Keep It Simple Silly, lets just concat the datasets together
+  # - shuffle : Dataset is mixed on a per sample level
+  #
+  # (@TODO: Advance operations)
+  # - batch   : Meaning one dataset worth per batch, partial batches are discarded
+  mixing_mode: "shuffle"
+
   # Batch size to use to alternate between datasets
   # This should be a multiple of the GPU and node count 
   #
@@ -33,17 +42,12 @@ datapack:
   # misaligned batches, and thus reduce the amount of wasted training time
   batchsize: 512
 
-  # Mixing mode to use, this is used to alternate between datasets
-  #
-  # - batch  : Meaning one dataset worth per batch, partial batches are discarded
-  # - sample : Dataset is mixed on a per sample level
-  mixing_mode: "batch"
-
   # # Mixing distribution to use
   # # - weighted : Dataset batches/mixture is distrbuted randomly, but weighted by dataset size
   # # - uniform  : Dataset batches/mixture is distrbuted randomly, but with uniform probability
   # distribution: "weighted"
 
+  # (@TODO: Advance operations)
   # Mixed batch percentage
   #
   # % of batches which will contain a mixture of records from multiple datasets
