@@ -913,6 +913,8 @@ class RWKV(L.LightningModule):
 
         # If total_mask_sum, we skip, as there is no tokens of value to learn from anyway
         total_mask_sum = torch.sum(seq_mask)
+        avg_mask_sum = ( total_mask_sum / B.item() )
+
         # Do a quick return, if there is no tokens of value to learn from due to full masking
         if num_devices > 1 and total_mask_sum == 0:
             return 0
@@ -947,7 +949,7 @@ class RWKV(L.LightningModule):
 
             # to encourage the logits to be close to 0
             # factor_divisor is typically the total token count
-            L2Wrap_factor = 1e-4 / total_mask_sum
+            L2Wrap_factor = 1e-4 / avg_mask_sum
 
             # Submask count
             submask_count = torch.sum(submask)
@@ -983,7 +985,7 @@ class RWKV(L.LightningModule):
                 train_token_count = torch.sum(train_mask)
 
                 # Adjust the factor accordingly
-                L2Wrap_factor = L2Wrap_factor * (submask_count / train_token_count)
+                # L2Wrap_factor = L2Wrap_factor * (submask_count / train_token_count)
 
             else:
                 train_loss = torch.sum(token_loss * submask) / total_mask_sum
