@@ -4,7 +4,7 @@ export RUNNER_ALLOW_RUNASROOT="1"
 cd /actions-runner
 
 # CUDA version for label
-CUDA_VER="cuda-11-8"
+CUDA_VER="cuda-12-1"
 
 # Check the URL, token, and name of the runner from the container ENV vars
 # and if they are not set, provide default values
@@ -27,7 +27,7 @@ else
             --token "${RUNNER_TOKEN}" \
             --name "${RUNNER_NAME}" \
             --replace \
-            --labels "nolane,any-gpu,gpu-count-any,${CUDA_VER},${RUNNER_LABELS}"
+            --labels "nolane,${CUDA_VER},${RUNNER_LABELS}"
 
         # Run it in background, and get the PID
         ./run.sh &
@@ -41,7 +41,7 @@ else
             --token "${RUNNER_TOKEN}" \
             --name "${RUNNER_NAME}-lane1" \
             --replace \
-            --labels "lane1,any-gpu,gpu-count-any,${CUDA_VER},${RUNNER_LABELS}"
+            --labels "lane1,${CUDA_VER},${RUNNER_LABELS}"
 
         # Run it in background, and get the PID
         ./run.sh &
@@ -55,7 +55,7 @@ else
             --token "${RUNNER_TOKEN}" \
             --name "${RUNNER_NAME}-lane2" \
             --replace \
-            --labels "lane2,any-gpu,gpu-count-any,${CUDA_VER},${RUNNER_LABELS}"
+            --labels "lane2,${CUDA_VER},${RUNNER_LABELS}"
 
         # Run it in background, and get the PID
         ./run.sh &
