@@ -12,7 +12,8 @@ trainer:
   strategy: deepspeed_stage_2
   
   # Limit to 1 epoch
-  max_epochs: 1
+  # max_epochs: 1
+  max_steps: 26
 
   # Resonable batch size, for a more realistic it/s rate
   # this is currently overwritten in the notebook
@@ -24,7 +25,7 @@ trainer:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       name: 'Eagle-2T-P1'
-      project: 'RWKV-V5-Eagle-2T'
+      project: 'RWKV-V5-Eagle-2T-exp'
       tags: ['Eagle', 'RWKV-V5']
   
   # Checkpoint settings for the training process
@@ -62,7 +63,7 @@ trainer:
       # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
       # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
       # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
-      every_n_train_steps: 100
+      every_n_train_steps: 25
       every_n_epochs: null
       save_on_train_epoch_end: true
       train_time_interval: null
