@@ -41,6 +41,8 @@ def prepare_data_static(
         source_data_dir: str = None,
         # Additional dataset params
         source_dataset_params: dict = None,
+        # Source dataset split to use
+        source_dataset_split: str = "train",
         # Test split of source data, if it was not already done
         test_split: float = 0.01,
         test_split_shuffle: bool = False,
@@ -288,16 +290,19 @@ def prepare_data_static(
             # Log the whole load_dataset_params
             # print("load_dataset_params: " + str(load_dataset_params))
 
+            # The split to use
+            source_dataset_split = kargs["source_dataset_split"]
+
             # Load the dataset)
             src_dataset = load_dataset(**load_dataset_params)
 
             # If for some reason the dataset is a "test" only split, and missing a "train" split, we remap it as a "train" split
-            if "train" not in src_dataset.keys():
-                if "test" in src_dataset.keys():
-                    src_dataset["train"] = src_dataset["test"]
-                    del src_dataset["test"]
-                else:
-                    raise ValueError('Dataset must have a "train" split')
+            if source_dataset_split not in src_dataset.keys():
+                raise ValueError('Dataset missing split: ' + source_dataset_split)
+
+            if source_dataset_split != "train":
+                src_dataset["train"] = src_dataset[source_dataset_split]
+                del src_dataset[source_dataset_split]
 
             # If an int value is used, it is interprated as document count
             # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
