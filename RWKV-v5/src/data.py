@@ -1164,7 +1164,7 @@ def prepare_datapack_static(**kargs):
     # Loop through the dataset config
     # And prepare each dataset seperately
     for i in range(len(dataset_config_arr)):
-        print(">> Preparing dataset - index: ", i)
+        print(">> Preparing dataset - index: ", i, " - name: ", dataset_config_arr[i]["name"])
         reset_dataset_arr_item(i)
 
     # The final dataset to build together
@@ -1362,8 +1362,8 @@ def prepare_datapack_static(**kargs):
     # Log the finished dataset sizes
     final_train_len = len(final_dataset["train"])
     final_test_len = len(final_dataset["test"])
-    print(">> Final dataset count ( train ) :", "{:,}".format(final_train_len))
-    print(">> Final dataset count ( test  ) :", "{:,}".format(final_test_len))
+    print(">> Final dataset count ( train ) :", "{:,}".format(final_train_len), " samples/chunks/packs")
+    print(">> Final dataset count ( test  ) :", "{:,}".format(final_test_len), " samples")
     print(">> -----------------------------------")
 
     # Compute the total dataset token count

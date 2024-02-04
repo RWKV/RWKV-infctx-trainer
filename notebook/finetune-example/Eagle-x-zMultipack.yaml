@@ -7,7 +7,7 @@
 
 trainer:
   # Limit to 1 epoch
-  max_epochs: 10
+  max_epochs: 5
 
   # Resonable batch size, for a more realistic it/s rate
   # this is currently overwritten in the notebook
@@ -38,7 +38,7 @@ trainer:
       filename: null
       
       # Save the top/last K checkpoints
-      save_top_k: 10
+      save_top_k: 30
       # Choose the most recent checkpoints by steps
       monitor: 'step'
       mode: max
@@ -57,7 +57,7 @@ trainer:
       # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
       # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
       # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
-      every_n_train_steps: 128
+      every_n_train_steps: 256
       every_n_epochs: null
       save_on_train_epoch_end: true
       train_time_interval: null

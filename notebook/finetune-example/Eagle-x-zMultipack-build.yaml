@@ -260,20 +260,6 @@ dataset:
     packing_enable: False
     max_token_size: -1
 
-  # - # Text book is all you need
-  #   # https://huggingface.co/datasets/TanvirOnHF/muse_textbooks
-  #   source: "TanvirOnHF/muse_textbooks" 
-
-  #   # Optional, provide a name for the dataset
-  #   name: "muse_textbooks"
-
-  #   # Various over write settings
-  #   # ---
-  #   text_rechunk_size: 32768
-  #   text_rechunk_force: true
-  #   packing_enable: False
-  #   max_token_size: -1
-
   - # SuperWiki (Multi-lingual)
     # https://huggingface.co/datasets/RyokoExtra/SuperWIKI-Cleaned
     source: "RyokoExtra/SuperWIKI-Cleaned" 
@@ -398,6 +384,26 @@ dataset:
     conversation_input_key_prefix_map: {'input': "\n\nUser: ", 'output': "\n\nAssistant: "}
     conversation_input_key_mask: {'input': false, 'output': true}
     conversation_sender_suffix: {'input': "", 'output': ""}
+
+  ######################################################
+  # Note: We found the ML generated textbooks
+  # too low in perplexity that it hurts the model
+  # so we are using the original enwiki_100k & superwiki
+  ######################################################
+  # - # Text book is all you need
+  #   # https://huggingface.co/datasets/TanvirOnHF/muse_textbooks
+  #   source: "TanvirOnHF/muse_textbooks" 
+
+  #   # Optional, provide a name for the dataset
+  #   name: "muse_textbooks"
+
+  #   # Various over write settings
+  #   # ---
+  #   text_rechunk_size: 32768
+  #   text_rechunk_force: true
+  #   packing_enable: False
+  #   max_token_size: -1
+  ######################################################
 
       
 
