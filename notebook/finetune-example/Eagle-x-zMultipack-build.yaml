@@ -94,7 +94,7 @@ default:
   # If given an int value, the number of data sample is used.
   #
   # Due to the limitaitons in the trainer process, there is always a minimum of 1 test sample
-  test_split: 8 # Intentionally set to a low sample for test, cause the real eval is humans
+  test_split: 0.01 # Intentionally set to a low sample for test, cause the real eval is humans
   test_split_shuffle: true
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
@@ -244,10 +244,14 @@ dataset:
 
   - # Text book is all you need
     # https://huggingface.co/datasets/TanvirOnHF/muse_textbooks
-    source: "TanvirOnHF/muse_textbooks" 
+    source: "teven/enwiki_100k" 
 
     # Optional, provide a name for the dataset
-    name: "muse_textbooks"
+    name: "enwiki_100k"
+
+    # Minimum / Maximum token size of the dataset to use
+    min_token_size: 1024
+    max_token_size: -1
 
     # Various over write settings
     # ---
@@ -256,12 +260,12 @@ dataset:
     packing_enable: False
     max_token_size: -1
 
-  # - # SuperWiki (Multi-lingual)
-  #   # https://huggingface.co/datasets/RyokoExtra/SuperWIKI-Cleaned
-  #   source: "RyokoExtra/SuperWIKI-Cleaned" 
+  # - # Text book is all you need
+  #   # https://huggingface.co/datasets/TanvirOnHF/muse_textbooks
+  #   source: "TanvirOnHF/muse_textbooks" 
 
   #   # Optional, provide a name for the dataset
-  #   name: "super_wiki"
+  #   name: "muse_textbooks"
 
   #   # Various over write settings
   #   # ---
@@ -270,12 +274,28 @@ dataset:
   #   packing_enable: False
   #   max_token_size: -1
 
-  #   # Custom text column to use, useful for dataset with alternative training columns labels
-  #   # This is checked before multi column merging, default is null (disabled)
-  #   # If set this takes priority
-  #   # eg: 'code'
-  #   # ---
-  #   custom_text_key: 'text'
+  - # SuperWiki (Multi-lingual)
+    # https://huggingface.co/datasets/RyokoExtra/SuperWIKI-Cleaned
+    source: "RyokoExtra/SuperWIKI-Cleaned" 
+
+    # Optional, provide a name for the dataset
+    name: "super_wiki"
+
+    # Various over write settings
+    # ---
+    text_rechunk_size: 32768
+    text_rechunk_force: true
+    packing_enable: False
+    max_token_size: -1
+
+    source_dataset_split: lang25
+
+    # Custom text column to use, useful for dataset with alternative training columns labels
+    # This is checked before multi column merging, default is null (disabled)
+    # If set this takes priority
+    # eg: 'code'
+    # ---
+    custom_text_key: 'text'
 
     # All other settings found in default can be overriden here
     # ---
@@ -297,8 +317,7 @@ dataset:
     # https://huggingface.co/datasets/kristaller486/ALMA-prompt-completion
     source: "kristaller486/ALMA-prompt-completion"
     name: "ALMA-prompt-completion"
-
-    # Prompt completion, notiong else
+    # Prompt completion, nothing else else
 
   - # Instruct, input, output format
     # https://huggingface.co/datasets/teknium/openhermes
