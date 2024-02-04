@@ -34,31 +34,6 @@ datapack:
   # - batch   : Meaning one dataset worth per batch, partial batches are discarded
   mixing_mode: "shuffle"
 
-  # Batch size to use to alternate between datasets
-  # This should be a multiple of the GPU and node count 
-  #
-  # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
-  # a large number of batch size combinations. This helps reduce the amount of
-  # misaligned batches, and thus reduce the amount of wasted training time
-  batchsize: 512
-
-  # # Mixing distribution to use
-  # # - weighted : Dataset batches/mixture is distrbuted randomly, but weighted by dataset size
-  # # - uniform  : Dataset batches/mixture is distrbuted randomly, but with uniform probability
-  # distribution: "weighted"
-
-  # (@TODO: Advance operations)
-  # Mixed batch percentage
-  #
-  # % of batches which will contain a mixture of records from multiple datasets
-  # instad of limiting each batch to a single dataset
-  #
-  # Use 0, to disable mixed batches, sampled mixing_mode is the equavalent of mixed batch 1.0
-  #
-  # NOTE: This is a guideline percentage, and is not guaranteed to be exact
-  #       if a partial batch is built, it may get converted to a mixed batch
-  mixed_batch_percentage: 0.5
-
 #
 # Default settings used across all datasets in the datapack
 # These settings can be overriden by the dataset specific settings

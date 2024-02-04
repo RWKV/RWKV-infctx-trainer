@@ -72,8 +72,8 @@ model:
   load_model: ../model/L6-D512-neox-init.pth
 
   # Starting and ending learning rate
-  lr_init: 1e-5
-  lr_final: 4e-5
+  lr_init: 3e-5
+  lr_final: 1e-5
   lr_period: 2
 
   # Training context length, note that the dataset can be
