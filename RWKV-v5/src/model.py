@@ -913,7 +913,7 @@ class RWKV(L.LightningModule):
 
         # If total_mask_sum, we skip, as there is no tokens of value to learn from anyway
         total_mask_sum = torch.sum(seq_mask)
-        avg_mask_sum = ( total_mask_sum / B.item() )
+        avg_mask_sum = ( total_mask_sum / B )
 
         # Do a quick return, if there is no tokens of value to learn from due to full masking
         if num_devices > 1 and total_mask_sum == 0:
