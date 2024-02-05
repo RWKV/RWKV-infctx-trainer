@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import DistributedSampler
 
-import math, random, numpy
+import math, random, numpy, gc
 import wandb
 from datasets import load_from_disk, load_dataset, concatenate_datasets, Dataset, Features, Value, Sequence
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
@@ -1233,6 +1233,12 @@ def prepare_datapack_static(**kargs):
     train_fullset = concatenate_datasets(train_fullset_arr)
     train_randomset = concatenate_datasets(train_randomset_arr)
     test_fullset = concatenate_datasets(test_fullset_arr)
+
+    del train_fullset_arr
+    del train_randomset_arr
+    del test_fullset_arr
+
+    gc.collect()
 
     # Shuffle the train random sets, and merge it
     train_randomset_len = len(train_randomset)
