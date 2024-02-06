@@ -1603,6 +1603,8 @@ class RWKVDataModule(LightningDataModule):
             shuffle=self.dataloader_shuffle_training and not self.sort_by_length,
             num_replicas=self.trainer.world_size,
             rank=self.trainer.global_rank,
+            ## This is required due to multi node alignment errors
+            drop_last=True
         )
 
         microbatch_size = 1
@@ -1638,6 +1640,8 @@ class RWKVDataModule(LightningDataModule):
             shuffle=False, 
             num_replicas=self.trainer.world_size,
             rank=self.trainer.global_rank,
+            ## This is required due to multi node alignment errors
+            drop_last=True
         )
 
         microbatch_size = 1
