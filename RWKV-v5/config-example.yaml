@@ -373,6 +373,10 @@ data:
   # source: "teven/enwiki_00k"   # Hugging face dataset
   # source: text                 # Text mode, used with source_data_dir
 
+  # Dataset split to use from HF dataset
+  # ---
+  # source_dataset_split: train
+
   # Additional source dataset params, used to grab subsets of the dataset
   # ---
   # source_dataset_params:
@@ -419,6 +423,7 @@ data:
 
   # Custom text column to use, useful for dataset with alternative training columns labels
   # This is checked before multi column merging, default is null (disabled)
+  # If set this takes priority
   # eg: 'code'
   # ---
   # custom_text_key: 'code'
