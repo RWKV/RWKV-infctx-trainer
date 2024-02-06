@@ -1376,6 +1376,9 @@ class RWKVDataModule(LightningDataModule):
         # Note: As of Jan 2023, these options seems very buggy, YMMV
         data_path_storage_options:dict = None,
 
+        # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
+        skip_datapath_setup: bool = False,
+        
         # load_dataset(path) param
         source: str = None,
         # load_dataset(data_dir) param
@@ -1499,9 +1502,6 @@ class RWKVDataModule(LightningDataModule):
         # System tweaks
         # ----------------------------
 
-        # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
-        skip_datapath_setup: bool = False,
-        
         # Batch size scanning range, used for deciding the max number of documents
         # to process simultaneously at a time. This is used to prevent OOM errors
         # while rearranging the dataset, etc. Used for both packing / sorting operations
@@ -1516,6 +1516,9 @@ class RWKVDataModule(LightningDataModule):
         # Pin the preloaded documents into GPU memory in advance
         # very small overhead, slight speed bump, disable if your deperate for vram
         dataloader_pin_memory: bool = True,
+
+        # Swap the train / test split, used for debugging purposes
+        dataloader_swap_train_test_split: bool = False,
     ):
         # Capture the init parameters
         self._init_locals = locals()
@@ -1529,6 +1532,7 @@ class RWKVDataModule(LightningDataModule):
         self.dataloader_pin_memory = dataloader_pin_memory
         self.dataloader_shuffle_training = dataloader_shuffle_training
         self.sort_by_length = sort_by_length
+        self.dataloader_swap_train_test_split = dataloader_swap_train_test_split
 
         self._loaded_dataset = None
 
@@ -1555,7 +1559,12 @@ class RWKVDataModule(LightningDataModule):
     # Return the train dataloader
     def train_dataloader(self):
         self._internal_setup()
-        dataset = self._loaded_dataset['train'];
+
+        if self.dataloader_swap_train_test_split == False:
+            dataset = self._loaded_dataset['train'];
+        else:
+            dataset = self._loaded_dataset['test'];
+
         sampler = DistributedSampler(
             dataset, 
             shuffle=self.dataloader_shuffle_training and not self.sort_by_length,
@@ -1586,7 +1595,11 @@ class RWKVDataModule(LightningDataModule):
     # Return the validation dataloader
     def val_dataloader(self):
         self._internal_setup()
-        dataset = self._loaded_dataset['test'];
+        if self.dataloader_swap_train_test_split == False:
+            dataset = self._loaded_dataset['test'];
+        else:
+            dataset = self._loaded_dataset['train'];
+        
         sampler = DistributedSampler(
             dataset, 
             shuffle=False, 
