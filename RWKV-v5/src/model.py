@@ -812,14 +812,14 @@ class RWKV(L.LightningModule):
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
         ori_seq_mask = batch['attention_mask']
 
-        # Get the dataset index
-        dataset_index = 0
-        dataset_name = "dataset_0"
-        if "dataset_index" in batch:
-            dataset_index = batch["dataset_index"]
-            dataset_name = f"dataset_{dataset_index}"
-        if "dataset_name" in batch and dataset_name is not None:
-            dataset_name = batch["dataset_name"]
+        # # Get the dataset index
+        # dataset_index = 0
+        # dataset_name = "dataset_0"
+        # if "dataset_index" in batch:
+        #     dataset_index = batch["dataset_index"]
+        #     dataset_name = f"dataset_{dataset_index}"
+        # if "dataset_name" in batch and dataset_name is not None:
+        #     dataset_name = batch["dataset_name"]
 
         # Check if attent mask is set, if not initialize it
         if ori_seq_mask is None or ori_seq_mask.ndim != 2:

@@ -25,35 +25,14 @@ datapack:
   #   secret: <example S3 secret>
   #   endpoint_url: <example S3 endpoint>
 
-  # Batch size to use to alternate between datasets
-  # This should be a multiple of the GPU and node count 
-  #
-  # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
-  # a large number of batch size combinations. This helps reduce the amount of
-  # misaligned batches, and thus reduce the amount of wasted training time
-  batchsize: 512
-
   # Mixing mode to use, this is used to alternate between datasets
   #
-  # - batch  : Meaning one dataset worth per batch, partial batches are discarded
-  # - sample : Dataset is mixed on a per sample level
-  mixing_mode: "batch"
-
-  # # Mixing distribution to use
-  # # - weighted : Dataset batches/mixture is distrbuted randomly, but weighted by dataset size
-  # # - uniform  : Dataset batches/mixture is distrbuted randomly, but with uniform probability
-  # distribution: "weighted"
-
-  # Mixed batch percentage
+  # - concat  : Keep It Simple Silly, lets just concat the datasets together
+  # - shuffle : Dataset is mixed on a per sample level
   #
-  # % of batches which will contain a mixture of records from multiple datasets
-  # instad of limiting each batch to a single dataset
-  #
-  # Use 0, to disable mixed batches, sampled mixing_mode is the equavalent of mixed batch 1.0
-  #
-  # NOTE: This is a guideline percentage, and is not guaranteed to be exact
-  #       if a partial batch is built, it may get converted to a mixed batch
-  mixed_batch_percentage: 0.5
+  # (@TODO: Advance operations)
+  # - batch   : Meaning one dataset worth per batch, partial batches are discarded
+  mixing_mode: "shuffle"
 
 #
 # Default settings used across all datasets in the datapack
@@ -115,7 +94,7 @@ default:
   # If given an int value, the number of data sample is used.
   #
   # Due to the limitaitons in the trainer process, there is always a minimum of 1 test sample
-  test_split: 8 # Intentionally set to a low sample for test, cause the real eval is humans
+  test_split: 0.01 # Intentionally set to a low sample for test, cause the real eval is humans
   test_split_shuffle: true
 
   # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
@@ -265,10 +244,14 @@ dataset:
 
   - # Text book is all you need
     # https://huggingface.co/datasets/TanvirOnHF/muse_textbooks
-    source: "TanvirOnHF/muse_textbooks" 
+    source: "teven/enwiki_100k" 
 
     # Optional, provide a name for the dataset
-    name: "muse_textbooks"
+    name: "enwiki_100k"
+
+    # Minimum / Maximum token size of the dataset to use
+    min_token_size: 1024
+    max_token_size: -1
 
     # Various over write settings
     # ---
@@ -276,6 +259,29 @@ dataset:
     text_rechunk_force: true
     packing_enable: False
     max_token_size: -1
+
+  - # SuperWiki (Multi-lingual)
+    # https://huggingface.co/datasets/RyokoExtra/SuperWIKI-Cleaned
+    source: "RyokoExtra/SuperWIKI-Cleaned" 
+
+    # Optional, provide a name for the dataset
+    name: "super_wiki"
+
+    # Various over write settings
+    # ---
+    text_rechunk_size: 32768
+    text_rechunk_force: true
+    packing_enable: False
+    max_token_size: -1
+
+    source_dataset_split: lang25
+
+    # Custom text column to use, useful for dataset with alternative training columns labels
+    # This is checked before multi column merging, default is null (disabled)
+    # If set this takes priority
+    # eg: 'code'
+    # ---
+    custom_text_key: 'text'
 
     # All other settings found in default can be overriden here
     # ---
@@ -297,8 +303,7 @@ dataset:
     # https://huggingface.co/datasets/kristaller486/ALMA-prompt-completion
     source: "kristaller486/ALMA-prompt-completion"
     name: "ALMA-prompt-completion"
-
-    # Prompt completion, notiong else
+    # Prompt completion, nothing else else
 
   - # Instruct, input, output format
     # https://huggingface.co/datasets/teknium/openhermes
@@ -379,6 +384,26 @@ dataset:
     conversation_input_key_prefix_map: {'input': "\n\nUser: ", 'output': "\n\nAssistant: "}
     conversation_input_key_mask: {'input': false, 'output': true}
     conversation_sender_suffix: {'input': "", 'output': ""}
+
+  ######################################################
+  # Note: We found the ML generated textbooks
+  # too low in perplexity that it hurts the model
+  # so we are using the original enwiki_100k & superwiki
+  ######################################################
+  # - # Text book is all you need
+  #   # https://huggingface.co/datasets/TanvirOnHF/muse_textbooks
+  #   source: "TanvirOnHF/muse_textbooks" 
+
+  #   # Optional, provide a name for the dataset
+  #   name: "muse_textbooks"
+
+  #   # Various over write settings
+  #   # ---
+  #   text_rechunk_size: 32768
+  #   text_rechunk_force: true
+  #   packing_enable: False
+  #   max_token_size: -1
+  ######################################################
 
       
 
