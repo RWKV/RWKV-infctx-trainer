@@ -6,6 +6,21 @@ cd /actions-runner
 # CUDA version for label
 CUDA_VER="cuda-12-1"
 
+# Check if nvidia-smi is available
+SMI_CALL=$(nvidia-smi)
+if [ $? -ne 0 ]; then
+    echo "# [ERROR] nvidia-smi is not available, shutting down (after long delay)"
+    echo "# ---"
+    echo "$SMI_CALL"
+    echo "# ---"
+
+    # Sleep for 1 hour, a failure on start is a sign of a bigger problem
+    echo "# Performing a long sleep, to stagger container flow ..."
+    sleep 3600
+    echo "# Exiting now"
+    exit 1
+fi
+
 # Check the URL, token, and name of the runner from the container ENV vars
 # and if they are not set, provide default values
 if [[ -z "${RUNNER_NAME}" ]]; then
@@ -65,9 +80,31 @@ fi
 # Follow up on any forwarded command args
 if [[ $# -gt 0 ]]; then
     cd /root
-    exec "$@"
+    exec "$@" &
 fi
 
 # Wait for everything to exit
 # wait $RUNNER_PID
-wait 
+while true; do
+    # Check if any background process is still running
+    # Break if there is no background process
+    if [ -z "$(jobs -p)" ]; then
+        echo "# [INFO] All runners have exited, shutting down"
+        break
+    fi
+
+    # Call nvidia-smi, check if any error orccured
+    SMI_CALL=$(nvidia-smi)
+
+    # If nvidia-smi failed, exit
+    if [ $? -ne 0 ]; then
+        echo "# [ERROR] nvidia-smi failed, shutting down now!"
+        echo "# ---"
+        echo "$SMI_CALL"
+        echo "# ---"
+        break
+    fi
+
+    # Performs a small sleep wait
+    sleep 10
+done
