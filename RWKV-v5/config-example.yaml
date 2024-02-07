@@ -332,6 +332,10 @@ data:
   # ---
   # skip_datapath_setup: True
 
+  # Datapack config yaml to use instead, this overwrites all other settings below
+  # ---
+  # datapack_config_path: null
+
   # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
   #
   # Use this if you have built your own dataset and saved it with `save_to_disk()`

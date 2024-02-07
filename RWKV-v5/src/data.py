@@ -9,6 +9,8 @@ import wandb
 from datasets import load_from_disk, load_dataset, concatenate_datasets, Dataset, Features, Value, Sequence
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
+import gc
+
 num_cpus = cpu_count()
 num_workers = cpu_count() if cpu_count() < 8 else 8
 
@@ -293,7 +295,7 @@ def prepare_data_static(
             # The split to use
             source_dataset_split = kargs["source_dataset_split"]
 
-            # Load the dataset)
+            # Load the dataset
             src_dataset = load_dataset(**load_dataset_params)
 
             # If for some reason the dataset is a "test" only split, and missing a "train" split, we remap it as a "train" split
@@ -1099,7 +1101,21 @@ def dataloader_collator_fn(records):
     return out
 
 # Build the datapack given the given settings
-def prepare_datapack_static(**kargs):
+def prepare_datapack_static(
+        # Preload and return without merging
+        only_preload=False,
+        # Return without counting
+        return_without_counting=False,
+        # Skip datapath setup, if set
+        skip_datapath_setup=False,
+
+        # Additional kargs
+        **kargs
+    ):
+
+    # Capture the init parameters
+    kargs = locals()
+
     # Get the config groups
     datapack_config = kargs["datapack"]
     default_config = kargs["default"]
@@ -1127,12 +1143,17 @@ def prepare_datapack_static(**kargs):
         dataset_in = dataset_config_arr[i]
 
         # Merge the default config
-        one_dataset_config = { **defaultVals, **dataset_in, **{ "dataset_index": i } }
+        one_dataset_config = {
+            **{"skip_datapath_setup":skip_datapath_setup}, 
+            **defaultVals, 
+            **dataset_in, 
+            **{ "dataset_index": i } 
+        }
 
         # Insert the "dataset_name" if "name" is set
-        if dataset_in["name"] is not None:
+        if "name" in dataset_in and dataset_in["name"] is not None:
             one_dataset_config = { **one_dataset_config, **{ "dataset_name": dataset_in["name"] } }
-        elif dataset_in["dataset_name"] is not None:
+        elif "dataset_name" in dataset_in and dataset_in["dataset_name"] is not None:
             one_dataset_config = { **one_dataset_config, **{ "dataset_name": dataset_in["dataset_name"] } }
         else:
             one_dataset_config = { **one_dataset_config, **{ "dataset_name": "dataset_"+str(i) } }
@@ -1152,8 +1173,17 @@ def prepare_datapack_static(**kargs):
             datasets_train_count.append(0)
             datasets_test_count.append(0)
             datasets_train_used_count.append(0)
-            
-        datasets_arr[i] = prepare_data_static(**one_dataset_config)
+        
+        if "source" in one_dataset_config and one_dataset_config["source"] is not None:
+            datasets_arr[i] = prepare_data_static(**one_dataset_config)
+        elif one_dataset_config["data_path"] != ".//<#|=@%!$skip_datapath$!%@=|#>//.":
+            if "data_path_storage_options" in one_dataset_config and one_dataset_config["data_path_storage_options"] is not None:
+                datasets_arr[i] = load_from_disk(one_dataset_config["data_path"], storage_options=one_dataset_config["data_path_storage_options"])
+            else:
+                datasets_arr[i] = load_from_disk(one_dataset_config["data_path"])
+        else:
+            raise ValueError("Invalid dataset config, missing both source / data_path")
+
         datasets_config_merged_arr[i] = one_dataset_config
 
         # Get the dataset lengths
@@ -1164,8 +1194,19 @@ def prepare_datapack_static(**kargs):
     # Loop through the dataset config
     # And prepare each dataset seperately
     for i in range(len(dataset_config_arr)):
-        print(">> Preparing dataset - index: ", i, " - name: ", dataset_config_arr[i]["name"])
+        if "name" in dataset_config_arr[i]:
+            print(">> Preparing dataset - index: ", i, " - name: ", dataset_config_arr[i]["name"])
+        else:
+            print(">> Preparing dataset - index: ", i)
         reset_dataset_arr_item(i)
+
+        # Perform GC between sets
+        gc.collect()
+
+    # If its preload, skip 
+    if only_preload:
+        print(">> Preload enabled, skipping dataset merging")
+        return None
 
     # The final dataset to build together
     final_dataset = None
@@ -1202,113 +1243,113 @@ def prepare_datapack_static(**kargs):
 
         raise ValueError("BATCH mixing mode not yet supported")
 
-        # Compute the total dataset lengths
-        total_train_count = sum(datasets_train_count)
+        # # Compute the total dataset lengths
+        # total_train_count = sum(datasets_train_count)
 
-        # Get the datapack batchsize
-        datapack_batchsize = datapack_config["batchsize"]
-        mixed_batch_percentage = datapack_config["mixed_batch_percentage"]
-        full_batch_percentage = 1.0 - mixed_batch_percentage
+        # # Get the datapack batchsize
+        # datapack_batchsize = datapack_config["batchsize"]
+        # mixed_batch_percentage = datapack_config["mixed_batch_percentage"]
+        # full_batch_percentage = 1.0 - mixed_batch_percentage
 
-        # Override batch percentage if needed
-        if datapack_config["mixing_mode"] == "shuffle":
-            mixed_batch_percentage = 1.0
-            full_batch_percentage = 0.0
+        # # Override batch percentage if needed
+        # if datapack_config["mixing_mode"] == "shuffle":
+        #     mixed_batch_percentage = 1.0
+        #     full_batch_percentage = 0.0
 
-        # Compute the number of batches for each dataset
-        datasets_train_batches = []
-        datasets_test_batches = []
+        # # Compute the number of batches for each dataset
+        # datasets_train_batches = []
+        # datasets_test_batches = []
 
-        # Compute the number of batches for each dataset
-        for i in range(len(dataset_config_arr)):
-            dataset_weight = 1.0
-            if "dataset_weight" in datasets_config_merged_arr[i]:
-                dataset_weight = datasets_config_merged_arr[i]["dataset_weight"]
+        # # Compute the number of batches for each dataset
+        # for i in range(len(dataset_config_arr)):
+        #     dataset_weight = 1.0
+        #     if "dataset_weight" in datasets_config_merged_arr[i]:
+        #         dataset_weight = datasets_config_merged_arr[i]["dataset_weight"]
 
-            # Throw if dataset_weight != 1.0 (not yet supported)
-            if dataset_weight != 1.0:
-                raise ValueError("dataset_weight != 1.0 is not yet supported")
+        #     # Throw if dataset_weight != 1.0 (not yet supported)
+        #     if dataset_weight != 1.0:
+        #         raise ValueError("dataset_weight != 1.0 is not yet supported")
 
-            # Initialize empty values, if not set
-            if i >= len(datasets_train_batches):
-                datasets_train_batches.append(0)
-                datasets_test_batches.append(0)
+        #     # Initialize empty values, if not set
+        #     if i >= len(datasets_train_batches):
+        #         datasets_train_batches.append(0)
+        #         datasets_test_batches.append(0)
             
-            # Compute the number of batches for each dataset
-            datasets_train_batches[i] = math.floor( datasets_train_count[i] * dataset_weight * full_batch_percentage / datapack_batchsize )
-            datasets_test_batches[i] = math.floor( datasets_test_count[i] / datapack_batchsize )
+        #     # Compute the number of batches for each dataset
+        #     datasets_train_batches[i] = math.floor( datasets_train_count[i] * dataset_weight * full_batch_percentage / datapack_batchsize )
+        #     datasets_test_batches[i] = math.floor( datasets_test_count[i] / datapack_batchsize )
 
-        # Compute the total number of batches for training
-        total_train_batches = math.floor( total_train_count / datapack_batchsize )
-        total_full_batches = sum( datasets_train_batches )
+        # # Compute the total number of batches for training
+        # total_train_batches = math.floor( total_train_count / datapack_batchsize )
+        # total_full_batches = sum( datasets_train_batches )
 
-        print(">> Total approx train batches ( full | random ) :", total_train_batches, " ( ", total_full_batches, " | ", total_train_batches - total_full_batches, " )")
+        # print(">> Total approx train batches ( full | random ) :", total_train_batches, " ( ", total_full_batches, " | ", total_train_batches - total_full_batches, " )")
 
-        # ---
-        # The full dataset will contain the following columns
-        # input_ids, token_type_ids, attention_mask, sample_length, dataset_index, dataset_name
-        # ---
+        # # ---
+        # # The full dataset will contain the following columns
+        # # input_ids, token_type_ids, attention_mask, sample_length, dataset_index, dataset_name
+        # # ---
 
-        # Build the full train / test split dataset slices
-        train_fullset_arr = []
-        train_randomset_arr = []
-        test_fullset_arr = []
+        # # Build the full train / test split dataset slices
+        # train_fullset_arr = []
+        # train_randomset_arr = []
+        # test_fullset_arr = []
 
-        # For each dataset, build the full and random sets
-        for i in range(len(datasets_arr)):
-            if datasets_train_batches[i] > 0:
-                train_fullset_arr.append( datasets_arr[i]["train"].select(numpy.arange(0, datasets_train_batches[i]*datapack_batchsize)) )
-                train_randomset_arr.append( datasets_arr[i]["train"].select(numpy.arange(datasets_train_batches[i]*datapack_batchsize, datasets_train_count[i])) )
-            else:
-                train_randomset_arr.append( datasets_arr[i]["train"] )
-            test_fullset_arr.append( datasets_arr[i]["test"] )
+        # # For each dataset, build the full and random sets
+        # for i in range(len(datasets_arr)):
+        #     if datasets_train_batches[i] > 0:
+        #         train_fullset_arr.append( datasets_arr[i]["train"].select(numpy.arange(0, datasets_train_batches[i]*datapack_batchsize)) )
+        #         train_randomset_arr.append( datasets_arr[i]["train"].select(numpy.arange(datasets_train_batches[i]*datapack_batchsize, datasets_train_count[i])) )
+        #     else:
+        #         train_randomset_arr.append( datasets_arr[i]["train"] )
+        #     test_fullset_arr.append( datasets_arr[i]["test"] )
 
-        # Concat the full dataset
-        train_fullset = concatenate_datasets(train_fullset_arr)
-        train_randomset = concatenate_datasets(train_randomset_arr)
-        test_fullset = concatenate_datasets(test_fullset_arr)
+        # # Concat the full dataset
+        # train_fullset = concatenate_datasets(train_fullset_arr)
+        # train_randomset = concatenate_datasets(train_randomset_arr)
+        # test_fullset = concatenate_datasets(test_fullset_arr)
 
-        # Shuffle the train random sets, and merge it
-        train_randomset_len = len(train_randomset)
-        train_randomset = train_randomset.shuffle(seed=101)
-        train_randomset_chunks = math.floor( train_randomset_len / datapack_batchsize )
+        # # Shuffle the train random sets, and merge it
+        # train_randomset_len = len(train_randomset)
+        # train_randomset = train_randomset.shuffle(seed=101)
+        # train_randomset_chunks = math.floor( train_randomset_len / datapack_batchsize )
 
-        if train_randomset_chunks > 0:
-            train_fullset = concatenate_datasets([train_fullset,train_randomset.select(numpy.arange(0, train_randomset_chunks*datapack_batchsize))])
-            train_last_randomset_chunk = train_randomset.select(numpy.arange(train_randomset_chunks*datapack_batchsize, train_randomset_len))
-        else:
-            train_last_randomset_chunk = train_randomset
+        # if train_randomset_chunks > 0:
+        #     train_fullset = concatenate_datasets([train_fullset,train_randomset.select(numpy.arange(0, train_randomset_chunks*datapack_batchsize))])
+        #     train_last_randomset_chunk = train_randomset.select(numpy.arange(train_randomset_chunks*datapack_batchsize, train_randomset_len))
+        # else:
+        #     train_last_randomset_chunk = train_randomset
         
-        # Get the total fullset chunks
-        train_fullset_chunks = math.floor( len(train_fullset) / datapack_batchsize )
+        # # Get the total fullset chunks
+        # train_fullset_chunks = math.floor( len(train_fullset) / datapack_batchsize )
 
-        # Lets prepare an array of the various dataset indexes
-        dataset_shuffle_index_arr = list( numpy.arange(0, train_fullset_chunks) )
-        random.Random(101).shuffle(dataset_shuffle_index_arr)
+        # # Lets prepare an array of the various dataset indexes
+        # dataset_shuffle_index_arr = list( numpy.arange(0, train_fullset_chunks) )
+        # random.Random(101).shuffle(dataset_shuffle_index_arr)
         
-        # Label shuffle index
-        def label_shuffle_index(x, idx):
-            x["shuffle_index"] = idx
-            return x
+        # # Label shuffle index
+        # def label_shuffle_index(x, idx):
+        #     x["shuffle_index"] = idx
+        #     return x
 
-        # Add a shuffled index to the fullset 
-        train_fullset = train_fullset.map(
-            label_shuffle_index,
-            with_indices=True,
-            batched=True,
-            batch_size=datapack_batchsize,
-            num_proc=num_cpus,
-        )
+        # # Add a shuffled index to the fullset 
+        # train_fullset = train_fullset.map(
+        #     label_shuffle_index,
+        #     with_indices=True,
+        #     batched=True,
+        #     batch_size=datapack_batchsize,
+        #     num_proc=num_cpus,
+        # )
         
-        # Sort the fullset by the shuffle index
-        train_fullset = train_fullset.sort("shuffle_index")
+        # # Sort the fullset by the shuffle index
+        # train_fullset = train_fullset.sort("shuffle_index")
 
-        # Remove the shuffle index
-        train_fullset = train_fullset.remove_columns(["shuffle_index"])
+        # # Remove the shuffle index
+        # train_fullset = train_fullset.remove_columns(["shuffle_index"])
 
-        # Add the last randomset chunk to the fullset
-        final_trainset = concatenate_datasets([train_fullset, train_last_randomset_chunk])
-        final_testset = test_fullset
+        # # Add the last randomset chunk to the fullset
+        # final_trainset = concatenate_datasets([train_fullset, train_last_randomset_chunk])
+        # final_testset = test_fullset
 
     # ---------------------------------
     # Final dataset merger
@@ -1341,20 +1382,23 @@ def prepare_datapack_static(**kargs):
         final_dataset["test"] = final_testset
 
     # Log the saving process
-    print(">> Saving dataset to data_path : ", datapack_config["data_path"])
 
     # Finally save to disk
-    if "data_path_storage_options" in datapack_config and datapack_config["data_path_storage_options"]:
-        final_dataset.save_to_disk(
-            datapack_config["data_path"], 
-            storage_options=datapack_config["data_path_storage_options"]
-        )
+    if "data_path" in datapack_config and datapack_config["data_path"]:
+        print(">> Saving dataset to data_path : ", datapack_config["data_path"])
+        if "data_path_storage_options" in datapack_config and datapack_config["data_path_storage_options"]:
+            final_dataset.save_to_disk(
+                datapack_config["data_path"], 
+                storage_options=datapack_config["data_path_storage_options"]
+            )
+        else:
+            final_dataset.save_to_disk(
+                datapack_config["data_path"]
+            )
+        print(">> Dataset saved to data_path")
     else:
-        final_dataset.save_to_disk(
-            datapack_config["data_path"]
-        )
+        print(">> Skipping dataset saving to disk")
 
-    print(">> Dataset saved to data_path")
     print(">> -----------------------------------")
     print(">> Performing dataset counting")
     print(">> -----------------------------------")
@@ -1365,6 +1409,10 @@ def prepare_datapack_static(**kargs):
     print(">> Final dataset count ( train ) :", "{:,}".format(final_train_len), " samples/chunks/packs")
     print(">> Final dataset count ( test  ) :", "{:,}".format(final_test_len), " samples")
     print(">> -----------------------------------")
+
+    ## Rapid return
+    if return_without_counting:
+        return final_dataset
 
     # Compute the total dataset token count
     def compute_lengths(x):
@@ -1396,22 +1444,31 @@ def prepare_datapack_static(**kargs):
     print(">> - Valid tokens :", "{:,}".format(test_valid))
     print(">> - Hidden tokens :", "{:,}".format(test_hidden))
     print(">> -----------------------------------")
+
+    # Return the final dataset
+    return final_dataset
     
 
 class RWKVDataModule(LightningDataModule):
     def __init__(
         self, 
+
+        # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
+        skip_datapath_setup: bool = False,
+        
+        # Datapack config yaml to use instead, this overwrites all other settings below
+        datapack_config_path:str = None,
+
+        # ---
+
         # load_from_disk(dataset_path) param
-        data_path: str,
+        data_path: str = None,
         # Data path storage options, this is used to support cloud storage
         # via the huggingface dataset API. See:
         # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
         # Note: As of Jan 2023, these options seems very buggy, YMMV
         data_path_storage_options:dict = None,
 
-        # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
-        skip_datapath_setup: bool = False,
-        
         # load_dataset(path) param
         source: str = None,
         # load_dataset(data_dir) param
@@ -1559,6 +1616,7 @@ class RWKVDataModule(LightningDataModule):
         del self._init_locals["__class__"]
         
         super().__init__()
+        self.datapack_config_path = datapack_config_path
         self.data_path = data_path
         self.data_path_storage_options = data_path_storage_options
         self.dataloader_prefetch_factor = dataloader_prefetch_factor
@@ -1580,6 +1638,24 @@ class RWKVDataModule(LightningDataModule):
     # Setup process that is universal
     def _internal_setup(self):
         if self._loaded_dataset is None:
+
+            # Load from a datapack
+            if self.datapack_config_path:
+                # Get the yaml config
+                yaml_config = None
+                with open(self.datapack_config_path, 'r') as stream:
+                    yaml_config = yaml.safe_load(stream)
+
+                # Disable preloadonly mode, etc
+                yaml_config["datapack"].preload_only = False
+
+                # Get the loaded datapack
+                self._loaded_dataset = prepare_datapack_static(
+                    skip_datapath_setup=skip_datapath_setup,
+                    return_without_counting=True,
+                    **yaml_config
+                )
+
             if self.data_path_storage_options:
                 self._loaded_dataset = load_from_disk(self.data_path, storage_options=self.data_path_storage_options).with_format('torch')
             else:
