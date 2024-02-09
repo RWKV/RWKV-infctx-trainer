@@ -9,7 +9,7 @@ import wandb
 from datasets import load_from_disk, load_dataset, concatenate_datasets, Dataset, Features, Value, Sequence
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
-import gc
+import gc, yaml
 
 num_cpus = cpu_count()
 num_workers = cpu_count() if cpu_count() < 8 else 8
@@ -1113,9 +1113,6 @@ def prepare_datapack_static(
         **kargs
     ):
 
-    # Capture the init parameters
-    kargs = locals()
-
     # Get the config groups
     datapack_config = kargs["datapack"]
     default_config = kargs["default"]
@@ -1640,14 +1637,19 @@ class RWKVDataModule(LightningDataModule):
         if self._loaded_dataset is None:
 
             # Load from a datapack
-            if self.datapack_config_path:
+            if self.datapack_config_path is not None:
                 # Get the yaml config
                 yaml_config = None
-                with open(self.datapack_config_path, 'r') as stream:
-                    yaml_config = yaml.safe_load(stream)
+                with open(self.datapack_config_path, 'r') as f:
+                    yaml_config = yaml.safe_load(f)
+
+                # Check if the data is configured, else throw error (default assertion)
+                assert 'datapack' in datapack_config, "`datapack` is not configured in the config file"
+                assert 'default'  in datapack_config, "`default` is not configured in the config file"
+                assert 'dataset'  in datapack_config, "`dataset` is not configured in the config file"
 
                 # Disable preloadonly mode, etc
-                yaml_config["datapack"].preload_only = False
+                yaml_config["datapack"] = { **yaml_config["datapack"], **{ "only_preload": Fals }}
 
                 # Get the loaded datapack
                 self._loaded_dataset = prepare_datapack_static(
