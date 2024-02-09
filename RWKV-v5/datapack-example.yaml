@@ -35,15 +35,20 @@ datapack:
 
   # Mixing mode to use, this is used to alternate between datasets
   #
-  # - batch  : Meaning one dataset worth per batch, partial batches are discarded
-  # - sample : Dataset is mixed on a per sample level
-  mixing_mode: "batch"
+  # - concat  : Keep It Simple Silly, lets just concat the datasets together
+  # - shuffle : Dataset is mixed on a per sample level
+  #
+  # (@TODO: Advance operations)
+  # - batch   : Meaning one dataset worth per batch, partial batches are discarded
+  mixing_mode: "shuffle"
 
   # # Mixing distribution to use
   # # - weighted : Dataset batches/mixture is distrbuted randomly, but weighted by dataset size
   # # - uniform  : Dataset batches/mixture is distrbuted randomly, but with uniform probability
   # distribution: "weighted"
 
+  # (@TODO: Advance operations)
+  #
   # Mixed batch percentage
   #
   # % of batches which will contain a mixture of records from multiple datasets

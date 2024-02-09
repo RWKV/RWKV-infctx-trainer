@@ -812,14 +812,14 @@ class RWKV(L.LightningModule):
         assert isinstance(seq, torch.Tensor) and seq.ndim == 2
         ori_seq_mask = batch['attention_mask']
 
-        # Get the dataset index
-        dataset_index = 0
-        dataset_name = "dataset_0"
-        if "dataset_index" in batch:
-            dataset_index = batch["dataset_index"]
-            dataset_name = f"dataset_{dataset_index}"
-        if "dataset_name" in batch and dataset_name is not None:
-            dataset_name = batch["dataset_name"]
+        # # Get the dataset index
+        # dataset_index = 0
+        # dataset_name = "dataset_0"
+        # if "dataset_index" in batch:
+        #     dataset_index = batch["dataset_index"]
+        #     dataset_name = f"dataset_{dataset_index}"
+        # if "dataset_name" in batch and dataset_name is not None:
+        #     dataset_name = batch["dataset_name"]
 
         # Check if attent mask is set, if not initialize it
         if ori_seq_mask is None or ori_seq_mask.ndim != 2:
@@ -913,21 +913,24 @@ class RWKV(L.LightningModule):
 
         # If total_mask_sum, we skip, as there is no tokens of value to learn from anyway
         total_mask_sum = torch.sum(seq_mask)
-        # Do a quick return, if there is no tokens of value to learn from due to full masking
-        if num_devices > 1 and total_mask_sum == 0:
-            return 0
+        avg_mask_sum = ( total_mask_sum / B )
+
+        # # Do a quick return, if there is no tokens of value to learn from due to full masking
+        # # DO NOT DO THIS : This causes multi node / multi GPU to go out of sync
+        # if num_devices <= 1 and total_mask_sum == 0:
+        #     return 0
         
         # Checkpoint steps
         def checkpointed_step(idx, targets, mask, last_shift_states,
                               last_wkv_states):
-            # Skip if there is no tokens of value to learn from
-            if idx.shape[1] == 0:
-                # Prepare dummy loss
-                train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
-                sample_loss = train_loss.clone().detach().requires_grad_(False)
+            # # Skip if there is no tokens of value to learn from
+            # if idx.shape[1] == 0:
+            #     # Prepare dummy loss
+            #     train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
+            #     sample_loss = train_loss.clone().detach().requires_grad_(False)
 
-                # Return the checkpoint values
-                return sample_loss, train_loss, last_shift_states, last_wkv_states, 0
+            #     # Return the checkpoint values
+            #     return sample_loss, train_loss, last_shift_states, last_wkv_states, 0
 
             # Get the logits, and the new states
             logits, new_shift_states, new_wkv_states = self(
@@ -947,7 +950,7 @@ class RWKV(L.LightningModule):
 
             # to encourage the logits to be close to 0
             # factor_divisor is typically the total token count
-            L2Wrap_factor = 1e-4 / total_mask_sum
+            L2Wrap_factor = 1e-4 / avg_mask_sum
 
             # Submask count
             submask_count = torch.sum(submask)
@@ -983,7 +986,7 @@ class RWKV(L.LightningModule):
                 train_token_count = torch.sum(train_mask)
 
                 # Adjust the factor accordingly
-                L2Wrap_factor = L2Wrap_factor * (submask_count / train_token_count)
+                # L2Wrap_factor = L2Wrap_factor * (submask_count / train_token_count)
 
             else:
                 train_loss = torch.sum(token_loss * submask) / total_mask_sum
@@ -1254,20 +1257,20 @@ class RWKV(L.LightningModule):
             # Log the line values
             wandb.log({
                 # The original loss and ctx_len (averaged by batch size)
-                'train/ctx_len': ctx_len, 
+                'train/data_ctxlen': ctx_len, 
                 'train/data_loss': sampling_loss,
+                # "train/dataset_index": dataset_index,
 
                 # The selective training tokens, and loss
-                'train/tokens': tokens,
-                'train/loss': training_loss,
-                "train/dataset_index": dataset_index,
+                'train/learn_tokens': tokens,
+                'train/learn_loss': training_loss,
 
-                # Dataset based tracking
-                f'dataset/train/{dataset_index}.loss': training_loss,
-                f'dataset/train/{dataset_index}.data_loss': sampling_loss,
-                f'dataset/train/{dataset_index}.tokens': tokens,
-                f'dataset/train/{dataset_index}.ctx_len': ctx_len,
-                f'dataset/train/{dataset_index}.name': dataset_name,
+                # # Dataset based tracking (not working)
+                # f'dataset/train/{dataset_index}.loss': training_loss,
+                # f'dataset/train/{dataset_index}.data_loss': sampling_loss,
+                # f'dataset/train/{dataset_index}.tokens': tokens,
+                # f'dataset/train/{dataset_index}.ctx_len': ctx_len,
+                # f'dataset/train/{dataset_index}.name': dataset_name,
 
                 # Perf tracking
                 f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
@@ -1286,19 +1289,19 @@ class RWKV(L.LightningModule):
             # Log the line values
             wandb.log({
                 # The original loss and ctx_len (averaged by batch size)
-                'validation/ctx_len': T, 
+                'validation/data_ctxlen': T, 
                 'validation/data_loss': sampling_loss,
+                # "validation/dataset_index": dataset_index,
 
                 # The selective training tokens, and loss
-                'validation/tokens': training_tokens,
-                'validation/loss': training_loss,
-                "validation/dataset_index": dataset_index,
+                'validation/learn_tokens': training_tokens,
+                'validation/learn_loss': training_loss,
 
-                # Dataset based tracking
-                f'dataset/validation/{dataset_index}.loss': training_loss,
-                f'dataset/validation/{dataset_index}.data_loss': sampling_loss,
-                f'dataset/validation/{dataset_index}.ctx_len': T,
-                f'dataset/validation/{dataset_index}.name': dataset_name,
+                # # Dataset based tracking (not working)
+                # f'dataset/validation/{dataset_index}.loss': training_loss,
+                # f'dataset/validation/{dataset_index}.data_loss': sampling_loss,
+                # f'dataset/validation/{dataset_index}.ctx_len': T,
+                # f'dataset/validation/{dataset_index}.name': dataset_name,
 
                 # Step and trainer tracking
                 'global_rank': global_rank, 

@@ -79,8 +79,8 @@ model:
   load_model: ../model/L6-D512-neox-init.pth
 
   # Starting and ending learning rate
-  lr_init: 5e-5
-  lr_final: 5e-5
+  lr_init: 3e-5
+  lr_final: 3e-5
 
   # Training context length, note that the dataset can be
   # larger then the context size, in which the trainer

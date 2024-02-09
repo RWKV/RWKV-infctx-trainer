@@ -23,7 +23,7 @@ global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 # Get the JIT / torch compile option flags default specific for lightning training mode
 # This enables torch compile by default
 RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
-RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"1").lower() in ("1", "true", "yes")
+RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
 
 # Disable CUDA for RWKV
 RWKV_NO_CUDA        = os.getenv("RWKV_NO_CUDA", "0").lower() in ("1", "true", "yes")
