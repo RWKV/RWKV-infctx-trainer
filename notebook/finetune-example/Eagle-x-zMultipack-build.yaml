@@ -242,51 +242,6 @@ dataset:
   # Each dataset should be unique 
   # ---
 
-  - # Text book is all you need
-    # https://huggingface.co/datasets/TanvirOnHF/muse_textbooks
-    source: "teven/enwiki_100k" 
-
-    # Optional, provide a name for the dataset
-    name: "enwiki_100k"
-
-    # Minimum / Maximum token size of the dataset to use
-    min_token_size: 1024
-    max_token_size: -1
-
-    # Various over write settings
-    # ---
-    text_rechunk_size: 32768
-    text_rechunk_force: true
-    packing_enable: False
-    max_token_size: -1
-
-  - # SuperWiki (Multi-lingual)
-    # https://huggingface.co/datasets/RyokoExtra/SuperWIKI-Cleaned
-    source: "RyokoExtra/SuperWIKI-Cleaned" 
-
-    # Optional, provide a name for the dataset
-    name: "super_wiki"
-
-    # Various over write settings
-    # ---
-    text_rechunk_size: 32768
-    text_rechunk_force: true
-    packing_enable: False
-    max_token_size: -1
-
-    source_dataset_split: lang25
-
-    # Custom text column to use, useful for dataset with alternative training columns labels
-    # This is checked before multi column merging, default is null (disabled)
-    # If set this takes priority
-    # eg: 'code'
-    # ---
-    custom_text_key: 'text'
-
-    # All other settings found in default can be overriden here
-    # ---
-    # ...
-
   - # Question answer pair medical text
     # https://huggingface.co/datasets/BI55/MedText
     source: "BI55/MedText"   
@@ -347,7 +302,7 @@ dataset:
     # ---
     conversation_input_key_map: {'value': "\n\n{sender}: "}
     conversation_sender_key: 'from'
-    conversation_sender_value_map: {'user': 'Human', 'human': 'Human', 'assistant': 'Assistant', 'gpt': 'Assistant', 'system': 'System'}
+    conversation_sender_value_map: {'user': 'User', 'human': 'User', 'assistant': 'Assistant', 'gpt': 'Assistant', 'system': 'System'}
     conversation_sender_mask: {'user': false, 'human': false, 'assistant': true, 'gpt': true, 'system': false}
     conversation_sender_suffix: {'user': "", 'human': "", 'assistant': "", 'gpt': "", 'system': ""}
 
@@ -384,6 +339,54 @@ dataset:
     conversation_input_key_prefix_map: {'input': "\n\nUser: ", 'output': "\n\nAssistant: "}
     conversation_input_key_mask: {'input': false, 'output': true}
     conversation_sender_suffix: {'input': "", 'output': ""}
+
+  ######################################################
+  # Optional: Enwiki stuff
+  ######################################################
+  # - # Text book is all you need
+  #   # https://huggingface.co/datasets/TanvirOnHF/muse_textbooks
+  #   source: "teven/enwiki_100k" 
+
+  #   # Optional, provide a name for the dataset
+  #   name: "enwiki_100k"
+
+  #   # Minimum / Maximum token size of the dataset to use
+  #   min_token_size: 1024
+  #   max_token_size: -1
+
+  #   # Various over write settings
+  #   # ---
+  #   text_rechunk_size: 32768
+  #   text_rechunk_force: true
+  #   packing_enable: False
+  #   max_token_size: -1
+
+  # - # SuperWiki (Multi-lingual)
+  #   # https://huggingface.co/datasets/RyokoExtra/SuperWIKI-Cleaned
+  #   source: "RyokoExtra/SuperWIKI-Cleaned" 
+
+  #   # Optional, provide a name for the dataset
+  #   name: "super_wiki"
+
+  #   # Various over write settings
+  #   # ---
+  #   text_rechunk_size: 32768
+  #   text_rechunk_force: true
+  #   packing_enable: False
+  #   max_token_size: -1
+
+  #   source_dataset_split: lang25
+
+  #   # Custom text column to use, useful for dataset with alternative training columns labels
+  #   # This is checked before multi column merging, default is null (disabled)
+  #   # If set this takes priority
+  #   # eg: 'code'
+  #   # ---
+  #   custom_text_key: 'text'
+
+  #   # All other settings found in default can be overriden here
+  #   # ---
+  #   # ...
 
   ######################################################
   # Note: We found the ML generated textbooks
