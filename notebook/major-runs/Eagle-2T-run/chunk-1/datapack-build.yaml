@@ -6,7 +6,7 @@ datapack:
   # dataset_path for the prebuilt dataset, to save into using HF `save _to_disk()`
   #
   # If using relative path, this should be relative to the trainer script path
-  # data_path: /datapath/2T-train-set/chunk-1/HFfull/2T-train-set/chunk-1/HFfull
+  data_path: /datapath/2T-train-set/chunk-1/HFfull/2T-train-set/chunk-1/HFfull
 
   # Preload the intermiary dataset, without building the final datapath
   # this is useful to split the dataset building process across multiple nodes
