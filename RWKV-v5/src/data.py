@@ -1693,8 +1693,8 @@ class RWKVDataModule(LightningDataModule):
             dataset, 
             sampler=sampler,
             shuffle=False,
-            # 4 prefetch workers per GPU
-            num_workers=4, 
+            # prefetch workers per GPU
+            num_workers=self.dataloader_prefetch_factor,
             # Prefetching of X batches
             prefetch_factor=self.dataloader_prefetch_factor,
             # Of batch sizeed datasets
@@ -1730,8 +1730,8 @@ class RWKVDataModule(LightningDataModule):
             dataset, 
             sampler=sampler,
             shuffle=False,
-            # 4 prefetch workers per GPU
-            num_workers=4, 
+            # prefetch workers per GPU
+            num_workers=self.dataloader_prefetch_factor,
             # Prefetching 8 batches
             prefetch_factor=self.dataloader_prefetch_factor,
             # Of batch sized datasets
