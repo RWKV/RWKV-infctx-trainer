@@ -355,7 +355,7 @@ class RWKV_TimeMix(nn.Module):
         # Logits and state
         wkv_state = last_state[1].to(r.dtype)
 
-        x_logits, wkv_state = rwkv_inner(r, k, v, w, u, wkv_state, chunk_len=chunk_len) 
+        x_logits, wkv_state = rwkv_inner(r, k, v, w, u, wkv_state) 
         x_logits = x_logits.transpose(1,2).reshape(B,T,C)
 
         # Reshape and normalize the logits
