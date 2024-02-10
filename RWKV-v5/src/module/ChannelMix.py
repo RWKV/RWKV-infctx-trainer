@@ -3,7 +3,7 @@ from .CoreDependencies import *
 from .OptimizedOps import modified_lerp
 
 
-class RWKV_ChannelMix(JITModClass):
+class RWKV_ChannelMix(nn.Module):
     
     def __init__(self, layer_id, n_layer, n_embd, dim_ffn):
         super().__init__()
@@ -32,8 +32,7 @@ class RWKV_ChannelMix(JITModClass):
     # - of output embedding of shape [batch_size, seq_len, embedding_size]
     # - and the last output state of shape [batch_size, state_size]
     @TCompileMax
-    @JITModMethod
-    def forward(self, x, last_state: torch.Tensor):
+    def forward(self, x, last_state: torch.Tensor) -> tuple[torch.Tensor,torch.Tensor]:
         # out_emb, out_state = channelMix_batchForward(
         #     self.time_mix_k,self.time_mix_r,
         #     self.key.bi
@@ -48,7 +47,7 @@ class RWKV_ChannelMix(JITModClass):
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
         kv = self.value( torch.relu( self.key(xk) ) ** 2 )
         return (torch.sigmoid(self.receptance(xr)) * kv,
-                (x[:, -1]))
+                x[:, -1])
 
 # Pure lambda implementation, of forwarding channel mix given the model weights
 # and the input tokens and states.
