@@ -31,7 +31,6 @@ class RWKV_ChannelMix(nn.Module):
     # Returns a pair 
     # - of output embedding of shape [batch_size, seq_len, embedding_size]
     # - and the last output state of shape [batch_size, state_size]
-    @TCompileMax
     def forward(self, x, last_state: torch.Tensor) -> tuple[torch.Tensor,torch.Tensor]:
         # out_emb, out_state = channelMix_batchForward(
         #     self.time_mix_k,self.time_mix_r,
@@ -47,7 +46,7 @@ class RWKV_ChannelMix(nn.Module):
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
         kv = self.value( torch.relu( self.key(xk) ) ** 2 )
         return (torch.sigmoid(self.receptance(xr)) * kv,
-                x[:, -1])
+                (x[:, -1]))
 
 # Pure lambda implementation, of forwarding channel mix given the model weights
 # and the input tokens and states.
