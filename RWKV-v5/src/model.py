@@ -565,16 +565,28 @@ class RWKV(L.LightningModule):
         # self.trainer.estimated_stepping_batches
         estimated_stepping_batches = self.trainer.estimated_stepping_batches
 
+        # Get the train_dataloader
+        train_dataloader = self.trainer.train_dataloader
+        if train_dataloader is None:
+            train_dataloader = self.trainer.fit_loop._data_source.dataloader()
+
+        # Update the dataloader - to include a reference to the model "self"
+        #
+        # This is an extreamly hacky work around, to ensure we can get the completed step
+        # from the dataloader iteration process - to ensure we properly offset the data
+        # on a checkpoint resumption
+        #
+        # Basically workaround hack for: 
+        # https://discuss.pytorch.org/t/resume-iterating-dataloader-from-checkpoint-batch-idx/60683/14 
+        #
+        # See: data.py -> CheckPointResumeSafeDataLoader
+        train_dataloader._set_model_self(self)
+        
         # Get the number of epochs, 
         # use estimated_stepping_batches if max_epochs is set
         max_epochs = self.trainer.max_epochs
         if max_epochs > 0:
             return estimated_stepping_batches // max_epochs
-
-        # Get the train_dataloader
-        train_dataloader = self.trainer.train_dataloader
-        if train_dataloader is None:
-            train_dataloader = self.trainer.fit_loop._data_source.dataloader()
 
         # Max epoch is not set, use the train_dataloader
         dataset_size = len(train_dataloader)
@@ -582,6 +594,8 @@ class RWKV(L.LightningModule):
         num_devices = max(1, self.trainer.num_devices)
         num_nodes = max(1, self.trainer.num_nodes)
         num_steps = dataset_size // (self.trainer.accumulate_grad_batches * num_devices * num_nodes)
+
+        # Total number of steps
         return num_steps
     
     @property
@@ -1317,6 +1331,9 @@ class RWKV(L.LightningModule):
     # Training and validation steps
     #
     def training_step(self, batch, batch_idx):
+
+        # Update the dataloader skip steps (fix dataset offset issues)
+        # train_dataloader._set_skip_offset(self.global_step * self.trainer.accumulate_grad_batches)
 
         # print("=== BATCH ID SHAPE ===", batch["input_ids"].shape)
         # print("=== BATCH AM SHAPE ===", batch["attention_mask"].shape)

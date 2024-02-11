@@ -26,7 +26,7 @@ RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "ye
 RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
 
 # Disable CUDA for RWKV
-RWKV_NO_CUDA        = os.getenv("RWKV_NO_CUDA", "0").lower() in ("1", "true", "yes")
+RWKV_NO_CUDA        = os.getenv("RWKV_NO_CUDA", "1").lower() in ("1", "true", "yes")
 
 # Set back to the env vars (so that the rest of the code can use it)
 os.environ["RWKV_JIT_ON"] = str(RWKV_JIT_ON)

@@ -6,7 +6,7 @@ datapack:
   # dataset_path for the prebuilt dataset, to save into using HF `save _to_disk()`
   #
   # If using relative path, this should be relative to the trainer script path
-  data_path: ../datapath/world/Eagle-x-multipack/
+  data_path: /datapath/world/Eagle-x-Instruct/
 
   # Data path storage options, this is used to support cloud storage
   # via the huggingface dataset API. See:
@@ -47,7 +47,7 @@ default:
   #
   # The dataset index will be appended to the default value, if set
   # ---
-  data_path: ../datapath/world/Eagle-x-multipack-partial/
+  data_path: /datapath/world/Eagle-x-instruct-partial/
 
   # Data path storage options, this is used to support cloud storage
   # via the huggingface dataset API. See:
@@ -109,7 +109,7 @@ default:
   # This is ignored, if set to -1
   # ---
   min_token_size: -1
-  max_token_size: -1
+  max_token_size: 32768
 
   # Custom text column to use, useful for dataset with alternative training columns labels
   # This is checked before multi column merging, default is null (disabled)
@@ -251,7 +251,7 @@ dataset:
     multi_column_keys: ["Prompt", "Completion"]
     multi_column_prefix: ["Question:\n", "Answer:\n"]
     multi_column_suffix: ["", ""]
-    multi_column_train_mask: [true, true]
+    multi_column_train_mask: [false, true]
     multi_column_separator: "\n\n"
   
   - # Language translation prompt/completion
@@ -279,7 +279,7 @@ dataset:
     multi_column_keys: ["instruction", "input", "output"]
     multi_column_prefix: ["Instruction:\n", "Input:\n", "Output:\n"]
     multi_column_suffix: ["", "", ""]
-    multi_column_train_mask: [true, false, true]
+    multi_column_train_mask: [false, false, true]
     multi_column_separator: "\n\n"
     
   - # Conversation format
@@ -340,8 +340,44 @@ dataset:
     conversation_input_key_mask: {'input': false, 'output': true}
     conversation_sender_suffix: {'input': "", 'output': ""}
 
+  - # Instruct, input, output format
+    # With the instruction format changed, to fix the formatting
+    # https://huggingface.co/datasets/Darok/Lamini-instructions-to-french
+    source: "Darok/Lamini-instructions-to-french"
+    name: "Lamini-instructions-to-french"
+
+    multi_column_keys: ["Input", "Response"]
+    multi_column_prefix: ["### Instruction:\nPlease translate the next sentence into French\n\n### Input:\n", "### Output:\n"]
+    multi_column_suffix: ["", ""]
+    multi_column_train_mask: [false, true]
+    multi_column_separator: "\n\n"
+    
+  - # Long range instruction format
+    # https://huggingface.co/datasets/THUDM/LongAlign-10k/
+    source: "THUDM/LongAlign-10k"
+    name: "LongAlign-10k"
+
+    # Conversation merging process
+    # useful for merging full conversational datasets, into single documents
+    # default is off, (or set conversation_key to [])
+    # conversation_formatting supports "iopairs" or "sender" for now.
+    # ---
+    conversation_format: 'sender'
+    conversation_key: 'messages'
+    conversation_end_of_conversation: "\n\nUser: "
+
+    # Sender specific config
+    # This means that every object in the conversation object is a single message (with sender and message keys - or similar)
+    # The output is dictated by the input key map, the rest of the "sender_" config is keyed by the value of the sender key
+    # ---
+    conversation_input_key_map: {'content': "\n\n{sender}: "}
+    conversation_sender_key: 'role'
+    conversation_sender_value_map: {'user': 'User', 'human': 'User', 'assistant': 'Assistant', 'gpt': 'Assistant', 'system': 'System'}
+    conversation_sender_mask: {'user': false, 'human': false, 'assistant': true, 'gpt': true, 'system': false}
+    conversation_sender_suffix: {'user': "", 'human': "", 'assistant': "", 'gpt': "", 'system': ""}
+
   ######################################################
-  # Optional: Enwiki stuff
+  # Note: You can probably throw in enwiki if you want
   ######################################################
   # - # Text book is all you need
   #   # https://huggingface.co/datasets/TanvirOnHF/muse_textbooks
