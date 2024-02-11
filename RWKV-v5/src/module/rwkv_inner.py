@@ -4,8 +4,12 @@ import torch.nn.functional as F
 
 from torch import Tensor
 
-# 24 is optimal chunk length (longer will use too much memory and cause precision problems or even numerical instability, shorter is inefficient)
-def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=24,precision_dtype:torch.dtype=torch.float32):
+from .CoreDependencies import *
+
+# 24 is optimal chunk length for fp32 (longer will use too much memory and cause precision problems or even numerical instability, shorter is inefficient)
+@TCompileBaseline
+def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=24,precision:int=32)->tuple[Tensor,Tensor]:
+    assert(chunk_len <= 24 or precision == 64)
     """
     expects
     r : (B,H,L,K)
@@ -34,11 +38,12 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=24,precision_dtype:torch.dtype=t
 
         # this has to be done to avoid numerical instability (inf/NaN) when w is used as a divisor up to chunk_length//2 places away (so precision_min_val^(T//2) has to be in fp range)
         # NOTE - this does not account for the impact of the size of R, K so we currently use the chunk_len=32 numbers for chunk_len=24
-        assert(precision_dtype == torch.float32 or precision_dtype == torch.float64)
-        if precision_dtype == torch.float32:
-            precision_min_val = 0.005 # good for fp32 (1.175e-38 ^ (1/16.0) < 0.00426)
+        assert(precision == 32 or precision == 64)
+        precision_min_val = 0.005 # good for fp32 (1.175e-38 ^ (1/16.0) < 0.00426)
+        if precision == 32:
+            precision_dtype = torch.float32
         else: #elif precision_dtype == torch.float64:
-            precision_min_val = 1e-10 # good for fp64 (1.7e-308 ^ (1/16.0) < 5.8e-20)
+            precision_dtype = torch.float64
         w = w.clamp(precision_min_val)
 
         # calculate cumulative decay in log space where it won't overflow

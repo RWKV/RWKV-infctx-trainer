@@ -73,7 +73,7 @@ class BlockStateList:
 # The RWKV Model blocks
 ### ---
 
-class Block(nn.Module):
+class Block(JITModClass):
 
     def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn):
         super().__init__()
@@ -84,6 +84,8 @@ class Block(nn.Module):
 
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
+        else:
+            self.ln0 = nn.Identity()
 
         self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
@@ -93,36 +95,37 @@ class Block(nn.Module):
         if dropout > 0:            
             self.drop0 = nn.Dropout(p = dropout)
             self.drop1 = nn.Dropout(p = dropout)
-
-    @TCompileBaseline
-    def forward(self, x, last_state: BlockState):
-        if self.layer_id == 0:
-            x = self.ln0(x)
-
-        att_out, att_state = self.att(
-            self.ln1(x),
-            last_state.time_mix_state,
-        )
-
-        if self.dropout > 0.0:
-            # Handle with dropout
-            x = self.drop0(x + att_out)
-            ffn_out, ffn_state = self.ffn(
-                self.ln2(x),
-                last_state.channel_mix_state,
-            )
-            x = self.drop1(x + ffn_out)
         else:
-            # Handle without dropout
-            x = x + att_out
-            ffn_out, ffn_state = self.ffn(
-                self.ln2(x),
-                last_state.channel_mix_state,
-            )
-            x = x + ffn_out
+            self.drop0 = nn.Identity()
+            self.drop1 = nn.Identity()
+
+    @JITModMethod
+    def forward(self, x, last_state: BlockState):
+        x, att_out, att_state = self.forward_attention(x, last_state.time_mix_state)
+        x, ffn_state = self.forward_ffn(x, att_out, last_state.channel_mix_state)
         
         return x, BlockState(att_state, ffn_state)
 
+    @TCompileBaseline
+    def forward_attention(self, x, time_mix_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor,torch.Tensor]]:
+        x = self.ln0.forward(x)
+
+        att_out, att_state = self.att.forward(
+            self.ln1.forward(x),
+            time_mix_state,
+        )
+
+        return x, att_out, att_state
+
+    @TCompileBaseline
+    def forward_ffn(self, x, att_out, channel_mix_state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        x = self.drop0.forward(x + att_out)
+        ffn_out, ffn_state = self.ffn.forward(
+            self.ln2.forward(x),
+            channel_mix_state,
+        )
+        x = self.drop1.forward(x + ffn_out)
+        return x, ffn_state
 
 class L2Wrap(torch.autograd.Function):
 

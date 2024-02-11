@@ -143,6 +143,7 @@ class WKV5_CUDA(torch.autograd.Function):
             )
        
 @TCompileDisable 
+@torch.jit.ignore
 def RUN_WKV5_CUDA(
     B:int, T:int, C:int, H:int, 
     state:torch.Tensor, 
@@ -157,7 +158,7 @@ def RUN_WKV5_CUDA(
 ### ---
 
 # RWKV TimeMix module
-class RWKV_TimeMix(JITModClass):
+class RWKV_TimeMix(nn.Module):
 
     def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att):
         super().__init__()
@@ -269,17 +270,17 @@ class RWKV_TimeMix(JITModClass):
     #       [batch_size, state_size] ## Channel mix state,
     #       [batch_size, n_head, head_size, head_size] ## WKV state
     #   ]
-    def forward(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
+    def forward(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         # Run with cuda
         if self.use_cuda is True:
-            return self._forward_cuda(x, last_state)
+           return self._forward_cuda(x, last_state)
         
         # Run without cuda (cpu mode, etc)
-        return self._forward_nocuda_optimized(x, last_state)
-     
-    def _forward_cuda(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
+        return _forward_nocuda_optimized(self, x, last_state)
+
+    def _forward_cuda(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         # Get the x sizing
-        B, TT, C = x.size()
+        B, T, C = x.size()
         H = self.n_head
 
         # Perform the tokenshift, and get the respective state
@@ -291,9 +292,9 @@ class RWKV_TimeMix(JITModClass):
         xr = modified_lerp(x, self.time_mix_r, xx)
         xg = modified_lerp(x, self.time_mix_g, xx)
 
-        r = self.receptance(xr)#.view(B, TT, self.n_head, 1, -1)
-        k = self.key(xk)#.view(B, TT, self.n_head, -1, 1)
-        v = self.value(xv)#.view(B, TT, self.n_head, 1, -1)
+        r = self.receptance(xr)#.view(B, T, self.n_head, 1, -1)
+        k = self.key(xk)#.view(B, T, self.n_head, -1, 1)
+        v = self.value(xv)#.view(B, T, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
         # Logits and state
@@ -301,7 +302,7 @@ class RWKV_TimeMix(JITModClass):
 
         # Perform the cuda forward pass
         x_logits = RUN_WKV5_CUDA(
-            B, TT, C, H, 
+            B, T, C, H, 
             state, 
             r, k, v, 
             self.time_decay.float(), 
@@ -309,70 +310,83 @@ class RWKV_TimeMix(JITModClass):
         )
 
         # Reshape and normalize the logits
-        x_logits = self._x_logits_gate(x_logits, g)
+        x_logits = x_logits.view(-1, C)
+        x_logits = self.ln_x(x_logits / self.head_size_divisor).view(B, T, C)
+        x_logits = self.output(x_logits * g)
 
         # Return the logits and the state
         return (x_logits, (x[:,-1],state))
 
-    # @TCompileMax 
-    @JITModMethod  
-    def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]):
-        shift_state_out = x[:,-1]
+@TCompileBaseline
+def _forward_nocuda_optimized(self:RWKV_TimeMix, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
+    shift_state_out = x[:,-1]
 
-        # 24 is optimal chunk length (longer will use too much memory and cause precision problems or even numerical instability, shorter is inefficient)
-        chunk_len = 24
+    chunk_len = 128
+    precision = 64
 
-        # padding to support fast path for non-exact chunk size multiple sequence lengths        
-        n_padding = (chunk_len - x.size(-2) % chunk_len) % chunk_len
-        if n_padding != 0:
-            x = F.pad(x, [0, 0, 0, n_padding, 0, 0])
+    # padding to support fast path for non-exact chunk size multiple sequence lengths        
+    n_padding = (chunk_len - x.size(-2) % chunk_len) % chunk_len
+    if n_padding != 0:
+        x = F.pad(x, [0, 0, 0, n_padding, 0, 0])
 
-        # Get the x sizing
-        B, T, C = x.size()
-        H = self.n_head
-        K = self.head_size
-        V = K
+    # Get the x sizing
+    B, T, C = x.size()
+    H = self.n_head
+    K = self.head_size
+    V = K
 
-        # Perform the tokenshift, and get the respective state
-        xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
+    r,k,v,g,w,u = get_rkvgwu(self, x, last_state[0].unsqueeze(1))
 
-        # Get the xk, xv, xr, xg, and rkvg
-        xk = modified_lerp(x, self.time_mix_k, xx)
-        xv = modified_lerp(x, self.time_mix_v, xx)
-        xr = modified_lerp(x, self.time_mix_r, xx)
-        xg = modified_lerp(x, self.time_mix_g, xx)
+    # Logits and state
+    wkv_state = last_state[1].to(self.receptance.weight.dtype)
 
-        r = self.receptance(xr).view(B, T, H, K).transpose(1, 2) # BHTK
-        k = self.key(xk).view(B, T, H, K).transpose(1, 2)      # BHTK
-        v = self.value(xv).view(B, T, H, V).transpose(1, 2)    # BHTV
-        g = F.silu(self.gate(xg))
+    x_logits, wkv_state = call_rwkv_inner(self, r, k, v, g, w, u, wkv_state, chunk_len, precision)
 
-        w = torch.exp(-torch.exp(self.time_decay.float())).view(1,H,1,K).expand(1,H,T,K)
+    if n_padding != 0:
+        x_logits = x_logits[..., :-n_padding, :] # BHTV
 
-        u = self.time_faaaa.view(1,H,1,K).to(r.dtype)
+    # Return the logits and the state
+    return (x_logits, (shift_state_out,wkv_state))
 
-        # Logits and state
-        wkv_state = last_state[1].to(r.dtype)
+@TCompileBaseline
+def get_rkvgwu(self:RWKV_TimeMix, x, ls) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:           
+    B, T, C = x.size()
+    H = self.n_head
+    K = self.head_size
+    V = K
 
-        x_logits, wkv_state = rwkv_inner(r, k, v, w, u, wkv_state, chunk_len=chunk_len) 
+    # Perform the tokenshift, and get the respective state
+    xx = torch.concat((ls, x[:, :-1]), dim=1)
+
+    # Get the xk, xv, xr, xg, and rkvg
+    xk = modified_lerp(x, self.time_mix_k, xx)
+    xv = modified_lerp(x, self.time_mix_v, xx)
+    xr = modified_lerp(x, self.time_mix_r, xx)
+    xg = modified_lerp(x, self.time_mix_g, xx)
+
+    r = self.receptance.forward(xr).view(B, T, H, K).transpose(1, 2) # BHTK
+    k = self.key.forward(xk).view(B, T, H, K).transpose(1, 2)      # BHTK
+    v = self.value.forward(xv).view(B, T, H, V).transpose(1, 2)    # BHTV
+    g = F.silu(self.gate.forward(xg))
+
+    w = torch.exp(-torch.exp(self.time_decay.float())).view(1,H,1,K).expand(1,H,T,K)
+
+    u = self.time_faaaa.view(1,H,1,K).to(r.dtype)
+    return r,k,v,g,w,u
+
+@TCompileBaseline
+def call_rwkv_inner(self:RWKV_TimeMix, r, k, v, g, w, u, wkv_state, chunk_len:int, precision:int) -> tuple[torch.Tensor, torch.Tensor]:           
+        B,H,T,K = k.shape
+        C = H * K
+
+        x_logits, wkv_state = rwkv_inner(r, k, v, w, u, wkv_state, chunk_len, precision) 
         x_logits = x_logits.transpose(1,2).reshape(B,T,C)
 
         # Reshape and normalize the logits
-        x_logits = self._x_logits_gate(x_logits, g)
-
-        if n_padding != 0:
-            x_logits = x_logits[..., :-n_padding, :] # BHTV
-
-        # Return the logits and the state
-        return (x_logits, (shift_state_out,wkv_state))
-    
-    # @TCompileMax 
-    @JITModMethod  
-    def _x_logits_gate(self, x_logits, gate):
-        B, T, C = x_logits.size()
         x_logits = x_logits.view(-1, C)
-        x_logits = self.ln_x(x_logits / self.head_size_divisor).view(B, T, C)
-        return self.output(x_logits * gate)
+        x_logits = self.ln_x.forward(x_logits / self.head_size_divisor).view(B, T, C)
+        x_logits = self.output.forward(x_logits * g)
+        return x_logits, wkv_state
 
 def compute_wkv_state(
         k, v, r,
