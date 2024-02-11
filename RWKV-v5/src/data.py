@@ -2,7 +2,7 @@ from lightning import LightningDataModule
 
 import torch
 from torch.utils.data import DataLoader
-from torch.utils.data import DistributedSampler
+from torch.utils.data import DistributedSampler, BatchSampler, SequentialSampler
 
 import math, random, numpy
 import wandb
@@ -1444,7 +1444,55 @@ def prepare_datapack_static(
 
     # Return the final dataset
     return final_dataset
-    
+
+#
+# CheckPointResumeSafeDataLoader
+#
+# ## Problem Stage 1:
+# For some insane reason, neither pytorch, nor pytorch lightning supports a safe way to continue from checkpoint
+# with the dataset loader restored to the correct position. This is a INSANE problem, as it means that the training
+# will start from the beginning of the dataset, and not from the last checkpointed position.
+#
+# See: https://discuss.pytorch.org/t/resume-iterating-dataloader-from-checkpoint-batch-idx/60683/14 
+#
+# ## Problem Stage 2:
+# Sound not too hard to solve right?, we can offset the dataset loader as we load it up, or we can skip the first X
+# as the dataset loader is being iterated right? Well except that the "dataset", and "model" is loaded first, then
+# the checkpoint itself, then the train loop begins. Of which the entire checkpoint -> train loop process is handled
+# purely within pytorch lightning code, with no reliable way to hook into the process.
+#
+# ## Solution:
+# This custom dataloader, which has a hook for the model varaible itself. When the model loads with the learning rate
+# scheduler - it will "install" itself into the dataloader. After which the normal pytorch lightning process will
+# continue, and restore the checkpoint. From which we will use the undocumented variable "_batches_that_stepped" to
+# read the current batch status that was "stored/restored" into the pytorch lightning training loop process, to figure
+# out the current batch status. When the dataset iteration begins, we will immediately skip all the respective datapoints
+# that is below the batch status, and continue from there.
+#
+class CheckPointResumeSafeDataLoader(DataLoader):
+    def __init__(self, dataset, **kwargs):
+        super().__init__(dataset, **kwargs)
+        self._model = None
+
+    def _set_model_self(self, model):
+        self._model = model
+
+    def __iter__(self):
+        batch_iterator = super().__iter__()
+        
+        i = 0
+        for batch in batch_iterator:
+            i += 1
+
+            skip_offset = -1
+            if self._model is not None:
+                skip_offset = self._model.trainer.fit_loop.epoch_loop._batches_that_stepped * self._model.trainer.accumulate_grad_batches
+            
+            # We skip the first X steps, which should not be iterated on
+            if i <= skip_offset:
+                continue
+
+            yield batch
 
 class RWKVDataModule(LightningDataModule):
     def __init__(
@@ -1676,7 +1724,28 @@ class RWKVDataModule(LightningDataModule):
         else:
             dataset = self._loaded_dataset['test'];
 
-        sampler = DistributedSampler(
+        microbatch_size = 1
+        if hasattr(self, "trainer") and hasattr(self.trainer, "microbatch_size"):
+            microbatch_size = self.trainer.microbatch_size
+
+        # # Batched sampler
+        # batch_sampler = BatchSampler(
+        #     SequentialSampler(dataset),
+        #     batch_size=microbatch_size,
+        #     drop_last=True
+        # )
+
+        # # Distributed sampler
+        # distributed_sampler = DistributedSampler(
+        #     dataset, 
+        #     shuffle=self.dataloader_shuffle_training and not self.sort_by_length,
+        #     num_replicas=self.trainer.world_size,
+        #     rank=self.trainer.global_rank,
+        #     ## This is required due to multi node alignment errors
+        #     drop_last=True
+        # )
+
+        _train_sampler = DistributedSampler(
             dataset, 
             shuffle=self.dataloader_shuffle_training and not self.sort_by_length,
             num_replicas=self.trainer.world_size,
@@ -1684,14 +1753,12 @@ class RWKVDataModule(LightningDataModule):
             ## This is required due to multi node alignment errors
             drop_last=True
         )
+        self._train_sampler = _train_sampler
+        self._train_sampler.set_epoch(self.trainer.current_epoch)
 
-        microbatch_size = 1
-        if hasattr(self, "trainer") and hasattr(self.trainer, "microbatch_size"):
-            microbatch_size = self.trainer.microbatch_size
-
-        return DataLoader(
+        _train_dataloader = CheckPointResumeSafeDataLoader(
             dataset, 
-            sampler=sampler,
+            sampler=_train_sampler,
             shuffle=False,
             # prefetch workers per GPU
             num_workers=self.dataloader_prefetch_factor,
@@ -1704,6 +1771,8 @@ class RWKVDataModule(LightningDataModule):
             # Pinned in GPU memory
             pin_memory=self.dataloader_pin_memory
         )
+
+        return _train_dataloader
     
     # Return the validation dataloader
     def val_dataloader(self):
@@ -1721,6 +1790,7 @@ class RWKVDataModule(LightningDataModule):
             ## This is required due to multi node alignment errors
             drop_last=True
         )
+        self._val_sampler = sampler
 
         microbatch_size = 1
         if hasattr(self, "trainer") and hasattr(self.trainer, "microbatch_size"):
