@@ -818,11 +818,14 @@ class RWKV(L.LightningModule):
     # @TCompileBaseline
     def compute_loss(self, batch, batch_idx, is_training_run: bool = False, is_validation_run: bool = False):
 
+        # Start time for the step
+        step_start_time = time.time()
+
         # Used for token/second performance tracking
         if self._counting_tokens is None:
             self._counting_tokens = 0
         if self._counting_time_start is None or self._counting_time_start == 0:
-            self._counting_time_start = time.time()
+            self._counting_time_start = step_start_time
         
         # Get the input sequence, and attention mask
         seq = batch['input_ids']
@@ -1271,6 +1274,9 @@ class RWKV(L.LightningModule):
             ctx_len = batch_ctx_len / microbatch_size
             tokens = training_tokens / microbatch_size
 
+            # Ending time for the step
+            step_endin_time = time.time()
+
             # Log the line values
             wandb.log({
                 # The original loss and ctx_len (averaged by batch size)
@@ -1290,7 +1296,8 @@ class RWKV(L.LightningModule):
                 # f'dataset/train/{dataset_index}.name': dataset_name,
 
                 # Perf tracking
-                f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
+                f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(step_endin_time - self._counting_time_start, 1),
+                f'perf/kTokens_per_sec_step.gpu.{global_rank}': (batch_ctx_len / 1000.0) / max(step_endin_time - step_start_time, 1),
                 f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
 
                 # Step and trainer tracking
