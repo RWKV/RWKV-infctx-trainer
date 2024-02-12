@@ -317,7 +317,6 @@ class RWKV_TimeMix(nn.Module):
         # Return the logits and the state
         return (x_logits, (x[:,-1],state))
 
-@TCompileBaseline
 def _forward_nocuda_optimized(self:RWKV_TimeMix, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
     shift_state_out = x[:,-1]
 
@@ -348,6 +347,7 @@ def _forward_nocuda_optimized(self:RWKV_TimeMix, x, last_state: tuple[torch.Tens
     # Return the logits and the state
     return (x_logits, (shift_state_out,wkv_state))
 
+# NOTE - this was separated out into its own function so that torch.compile doesn't take forever
 @TCompileBaseline
 def get_rkvgwu(self:RWKV_TimeMix, x, ls) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:           
     B, T, C = x.size()

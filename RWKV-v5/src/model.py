@@ -20,6 +20,9 @@ from .module.TimeMix import RWKV_TimeMix
 def deepspeed_checkpoint(*args, **kwargs):
     return deepspeed.checkpointing.checkpoint(*args, **kwargs)
 
+import torch._dynamo.config
+torch._dynamo.config.cache_size_limit = 256
+
 ### ---
 # RWKV: State Blocks
 ### ---
@@ -106,7 +109,6 @@ class Block(JITModClass):
         
         return x, BlockState(att_state, ffn_state)
 
-    @TCompileBaseline
     def forward_attention(self, x, time_mix_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor,torch.Tensor]]:
         x = self.ln0.forward(x)
 
@@ -126,7 +128,7 @@ class Block(JITModClass):
         )
         x = self.drop1.forward(x + ffn_out)
         return x, ffn_state
-
+        
 class L2Wrap(torch.autograd.Function):
 
     @staticmethod
@@ -365,6 +367,8 @@ class RWKV(L.LightningModule):
         # Training based timings to track, and initialize
         self._counting_tokens = 0.0
         self._counting_time_start = 0
+        self.last_step_endin_time = 0.0
+
 
     def configure_optimizers(self):
         if self.bptt_learning == False:
@@ -1296,8 +1300,8 @@ class RWKV(L.LightningModule):
                 # f'dataset/train/{dataset_index}.name': dataset_name,
 
                 # Perf tracking
-                f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(step_endin_time - self._counting_time_start, 1),
-                f'perf/kTokens_per_sec_step.gpu.{global_rank}': (batch_ctx_len / 1000.0) / max(step_endin_time - step_start_time, 1),
+                f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(step_endin_time - self._counting_time_start, 1e-8),
+                f'perf/kTokens_per_sec_step.gpu.{global_rank}': (batch_ctx_len / 1000.0) / max(step_endin_time - self.last_step_endin_time, 1e-8),
                 f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
 
                 # Step and trainer tracking
@@ -1307,6 +1311,9 @@ class RWKV(L.LightningModule):
                 'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
                 'batchidx': batch_idx
             })
+
+            self.last_step_endin_time = step_endin_time
+            
         if wandb.run is not None and is_validation_run:
             global_rank = self.global_rank
 
