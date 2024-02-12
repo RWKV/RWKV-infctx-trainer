@@ -307,6 +307,9 @@ class RWKV(L.LightningModule):
         self.token_loss_threshold = token_loss_threshold
         self.token_dropout_rate = token_dropout_rate
 
+        # Previous step timestamp, for tracking step by step tok/s perf
+        self._prev_step_endin_timestamp = 0
+
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
         self.dim_att = dim_att
@@ -818,8 +821,8 @@ class RWKV(L.LightningModule):
     # @TCompileBaseline
     def compute_loss(self, batch, batch_idx, is_training_run: bool = False, is_validation_run: bool = False):
 
-        # Start time for the step
-        step_start_time = time.time()
+        # # Start time for the step
+        # step_start_time = time.time()
 
         # Used for token/second performance tracking
         if self._counting_tokens is None:
@@ -1277,6 +1280,10 @@ class RWKV(L.LightningModule):
             # Ending time for the step
             step_endin_time = time.time()
 
+            # Get the previous step endin time
+            step_prev_endin_time = self._prev_step_endin_timestamp
+            self._prev_step_endin_timestamp = step_endin_time
+
             # Log the line values
             wandb.log({
                 # The original loss and ctx_len (averaged by batch size)
@@ -1297,7 +1304,7 @@ class RWKV(L.LightningModule):
 
                 # Perf tracking
                 f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(step_endin_time - self._counting_time_start, 1),
-                f'perf/kTokens_per_sec_step.gpu.{global_rank}': (batch_ctx_len / 1000.0) / max(step_endin_time - step_start_time, 1),
+                f'perf/kTokens_per_sec_step.gpu.{global_rank}': (batch_ctx_len / 1000.0) / max(step_endin_time - step_prev_endin_time, 1e-8),
                 f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
 
                 # Step and trainer tracking
