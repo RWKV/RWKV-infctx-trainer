@@ -31,8 +31,7 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=24,precision:int=32)->tuple[Tens
     else:
         # FIXME - support fast path for non-exact multiples
         # ensure it's an exact multiple
-        if L % T != 0:
-            T = 1
+        assert(L%T == 0)
 
         N = L // T
 
