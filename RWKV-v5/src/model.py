@@ -5,8 +5,14 @@
 global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 
 from .module.CoreDependencies import *
-from .module.ChannelMix import RWKV_ChannelMix
+from .module.ChannelMix import RWKV_ChannelMix, RWKV_FFN
 from .module.TimeMix import RWKV_TimeMix
+
+#from deepspeed.moe.layer import MoE
+from .moe.layer import MoE
+from .moe.utils import split_params_into_different_moe_groups_for_optimizer
+
+use_moe = True
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
@@ -73,7 +79,7 @@ class BlockStateList:
 # The RWKV Model blocks
 ### ---
 
-class Block(JITModClass):
+class Block(nn.Module):
 
     def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn):
         super().__init__()
@@ -81,6 +87,8 @@ class Block(JITModClass):
 
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
+        if use_moe:
+            self.ln3 = nn.LayerNorm(n_embd)
 
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
@@ -89,6 +97,22 @@ class Block(JITModClass):
 
         self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
+
+
+        if use_moe:# and layer_id >= n_layer // 2:
+            dim_moe_ratio = 1# / 2.0
+            dim_moe = int(dim_ffn * dim_moe_ratio)
+            self.moe = RWKV_FFN(layer_id, n_layer, n_embd, dim_moe)#RWKV_FFN(layer_id, n_layer, n_embd, dim_moe)
+
+            self.residual_coefficients = torch.nn.Linear(n_embd, 2, bias=False)
+
+            expert_params_ratio = 8
+            num_experts = (expert_params_ratio * dim_ffn) // dim_moe
+            # print("dim_ffn", dim_ffn)
+            # print("dim_moe", dim_moe)
+            # print("num_experts", num_experts)
+            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts=num_experts, ep_size=4, k=1, min_capacity=4, capacity_factor=1.25, eval_capacity_factor=1.25, drop_tokens=True)
+            #self.moe.set_deepspeed_parallelism()
 
         # Setup droupout at block level
         self.dropout = dropout
@@ -99,7 +123,17 @@ class Block(JITModClass):
             self.drop0 = nn.Identity()
             self.drop1 = nn.Identity()
 
-    @JITModMethod
+        if use_moe:
+            with torch.no_grad():  # fancy init of time_mix
+                ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
+                ddd = torch.ones(1, 1, n_embd)
+                for i in range(n_embd):
+                    ddd[0, 0, i] = i / n_embd
+                self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+                self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+
+            self.ffn_receptance = nn.Linear(n_embd, n_embd, bias=False)
+
     @TCompileBaseline
     def forward(self, x, last_state: BlockState):
         x = self.ln0(x)
@@ -108,15 +142,47 @@ class Block(JITModClass):
             self.ln1(x),
             last_state.time_mix_state,
         )
+
         x = self.drop0(x + att_out)
-        
-        ffn_out, ffn_state = self.ffn(
-            self.ln2(x),
-            last_state.channel_mix_state,
-        )
-        x = self.drop1(x + ffn_out)
-        
-        return x, BlockState(att_state, ffn_state)
+
+        lnx = self.ln2(x)
+        lnxx = torch.cat([last_state.channel_mix_state.unsqueeze(1), lnx[:,:-1]], dim=1)
+        ffn_out = self.ffn(lnx, lnxx)
+        ffn_state = lnx[:,-1]
+        # x = x + self.ffn(lnx, lnxx)
+        # if self.dropout > 0.0:
+        #     # Handle with dropout
+        #     x = self.drop0(x)
+
+        #xx_x = torch.cat([last_state.channel_mix_state.unsqueeze(1), self.ln3(x)], dim=1).unfold(1, x.size(1), 1).transpose(-1, -2).transpose(1,2)
+
+        if use_moe:
+            # fun hackery to do both halves of the tokenshift OUTSIDE of the expert, while leaving the parameters inside the FFN
+            lnx = self.ln3(x)
+            lnxx = torch.cat([last_state.channel_mix_state.unsqueeze(1), lnx[:,:-1]], dim=1)
+            lnxk = lnx * self.time_mix_k + lnxx * (1 - self.time_mix_k)
+            lnxr = lnx * self.time_mix_r + lnxx * (1 - self.time_mix_r)
+            
+            moe_out = self.moe(lnxk)
+            if isinstance(moe_out, tuple):
+                moe_out, aux_loss, exp_counts = moe_out
+            else:
+                aux_loss = torch.tensor(0, dtype=x.dtype, device=x.device).requires_grad_()
+
+            moe_out = torch.sigmoid(self.ffn_receptance(lnxr)) * moe_out
+
+            coef = self.residual_coefficients(lnx)
+            coef = torch.nn.functional.softmax(coef, dim=-1)
+            x = x + ffn_out * coef[..., 0:1] + moe_out * coef[..., 1:]
+        else:
+            aux_loss = torch.tensor(0, dtype=x.dtype, device=x.device).requires_grad_()
+            x = x + ffn_out
+
+        #x = x + moe_out
+
+        x = self.drop1(x)
+           
+        return x, BlockState(att_state, ffn_state), aux_loss
 
         
 class L2Wrap(torch.autograd.Function):
@@ -304,6 +370,8 @@ class RWKV(L.LightningModule):
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
+        # FIXME
+        #dim_ffn = int((n_embd * 3.5 * 8) // 32 * 32)
         self.dim_att = dim_att
         self.dim_ffn = dim_ffn
 
@@ -435,26 +503,34 @@ class RWKV(L.LightningModule):
                 {
                     "params": [param_dict[n] for n in lr_1x],
                     "weight_decay": 0.0,
-                    "lr": 1.0 * lr_init
+                    "lr": 1.0 * lr_init,
+                    'name': 'random-unique-name1'
                 },
                 {
                     "params": [param_dict[n] for n in lr_2x],
                     "weight_decay": 0.0,
-                    "lr": 2.0 * lr_init
+                    "lr": 2.0 * lr_init,
+                    'name': 'random-unique-name2'
                 },
                 {
                     "params": [param_dict[n] for n in lr_3x],
                     "weight_decay": 0.0,
-                    "lr": 3.0 * lr_init
+                    "lr": 3.0 * lr_init,
+                    'name': 'random-unique-name3'
                 },
             ]
         else:
             optim_groups = [
                 {
                     "params": [p for n, p in self.named_parameters()],
-                    "weight_decay": 0.0
+                    "weight_decay": 0.0,
+                    'name': 'random-unique-name'
                 },
             ]
+
+        if use_moe:
+            optim_groups = split_params_into_different_moe_groups_for_optimizer(optim_groups)
+        #print(optim_groups)
 
         # Setup the adam optimizers
         if self.deepspeed_offload:
@@ -591,9 +667,7 @@ class RWKV(L.LightningModule):
 
         num_devices = max(1, self.trainer.num_devices)
         num_nodes = max(1, self.trainer.num_nodes)
-        num_steps = dataset_size // (self.trainer.accumulate_grad_batches * num_devices * num_nodes)
-
-        # Total number of steps
+        num_steps = dataset_size // (self.trainer.microbatch_size * num_devices * num_nodes)
         return num_steps
     
     @property
@@ -652,14 +726,16 @@ class RWKV(L.LightningModule):
         #         zip(self.blocks,
         #             BlockStateList(last_shift_states, last_wkv_states))):
         # ---
+        aux_loss = torch.tensor(0, dtype=x.dtype, device=x.device).requires_grad_()
         for i in range(len(self.blocks)):
             block = self.blocks[i]
             last_state = cur_bs_list[i]
             if self.grad_cp:
-                output_x, new_state = deepspeed_checkpoint(
+                output_x, new_state, addl_aux_loss = deepspeed_checkpoint(
                     block, output_x, last_state)
             else:
-                output_x, new_state = block(output_x, last_state)
+                output_x, new_state, addl_aux_loss = block(output_x, last_state)
+            aux_loss = aux_loss + addl_aux_loss
             new_states[i] = new_state
 
         ########
@@ -765,7 +841,7 @@ class RWKV(L.LightningModule):
         output_x = self.ln_out(output_x)
         output_x = self.head(output_x)
 
-        return output_x, new_states.shift_states, new_states.wkv_states
+        return output_x, new_states.shift_states, new_states.wkv_states, aux_loss
 
     #
     # Custom overwrite of manual_backwards operation, to skip the "manual_backwards"
@@ -817,7 +893,7 @@ class RWKV(L.LightningModule):
         step_start_time = time.time()
 
         # Used for token/second performance tracking
-        if self._counting_tokens is None:
+        if self._counting_tokens is None or batch_idx == 0:
             self._counting_tokens = 0
         if self._counting_time_start is None or self._counting_time_start == 0:
             self._counting_time_start = step_start_time
@@ -934,6 +1010,8 @@ class RWKV(L.LightningModule):
         # # DO NOT DO THIS : This causes multi node / multi GPU to go out of sync
         # if num_devices <= 1 and total_mask_sum == 0:
         #     return 0
+
+        segment_count = math.ceil(T / self.ctx_len)
         
         # Checkpoint steps
         def checkpointed_step(idx, targets, mask, last_shift_states,
@@ -948,7 +1026,7 @@ class RWKV(L.LightningModule):
             #     return sample_loss, train_loss, last_shift_states, last_wkv_states, 0
 
             # Get the logits, and the new states
-            logits, new_shift_states, new_wkv_states = self(
+            logits, new_shift_states, new_wkv_states, aux_loss = self(
                 idx, last_shift_states, last_wkv_states)
             
             # Ensure logits, targets, and mask are contiguous
@@ -1013,7 +1091,12 @@ class RWKV(L.LightningModule):
                 segment_train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
             else:
                 # L2Wrap for the backprop process
-                segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
+                # FIXME - add L2Wrap back in
+                #segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
+                segment_train_loss = train_loss
+
+            expert_level_balance_factor = 0.01
+            train_loss = train_loss + aux_loss * expert_level_balance_factor / segment_count # / logits.size(-2)
 
             # Return the checkpoint values
             return sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
@@ -1022,7 +1105,6 @@ class RWKV(L.LightningModule):
         states = BlockStateList.create(self.n_layer, B, C, 
                                        self.n_head, self.head_size,
                                        seq.device, self.emb.weight.dtype)
-        segment_count = math.ceil(T / self.ctx_len)
 
         # Initialize the training loss, and the token count
         training_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
@@ -1299,6 +1381,8 @@ class RWKV(L.LightningModule):
                 f'perf/kTokens_per_sec_step.gpu.{global_rank}': (batch_ctx_len / 1000.0) / max(step_endin_time - step_prev_endin_time, 1e-8),
                 f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
 
+                'tok' : int(batch_idx * global_device_count * B * T),
+
                 # Step and trainer tracking
                 'global_rank': global_rank, 
                 'substep': (batch_idx * global_device_count + global_rank),
@@ -1335,7 +1419,7 @@ class RWKV(L.LightningModule):
 
         # Throw if total loss is NaN
         assert not torch.isnan(training_loss), "training_loss is NaN"
-        return sampling_loss, training_loss
+        return training_loss
 
     #
     # Training and validation steps
@@ -1348,9 +1432,9 @@ class RWKV(L.LightningModule):
         # print("=== BATCH ID SHAPE ===", batch["input_ids"].shape)
         # print("=== BATCH AM SHAPE ===", batch["attention_mask"].shape)
 
-        sampling_loss, training_loss = self.compute_loss(batch, batch_idx, True, False)
+        total_loss = self.compute_loss(batch, batch_idx, True)
 
-        self.log('train/loss', training_loss, prog_bar=True)
+        self.log('train/loss', total_loss, prog_bar=True)
         # If set - forces the above train/loss log line to always be on a new line
         if self.substep_logging:
             print("")
@@ -1360,21 +1444,21 @@ class RWKV(L.LightningModule):
             torch.cuda.empty_cache()
 
         # if loss not a number return None
-        if torch.isnan(training_loss):
+        if torch.isnan(total_loss):
             return None
 
-        return training_loss
+        return total_loss
 
     # @TCompileBaseline
     def validation_step(self, batch, batch_idx):
-        sampling_loss, training_loss = self.compute_loss(batch, batch_idx, False, True)
-        self.log('validation/loss', sampling_loss, prog_bar=True, sync_dist=True)
+        total_loss = self.compute_loss(batch, batch_idx, False)
+        self.log('validation/loss', total_loss, prog_bar=True, sync_dist=True)
 
         # Reset the token tracking accordingly
-        # self._counting_tokens = 0
-        # self._counting_time_start = time.time()
+        self._counting_tokens = 0
+        self._counting_time_start = time.time()
 
-        return sampling_loss
+        return total_loss
 
 ### ---
 # SimpleRWKV, a wrapper for RWKV that allows for simple usage of the model

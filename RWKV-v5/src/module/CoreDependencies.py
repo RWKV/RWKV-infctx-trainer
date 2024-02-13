@@ -52,7 +52,7 @@ IS_TORCH_2_1_COMPATIBLE = is_torch_version_above("2.1.0")
 global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_TORCH_RUN_MODE
 RWKV_TORCH_RUN_MODE = None
 if 'RWKV_JIT_ON' not in globals():
-    RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "1").lower() in ("1", "true", "yes")
+    RWKV_JIT_ON         = os.getenv("RWKV_JIT_ON", "0").lower() in ("1", "true", "yes")
 if 'RWKV_TORCH_COMPILE' not in globals():
     RWKV_TORCH_COMPILE  = os.getenv("RWKV_TORCH_COMPILE", f"0").lower() in ("1", "true", "yes")
 

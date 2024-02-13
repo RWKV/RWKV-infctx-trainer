@@ -158,7 +158,7 @@ def RUN_WKV5_CUDA(
 ### ---
 
 # RWKV TimeMix module
-class RWKV_TimeMix(nn.Module):
+class RWKV_TimeMix(JITModClass):
 
     def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, chunk_len:int = 128, precision:int = 64):
         super().__init__()
@@ -273,6 +273,7 @@ class RWKV_TimeMix(nn.Module):
     #       [batch_size, state_size] ## Channel mix state,
     #       [batch_size, n_head, head_size, head_size] ## WKV state
     #   ]
+    @JITModMethod
     def forward(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         # Run with cuda
         if self.use_cuda is True:
