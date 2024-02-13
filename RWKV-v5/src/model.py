@@ -103,31 +103,24 @@ class Block(JITModClass):
             self.drop1 = nn.Identity()
 
     @JITModMethod
+    @TCompileBaseline
     def forward(self, x, last_state: BlockState):
-        x, att_out, att_state = self.forward_attention(x, last_state.time_mix_state)
-        x, ffn_state = self.forward_ffn(x, att_out, last_state.channel_mix_state)
+        x = self.ln0(x)
+
+        att_out, att_state = self.att(
+            self.ln1(x),
+            last_state.time_mix_state,
+        )
+        x = self.drop0(x + att_out)
+        
+        ffn_out, ffn_state = self.ffn(
+            self.ln2(x),
+            last_state.channel_mix_state,
+        )
+        x = self.drop1(x + ffn_out)
         
         return x, BlockState(att_state, ffn_state)
 
-    def forward_attention(self, x, time_mix_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor,torch.Tensor]]:
-        x = self.ln0.forward(x)
-
-        att_out, att_state = self.att.forward(
-            self.ln1.forward(x),
-            time_mix_state,
-        )
-
-        return x, att_out, att_state
-
-    @TCompileBaseline
-    def forward_ffn(self, x, att_out, channel_mix_state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        x = self.drop0.forward(x + att_out)
-        ffn_out, ffn_state = self.ffn.forward(
-            self.ln2.forward(x),
-            channel_mix_state,
-        )
-        x = self.drop1.forward(x + ffn_out)
-        return x, ffn_state
         
 class L2Wrap(torch.autograd.Function):
 
