@@ -6,6 +6,67 @@ import os
 
 from .rwkv_inner import rwkv_inner
 
+# Current code file path
+code_file_path = os.path.realpath(__file__)
+code_dir = os.path.dirname(code_file_path)
+
+### ---
+# Special WKV6 CUDA kernel handling
+### ---
+
+# the cuda kernel (if its used)
+global wkv6_cuda_kernel
+wkv6_cuda_kernel = None
+
+# WKV6_CUDA autograd module
+class WKV6_CUDA(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, B, T, C, H, r, k, v, w, u):
+        with torch.no_grad():
+            assert r.dtype == torch.bfloat16
+            assert k.dtype == torch.bfloat16
+            assert v.dtype == torch.bfloat16
+            assert w.dtype == torch.bfloat16
+            assert u.dtype == torch.bfloat16
+            #assert HEAD_SIZE == C // H
+            ctx.B = B
+            ctx.T = T
+            ctx.C = C
+            ctx.H = H
+            assert r.is_contiguous()
+            assert k.is_contiguous()
+            assert v.is_contiguous()
+            assert w.is_contiguous()
+            assert u.is_contiguous()
+            ew = (-torch.exp(w.float())).contiguous()
+            ctx.save_for_backward(r, k, v, ew, u)
+            y = torch.empty((B, T, C), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            wkv6_cuda_kernel.forward(B, T, C, H, r, k, v, ew, u, y)
+            return y
+
+    @staticmethod
+    def backward(ctx, gy):
+        with torch.no_grad():
+            assert gy.dtype == torch.bfloat16
+            B = ctx.B
+            T = ctx.T
+            C = ctx.C
+            H = ctx.H
+            assert gy.is_contiguous()
+            r, k, v, ew, u = ctx.saved_tensors
+            gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            wkv6_cuda_kernel.backward(B, T, C, H, r, k, v, ew, u, gy, gr, gk, gv, gw, gu)
+            gu = torch.sum(gu, 0).view(H, C//H)
+            return (None, None, None, None, gr, gk, gv, gw, gu)
+
+def RUN_WKV6_CUDA(B, T, C, H, r, k, v, w, u):
+    return WKV6_CUDA.apply(B, T, C, H, r, k, v, w, u)
+
 # RWKV TimeMix module
 class RWKV_TimeMix6_0(JITModClass):
 
@@ -66,9 +127,54 @@ class RWKV_TimeMix6_0(JITModClass):
         self.output = nn.Linear(dim_att, n_embd, bias=False)
         self.gate = nn.Linear(n_embd, dim_att, bias=False)
         self.ln_x = nn.GroupNorm(n_head, dim_att)
+
+        # Preload the CUDA kernel if needed
+        self.use_cuda = False
+        self._preload_cuda()
         
         self.chunk_len = chunk_len
         self.precision = precision
+
+    def _preload_cuda(self):
+        global wkv6_cuda_kernel, RWKV_NO_CUDA
+
+        # Skip preload if cuda is disabled
+        if RWKV_NO_CUDA is True:
+            self.use_cuda = False
+            return
+
+        # Load cuda if needed
+        if wkv6_cuda_kernel is None:
+            # Head sizing
+            HEAD_SIZE = self.head_size
+
+            # Log the compillation block
+            print("---")
+            print(f"[RWKV.TimeMix] Compiling CUDA kernel with HEAD_SIZE={HEAD_SIZE}")
+
+            wkv6_cuda = torch.utils.cpp_extension.load(
+                name="wkv6", 
+                sources=[
+                    os.path.join(code_dir, "cuda/wkv6_op.cpp"),
+                    os.path.join(code_dir, "cuda/wkv6_cuda.cu"),
+                ],
+                verbose=True, 
+                extra_cuda_cflags=[
+                    "-res-usage", 
+                    "--use_fast_math", 
+                    "-O3", "-Xptxas -O3", 
+                    "--extra-device-vectorization", 
+                    f"-D_N_={HEAD_SIZE}", 
+                    f"-D_T_={int(os.environ['RWKV_CTXLEN'])}"
+                ]
+            )
+
+            # Close log the compillation block
+            print(f"[RWKV.TimeMix6_0] CUDA kernel compiled & loaded globally")
+            print("---")
+        
+        # Initialize the cuda kernel
+        self.use_cuda = True
 
     # forwarding time mix given the model weights and the input tokens and states.
     #
