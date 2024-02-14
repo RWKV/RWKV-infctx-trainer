@@ -1106,9 +1106,7 @@ class RWKV(L.LightningModule):
                 segment_train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
             else:
                 # L2Wrap for the backprop process
-                # FIXME - add L2Wrap back in
-                #segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
-                segment_train_loss = train_loss
+                segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
 
             expert_level_balance_factor = 0.01
             train_loss = train_loss + aux_loss * expert_level_balance_factor / segment_count # / logits.size(-2)
