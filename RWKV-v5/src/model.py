@@ -1394,7 +1394,7 @@ class RWKV(L.LightningModule):
                 f'perf/kTokens_per_sec_step.gpu.{global_rank}': (batch_ctx_len / 1000.0) / max(step_endin_time - step_prev_endin_time, 1e-8),
                 f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
 
-                'tok' : int(batch_idx * global_device_count * B * T),
+                'tok' : int(self.global_step * max(1, self.trainer.accumulate_grad_batches) * global_device_count * B * T),
 
                 # Step and trainer tracking
                 'global_rank': global_rank, 
