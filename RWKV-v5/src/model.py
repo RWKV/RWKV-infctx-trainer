@@ -11,6 +11,8 @@ from .module.TimeMix6_0 import RWKV_TimeMix6_0
 from .module.TimeMix6_0Upgraded import RWKV_TimeMix6_0_Upgraded
 from .module.TimeMix7_0 import RWKV_TimeMix7_0
 
+from . import metrics
+
 #from deepspeed.moe.layer import MoE
 from .moe.layer import MoE
 from .moe.utils import split_params_into_different_moe_groups_for_optimizer
@@ -442,6 +444,9 @@ class RWKV(L.LightningModule):
         # Training based timings to track, and initialize
         self._counting_tokens = 0.0
         self._counting_time_start = None
+
+        self.metrics = dict(loss=metrics.Loss())
+
 
     def configure_optimizers(self):
         if self.bptt_learning == False:
@@ -1447,7 +1452,24 @@ class RWKV(L.LightningModule):
 
         sampling_loss, training_loss = self.compute_loss(batch, batch_idx, True, False)
 
-        self.log('train/loss', total_loss, prog_bar=True)
+        seq = batch['input_ids']
+        inputs = seq[:, :-1]
+        labels = seq[:, 1:]
+        logits = None # FIXME
+        preds = None # FIXME
+
+        margs = metrics.MetricArgs(inputs, logits, preds, labels, training_loss)
+        for metric in self.metrics.values():
+            metric.update(margs)
+
+        if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
+            for name, metric in self.metrics.items():
+                metric_value = metric.compute()
+                metric.clear()
+                self.log('train/'+name, metric_value)
+
+        #self.log('train/loss', training_loss, prog_bar=True)
+                
         # If set - forces the above train/loss log line to always be on a new line
         if self.substep_logging:
             print("")
