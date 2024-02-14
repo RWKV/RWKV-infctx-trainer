@@ -6,13 +6,16 @@ global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 
 from .module.CoreDependencies import *
 from .module.ChannelMix import RWKV_ChannelMix, RWKV_FFN
-from .module.TimeMix import RWKV_TimeMix
+from .module.TimeMix import RWKV_TimeMix5_2
+from .module.TimeMix6_0 import RWKV_TimeMix6_0
+from .module.TimeMix6_0Upgraded import RWKV_TimeMix6_0_Upgraded
+from .module.TimeMix7_0 import RWKV_TimeMix7_0
 
 #from deepspeed.moe.layer import MoE
 from .moe.layer import MoE
 from .moe.utils import split_params_into_different_moe_groups_for_optimizer
 
-use_moe = True
+use_moe = False#True
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
@@ -81,7 +84,7 @@ class BlockStateList:
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, version):
         super().__init__()
         self.layer_id = layer_id
 
@@ -95,7 +98,18 @@ class Block(nn.Module):
         else:
             self.ln0 = nn.Identity()
 
-        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        assert version in ['5.2','6.0_upgraded','6.0','7.0'], 'unrecognized version'
+        if version == '5.2':
+            self.att = RWKV_TimeMix5_2(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        elif version == '6.0_upgraded':
+            self.att = RWKV_TimeMix6_0_Upgraded(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        elif version == '6.0':
+            self.att = RWKV_TimeMix6_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        elif version == '7.0':
+            self.att = RWKV_TimeMix7_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        else:
+            self.att = None
+    
         self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
 
 
@@ -275,7 +289,9 @@ class RWKV(L.LightningModule):
                  dim_ffn: Optional[int] = None,
                  substep_cuda_cache_clear: bool = False,
                  substep_logging: bool = False,
-                 torch_set_float32_matmul_precision:str = 'high'
+                 torch_set_float32_matmul_precision:str = 'high',
+
+                 version: str = '5.2',
                  ):
 
         # Lets save everything in one shot
@@ -369,9 +385,7 @@ class RWKV(L.LightningModule):
         self._prev_step_endin_timestamp = 0
 
         dim_att = dim_att or n_embd
-        dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
-        # FIXME
-        #dim_ffn = int((n_embd * 3.5 * 8) // 32 * 32)
+        dim_ffn = dim_ffn or (int((n_embd * 4) // 32 * 32) if version == '7.0' else int((n_embd * 3.5) // 32 * 32))
         self.dim_att = dim_att
         self.dim_ffn = dim_ffn
 
@@ -409,7 +423,7 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, version) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)
@@ -421,13 +435,13 @@ class RWKV(L.LightningModule):
 
         # load the state, and GC the original cpu copy
         if model_weights != None:
-            self.load_state_dict(model_weights)
+            self.load_state_dict(model_weights, strict=not ('_upgrade' in version))
             del model_weights
             gc.collect()
 
         # Training based timings to track, and initialize
         self._counting_tokens = 0.0
-        self._counting_time_start = 0
+        self._counting_time_start = None
 
     def configure_optimizers(self):
         if self.bptt_learning == False:
@@ -893,7 +907,8 @@ class RWKV(L.LightningModule):
         step_start_time = time.time()
 
         # Used for token/second performance tracking
-        if self._counting_tokens is None or batch_idx == 0:
+        # Reset the token tracking accordingly
+        if self._counting_time_start is None or batch_idx <= 1:
             self._counting_tokens = 0
         if self._counting_time_start is None or self._counting_time_start == 0:
             self._counting_time_start = step_start_time
