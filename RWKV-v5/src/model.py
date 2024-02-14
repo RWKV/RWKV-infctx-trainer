@@ -1399,8 +1399,6 @@ class RWKV(L.LightningModule):
                 f'perf/kTokens_per_sec_step.gpu.{global_rank}': (batch_ctx_len / 1000.0) / max(step_endin_time - step_prev_endin_time, 1e-8),
                 f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
 
-                'tok' : int(self.global_step * max(1, self.trainer.accumulate_grad_batches) * global_device_count * B * T),
-
                 # Step and trainer tracking
                 'global_rank': global_rank, 
                 'substep': (batch_idx * global_device_count + global_rank),
@@ -1463,10 +1461,16 @@ class RWKV(L.LightningModule):
             metric.update(margs)
 
         if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
+            global_device_count = self.trainer.num_devices * self.trainer.num_nodes
+            B, T = inputs.shape
+            self.log('train/tok', int(batch_idx * global_device_count * B * T))
+            self.log('global_step', self.global_step)
             for name, metric in self.metrics.items():
                 metric_value = metric.compute()
                 metric.clear()
                 self.log('train/'+name, metric_value)
+
+
 
         #self.log('train/loss', training_loss, prog_bar=True)
                 
