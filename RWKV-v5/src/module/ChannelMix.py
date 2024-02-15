@@ -4,7 +4,7 @@ from .OptimizedOps import modified_lerp
 
 
 class RWKV_ChannelMix(nn.Module):
-
+    
     def __init__(self, layer_id, n_layer, n_embd, dim_ffn):
         super().__init__()
         # self.layer_id = layer_id
