@@ -100,33 +100,25 @@ class Block(JITModClass):
             self.drop1 = nn.Identity()
 
     @JITModMethod
+    @TCompileBaseline
     def forward(self, x, last_state: BlockState):
-        x, att_out, att_state = self.forward_attention(x, last_state.time_mix_state)
-        x, ffn_state = self.forward_ffn(x, att_out, last_state.channel_mix_state)
+        x = self.ln0(x)
+
+        att_out, att_state = self.att(
+            self.ln1(x),
+            last_state.time_mix_state,
+        )
+        x = self.drop0(x + att_out)
+        
+        ffn_out, ffn_state = self.ffn(
+            self.ln2(x),
+            last_state.channel_mix_state,
+        )
+        x = self.drop1(x + ffn_out)
         
         return x, BlockState(att_state, ffn_state)
 
-    @TCompileBaseline
-    def forward_attention(self, x, time_mix_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor,torch.Tensor]]:
-        x = self.ln0.forward(x)
-
-        att_out, att_state = self.att.forward(
-            self.ln1.forward(x),
-            time_mix_state,
-        )
-
-        return x, att_out, att_state
-
-    @TCompileBaseline
-    def forward_ffn(self, x, att_out, channel_mix_state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        x = self.drop0.forward(x + att_out)
-        ffn_out, ffn_state = self.ffn.forward(
-            self.ln2.forward(x),
-            channel_mix_state,
-        )
-        x = self.drop1.forward(x + ffn_out)
-        return x, ffn_state
-
+        
 class L2Wrap(torch.autograd.Function):
 
     @staticmethod
@@ -821,7 +813,7 @@ class RWKV(L.LightningModule):
     # @TCompileBaseline
     def compute_loss(self, batch, batch_idx, is_training_run: bool = False, is_validation_run: bool = False):
 
-        # # Start time for the step
+        # Start time for the step
         step_start_time = time.time()
 
         # Used for token/second performance tracking
@@ -1303,7 +1295,7 @@ class RWKV(L.LightningModule):
                 # f'dataset/train/{dataset_index}.name': dataset_name,
 
                 # Perf tracking
-                f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(step_endin_time - self._counting_time_start, 1),
+                f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(step_endin_time - self._counting_time_start, 1e-8),
                 f'perf/kTokens_per_sec_step.gpu.{global_rank}': (batch_ctx_len / 1000.0) / max(step_endin_time - step_prev_endin_time, 1e-8),
                 f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
 
@@ -1314,6 +1306,7 @@ class RWKV(L.LightningModule):
                 'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
                 'batchidx': batch_idx
             })
+            
         if wandb.run is not None and is_validation_run:
             global_rank = self.global_rank
 
