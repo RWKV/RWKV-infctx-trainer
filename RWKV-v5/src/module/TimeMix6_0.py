@@ -22,7 +22,11 @@ wkv6_cuda_kernel = None
 class WKV6_CUDA(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, B, T, C, H, r, k, v, w, u):
+    def forward(ctx, 
+                B:int, T:int, C:int, H:int, 
+                r:torch.Tensor, k:torch.Tensor, 
+                v:torch.Tensor, w:torch.Tensor, 
+                u:torch.Tensor):
         with torch.no_grad():
             assert r.dtype == torch.bfloat16
             assert k.dtype == torch.bfloat16
@@ -64,7 +68,13 @@ class WKV6_CUDA(torch.autograd.Function):
             gu = torch.sum(gu, 0).view(H, C//H)
             return (None, None, None, None, gr, gk, gv, gw, gu)
 
-def RUN_WKV6_CUDA(B, T, C, H, r, k, v, w, u):
+@TCompileDisable 
+@torch.jit.ignore
+def RUN_WKV6_CUDA(
+    B:int, T:int, C:int, H:int, 
+    r:torch.Tensor, k:torch.Tensor, 
+    v:torch.Tensor, w:torch.Tensor, 
+    u:torch.Tensor):
     return WKV6_CUDA.apply(B, T, C, H, r, k, v, w, u)
 
 # RWKV TimeMix module
@@ -98,17 +108,17 @@ class RWKV_TimeMix6_0(JITModClass):
             self.time_v_maa = nn.Parameter(1 - (torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1))
             self.time_g_maa = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
             TIME_MIX_EXTRA_DIM = 32
-            self.time_tm_w1 = nn.Parameter(torch.empty(n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-0.01, 0.01))
+            self.time_tm_w1 = nn.Parameter(torch.empty(n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-1e-4, 1e-4))
             self.time_tm_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, n_embd))
             W_MIX_EXTRA_DIM = 64
-            self.time_td_w1 = nn.Parameter(torch.empty(n_embd, W_MIX_EXTRA_DIM).uniform_(-0.01, 0.01))
+            self.time_td_w1 = nn.Parameter(torch.empty(n_embd, W_MIX_EXTRA_DIM).uniform_(-1e-4, 1e-4))
             self.time_td_w2 = nn.Parameter(torch.zeros(W_MIX_EXTRA_DIM, n_embd))
 
             # fancy time_decay
             decay_speed = torch.ones(dim_att)
             for n in range(dim_att):
                 decay_speed[n] = -6 + 5 * (n / (dim_att - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
-            self.time_decay = nn.Parameter(decay_speed.reshape(self.n_head, self.head_size))
+            self.time_decay = nn.Parameter(decay_speed)
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
 
             tmp = torch.zeros(dim_att)
@@ -126,7 +136,7 @@ class RWKV_TimeMix6_0(JITModClass):
         self.value = nn.Linear(n_embd, dim_att, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
         self.gate = nn.Linear(n_embd, dim_att, bias=False)
-        self.ln_x = nn.GroupNorm(n_head, dim_att)
+        self.ln_x = nn.GroupNorm(n_head, dim_att, eps=(1e-5)*(self.head_size_divisor**2))
 
         # Preload the CUDA kernel if needed
         self.use_cuda = False
@@ -152,7 +162,7 @@ class RWKV_TimeMix6_0(JITModClass):
             print("---")
             print(f"[RWKV.TimeMix] Compiling CUDA kernel with HEAD_SIZE={HEAD_SIZE}")
 
-            wkv6_cuda = torch.utils.cpp_extension.load(
+            wkv6_cuda_kernel = torch.utils.cpp_extension.load(
                 name="wkv6", 
                 sources=[
                     os.path.join(code_dir, "cuda/wkv6_op.cpp"),
@@ -193,6 +203,68 @@ class RWKV_TimeMix6_0(JITModClass):
     #   ]
     @JITModMethod
     def forward(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
+        # Run with cuda
+        if self.use_cuda is True:
+           return self._forward_cuda(x, last_state)
+        
+        # Run without cuda (cpu mode, etc)
+        return self._forward_nocuda_optimized(x, last_state)
+
+    def _forward_cuda(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
+        shift_state_out = x[:,-1]
+
+        assert(x.size(-2) % self.chunk_len == 0)
+
+        # Get the x sizing
+        B, T, C = x.size()
+        H = self.n_head
+        K = self.head_size
+        V = K
+
+        dxprev = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1) - x
+        xxx = x + dxprev * self.time_x_maa
+        xxx = torch.tanh(xxx @ self.time_tm_w1).view(B*T, 5, -1).transpose(0, 1)
+        xxx = torch.bmm(xxx, self.time_tm_w2).view(5, B, T, -1)
+        mw, mk, mv, mr, mg = xxx.unbind(dim=0)
+
+		# Get the xk, xv, xr, xg, xw, and rkvg
+        xk = x + dxprev * (self.time_k_maa + mk)
+        xv = x + dxprev * (self.time_v_maa + mv)
+        xr = x + dxprev * (self.time_r_maa + mr)
+        xg = x + dxprev * (self.time_g_maa + mg)
+        xw = x + dxprev * (self.time_w_maa + mw)
+
+        r = self.receptance(xr)
+        k = self.key(xk)
+        v = self.value(xv)
+        g = F.silu(self.gate(xg))
+
+        ww = torch.tanh(xw @ self.time_td_w1) @ self.time_td_w2
+        w = self.time_decay.view(1, 1, C) + ww
+        u = self.time_faaaa
+
+        # Logits and state
+        wkv_state = last_state[1].to(r.dtype)
+
+        # Perform the cuda forward pass
+        x_logits = RUN_WKV6_CUDA(
+            B, T, C, H, 
+            #state, # FIXME - allow state to be passed in
+            r, k, v, 
+            w, 
+            u
+        )
+
+        x_logits = x_logits.view(-1, C)
+        x_logits = self.ln_x(x_logits).view(B, T, C)
+        x_logits = self.output(x_logits * g)
+
+        # Return the logits and the state
+
+        # FIXME - state output is junk here
+        return (x_logits, (shift_state_out,wkv_state))
+    
+    def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         shift_state_out = x[:,-1]
 
         assert(x.size(-2) % self.chunk_len == 0)
@@ -235,7 +307,7 @@ class RWKV_TimeMix6_0(JITModClass):
 
         # Reshape and normalize the logits
         x_logits = x_logits.view(-1, C)
-        x_logits = self.ln_x(x_logits / self.head_size_divisor).view(B, T, C)
+        x_logits = self.ln_x(x_logits).view(B, T, C)
         x_logits = self.output(x_logits * g)
 
         # Return the logits and the state
