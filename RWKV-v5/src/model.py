@@ -188,7 +188,7 @@ class Block(nn.Module):
             moe_out = torch.sigmoid(self.ffn_receptance(lnxr)) * moe_out
 
             coef = self.residual_coefficients(lnx)
-            coef = torch.nn.functional.softmax(coef, dim=-1)
+            coef = F.sigmoid(coef)
             x = x + ffn_out * coef[..., 0:1] + moe_out * coef[..., 1:]
         else:
             aux_loss = torch.tensor(0, dtype=x.dtype, device=x.device).requires_grad_()
