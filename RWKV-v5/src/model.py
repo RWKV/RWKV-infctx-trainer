@@ -822,7 +822,7 @@ class RWKV(L.LightningModule):
     def compute_loss(self, batch, batch_idx, is_training_run: bool = False, is_validation_run: bool = False):
 
         # # Start time for the step
-        # step_start_time = time.time()
+        step_start_time = time.time()
 
         # Used for token/second performance tracking
         if self._counting_tokens is None:
