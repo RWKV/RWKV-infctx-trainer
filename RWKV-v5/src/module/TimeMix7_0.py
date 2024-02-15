@@ -239,7 +239,7 @@ class RWKV_TimeMix7_0(JITModClass):
         r = self.receptance(xr)
         k = self.key(xk)
         v = self.value(xv)
-        g = F.silu(torch.tanh(xg @ self.time_gate_w1) @ self.time_gate_w2)
+        g = torch.tanh(xg @ self.time_gate_w1) @ self.time_gate_w2
 
         ww = torch.tanh(xw @ self.time_td_w1) @ self.time_td_w2
         w = self.time_decay.view(1, 1, C) + ww
@@ -293,7 +293,7 @@ class RWKV_TimeMix7_0(JITModClass):
         r = self.receptance(xr).view(B, T, H, K).transpose(1, 2) # BHTK
         k = self.key(xk).view(B, T, H, K).transpose(1, 2)      # BHTK
         v = self.value(xv).view(B, T, H, V).transpose(1, 2)    # BHTV
-        g = F.silu(torch.tanh(xg @ self.time_gate_w1) @ self.time_gate_w2)
+        g = torch.tanh(xg @ self.time_gate_w1) @ self.time_gate_w2
 
         w = self.time_decay.float().view(1,H,1,K)
         w = w + (torch.tanh(xw @ self.time_td_w1) @ self.time_td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
