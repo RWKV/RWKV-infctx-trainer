@@ -4,8 +4,6 @@ from .OptimizedOps import modified_lerp
 from .rwkv_inner import rwkv_inner
 import os
 
-from .rwkv_inner import rwkv_inner
-
 # Current code file path
 code_file_path = os.path.realpath(__file__)
 code_dir = os.path.dirname(code_file_path)
@@ -160,7 +158,7 @@ def RUN_WKV5_CUDA(
 ### ---
 
 # RWKV TimeMix module
-class RWKV_TimeMix5_2(JITModClass):
+class RWKV_TimeMix5_2(nn.Module):
 
     def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, chunk_len:int = 128, precision:int = 64):
         super().__init__()
@@ -202,7 +200,6 @@ class RWKV_TimeMix5_2(JITModClass):
                 tmp[n] = ratio_0_to_1 * (1 - (n / (dim_att - 1))) + zigzag
 
             self.time_faaaa = nn.Parameter(tmp.reshape(self.n_head, self.head_size))
-
 
         # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
@@ -276,7 +273,6 @@ class RWKV_TimeMix5_2(JITModClass):
     #       [batch_size, state_size] ## Channel mix state,
     #       [batch_size, n_head, head_size, head_size] ## WKV state
     #   ]
-    @JITModMethod
     def forward(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         # Run with cuda
         if self.use_cuda is True:

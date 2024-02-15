@@ -4,8 +4,6 @@ from .OptimizedOps import modified_lerp
 from .rwkv_inner import rwkv_inner
 import os
 
-from .rwkv_inner import rwkv_inner
-
 # Current code file path
 code_file_path = os.path.realpath(__file__)
 code_dir = os.path.dirname(code_file_path)

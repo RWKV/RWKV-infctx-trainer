@@ -49,7 +49,6 @@ def init_model(
         # Iterate each parameter group in state_dict
         p = model_state_dict[n]
         shape = p.shape
-
         gain = 1.0
         scale = 1.0
 
