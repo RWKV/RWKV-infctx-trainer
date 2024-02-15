@@ -1041,65 +1041,6 @@ def prepare_data_static(
         # there is nothing, return none
         return None
 
-# Dataloader collator for merging multiple dataset records together
-# we use token 0 for padding, with a learning mask value of 0
-def dataloader_collator_fn(records):
-    # Get the maximum number of records 
-    # (aka the batch size)
-    records_len = len(records)
-    
-    # Compute the total length of the records
-    input_ids_len = 0
-    # token_type_ids_len = 0
-    # attention_mask_len = 0
-
-    # Loop through the records and compute the max length
-    for i in range(records_len):
-        input_ids_len = max(input_ids_len, len(records[i]["input_ids"]))
-        # token_type_ids_len = max(token_type_ids_len, len(records[i]["token_type_ids"]))
-        # attention_mask_len = max(attention_mask_len, len(records[i]["attention_mask"]))
-
-    # First row of the records
-    first_row = records[0]
-
-    # Create the output arrays, with the default 0 values (no learning mask)
-    out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"].dtype)
-    out_token_type_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["token_type_ids"].dtype)
-    out_attention_mask = torch.zeros((records_len, input_ids_len), dtype=first_row["attention_mask"].dtype)
-    out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
-
-    out_index = 0
-    out_name = None
-    # # Add dataset_index if its set
-    # if "dataset_index" in records:
-    #     out_index = records[0]["dataset_index"]
-    # if "dataset_name" in records:
-    #     out_name = records[0]["dataset_name"]
-    
-
-    # Loop through the records and copy the values to the output arrays
-    for i in range(records_len):
-        out_input_ids[i][:len(records[i]["input_ids"])] = records[i]["input_ids"]
-        out_token_type_ids[i][:len(records[i]["token_type_ids"])] = records[i]["token_type_ids"]
-        out_attention_mask[i][:len(records[i]["attention_mask"])] = records[i]["attention_mask"]
-        out_data_ctx_len[i] = len(records[i]["input_ids"])
-
-        # if i > 0 and out_index > 0 and out_index != records[i]["dataset_index"]:
-        #     out_index = -1
-        #     out_name = "mixed"
-    
-    # Build & return the output object
-    out = {
-        'input_ids': out_input_ids,
-        'token_type_ids': out_token_type_ids,
-        'attention_mask': out_attention_mask,
-        'data_ctx_len': out_data_ctx_len,
-        # 'dataset_index': out_index,
-        # 'dataset_name': out_name
-    }
-
-    return out
-
 # Build the datapack given the given settings
 def prepare_datapack_static(
         # Preload and return without merging
@@ -1446,6 +1387,75 @@ def prepare_datapack_static(
     return final_dataset
 
 #
+# dataloader_collator_fn
+#
+# Dataloader collator for merging multiple dataset records together
+# we use token 0 for padding, with a learning mask value of 0
+#
+# Used to merge mini batches per gpu, and enforce blank token paddings
+#
+def dataloader_collator_fn(records, length_multiple=128):
+    # Get the maximum number of records 
+    # (aka the batch size)
+    records_len = len(records)
+    
+    # Compute the total length of the records
+    input_ids_len = 0
+    # token_type_ids_len = 0
+    # attention_mask_len = 0
+
+    # Loop through the records and compute the max length
+    for i in range(records_len):
+        input_ids_len = max(input_ids_len, len(records[i]["input_ids"]))
+        # token_type_ids_len = max(token_type_ids_len, len(records[i]["token_type_ids"]))
+        # attention_mask_len = max(attention_mask_len, len(records[i]["attention_mask"]))
+
+    # Enforce the record length to be a multiple of the length_multiple
+    length_multiple_count = math.ceil(input_ids_len / length_multiple)
+    input_ids_len = length_multiple_count * length_multiple
+
+    # First row of the records
+    first_row = records[0]
+
+    # Create the output arrays, with the default 0 values (no learning mask)
+    out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"].dtype)
+    out_token_type_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["token_type_ids"].dtype)
+    out_attention_mask = torch.zeros((records_len, input_ids_len), dtype=first_row["attention_mask"].dtype)
+    out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
+
+    out_index = 0
+    out_name = None
+    # # Add dataset_index if its set
+    # if "dataset_index" in records:
+    #     out_index = records[0]["dataset_index"]
+    # if "dataset_name" in records:
+    #     out_name = records[0]["dataset_name"]
+    
+
+    # Loop through the records and copy the values to the output arrays
+    for i in range(records_len):
+        out_input_ids[i][:len(records[i]["input_ids"])] = records[i]["input_ids"]
+        out_token_type_ids[i][:len(records[i]["token_type_ids"])] = records[i]["token_type_ids"]
+        out_attention_mask[i][:len(records[i]["attention_mask"])] = records[i]["attention_mask"]
+        out_data_ctx_len[i] = len(records[i]["input_ids"])
+
+        # if i > 0 and out_index > 0 and out_index != records[i]["dataset_index"]:
+        #     out_index = -1
+        #     out_name = "mixed"
+    
+    # Build & return the output object
+    out = {
+        'input_ids': out_input_ids,
+        'token_type_ids': out_token_type_ids,
+        'attention_mask': out_attention_mask,
+        'data_ctx_len': out_data_ctx_len,
+        # 'dataset_index': out_index,
+        # 'dataset_name': out_name
+    }
+
+    return out
+
+#
 # CheckPointResumeSafeDataLoader
 #
 # ## Problem Stage 1:
@@ -1697,7 +1707,7 @@ class RWKVDataModule(LightningDataModule):
                 assert 'dataset'  in datapack_config, "`dataset` is not configured in the config file"
 
                 # Disable preloadonly mode, etc
-                yaml_config["datapack"] = { **yaml_config["datapack"], **{ "only_preload": Fals }}
+                yaml_config["datapack"] = { **yaml_config["datapack"], **{ "only_preload": False }}
 
                 # Get the loaded datapack
                 self._loaded_dataset = prepare_datapack_static(
@@ -1756,6 +1766,10 @@ class RWKVDataModule(LightningDataModule):
         self._train_sampler = _train_sampler
         self._train_sampler.set_epoch(self.trainer.current_epoch)
 
+        training_ctx_len = self.trainer.model.ctx_len
+        def _train_dataloader_collator_fn(records):
+            return dataloader_collator_fn(records, length_multiple=training_ctx_len)
+
         _train_dataloader = CheckPointResumeSafeDataLoader(
             dataset, 
             sampler=_train_sampler,
@@ -1767,7 +1781,7 @@ class RWKVDataModule(LightningDataModule):
             # Of batch sizeed datasets
             batch_size=microbatch_size, 
             # The collation function
-            collate_fn=dataloader_collator_fn,
+            collate_fn=_train_dataloader_collator_fn,
             # Pinned in GPU memory
             pin_memory=self.dataloader_pin_memory
         )
@@ -1792,9 +1806,14 @@ class RWKVDataModule(LightningDataModule):
         )
         self._val_sampler = sampler
 
+        training_ctx_len = 128
         microbatch_size = 1
         if hasattr(self, "trainer") and hasattr(self.trainer, "microbatch_size"):
             microbatch_size = self.trainer.microbatch_size
+            training_ctx_len = self.trainer.model.ctx_len
+
+        def _val_dataloader_collator_fn(records):
+            return dataloader_collator_fn(records, length_multiple=training_ctx_len)
 
         return DataLoader(
             dataset, 
@@ -1807,7 +1826,7 @@ class RWKVDataModule(LightningDataModule):
             # Of batch sized datasets
             batch_size=microbatch_size, 
             # The collation function
-            collate_fn=dataloader_collator_fn,
+            collate_fn=_val_dataloader_collator_fn,
             # Pinned in GPU memory
             pin_memory=self.dataloader_pin_memory
         )
