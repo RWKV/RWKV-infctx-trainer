@@ -2,8 +2,19 @@
 from .CoreDependencies import *
 from .OptimizedOps import modified_lerp
 
+class RWKV_FFN(nn.Module):
+    def __init__(self, layer_id, n_layer, n_embd, dim_ffn):
+        super().__init__()
+        self.ffn_key = nn.Linear(n_embd, dim_ffn, bias=False)
+        # self.ffn_receptance = nn.Linear(n_embd, n_embd, bias=False)
+        self.ffn_value = nn.Linear(dim_ffn, n_embd, bias=False)
 
-class RWKV_ChannelMix(nn.Module):
+    def forward(self, x):
+        kv = self.ffn_value( torch.relu( self.ffn_key(x) ) ** 2 )
+        # return torch.sigmoid(self.ffn_receptance(x)) * kv
+        return kv
+
+class RWKV_ChannelMix(JITModClass):
     
     def __init__(self, layer_id, n_layer, n_embd, dim_ffn):
         super().__init__()
@@ -31,7 +42,8 @@ class RWKV_ChannelMix(nn.Module):
     # Returns a pair 
     # - of output embedding of shape [batch_size, seq_len, embedding_size]
     # - and the last output state of shape [batch_size, state_size]
-    def forward(self, x, last_state: torch.Tensor) -> tuple[torch.Tensor,torch.Tensor]:
+    @JITModMethod
+    def forward(self, x : torch.Tensor, xx : torch.Tensor):
         # out_emb, out_state = channelMix_batchForward(
         #     self.time_mix_k,self.time_mix_r,
         #     self.key.bi
@@ -40,13 +52,12 @@ class RWKV_ChannelMix(nn.Module):
         # )
         # return (out_emb, (out_state))
     
-        xx = torch.concat((last_state.unsqueeze(1), x[:, :-1]),
-                          dim=1)
+        #xx = torch.concat((last_state.unsqueeze(1), x[:, :-1]),
+        #                  dim=1)
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
         kv = self.value( torch.relu( self.key(xk) ) ** 2 )
-        return (torch.sigmoid(self.receptance(xr)) * kv,
-                (x[:, -1]))
+        return torch.sigmoid(self.receptance(xr)) * kv
 
 # Pure lambda implementation, of forwarding channel mix given the model weights
 # and the input tokens and states.

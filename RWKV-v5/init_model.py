@@ -5,7 +5,8 @@ from src.model import RWKV
 
 def init_model(
         layers, embedding_size, vocab_size, output_model_path, 
-        skip_if_exists=False, safe_init=False, emb_scale=0.0001
+        skip_if_exists=False, safe_init=False, emb_scale=0.0001,
+        version='5.2',
         # existing_model_path=None
         ):
     
@@ -36,7 +37,7 @@ def init_model(
     # Setup the RWKV model, with the special init_model str
     # this disable the loading of the init model file
     model = RWKV(n_layer=layers, 
-                 n_embd=embedding_size, vocab_size=vocab_size, 
+                 n_embd=embedding_size, vocab_size=vocab_size, version=version,
                  load_model=".//<#|=@%!$init_model$!%@=|#>//.",
                  ctx_len=1)
     model_state_dict = model.state_dict()
@@ -48,10 +49,11 @@ def init_model(
         # Iterate each parameter group in state_dict
         p = model_state_dict[n]
         shape = p.shape
+
         gain = 1.0
         scale = 1.0
 
-        if "ln_" in n or ".ln" in n or "time_" in n or "_mask" in n or "pos_emb" in n or '.mask.' in n:
+        if len(shape) != 2 or "ln_" in n or ".ln" in n or "time_" in n or "_mask" in n or "pos_emb" in n or '.mask.' in n:
             if 'ln_x.weight' in n:
                 # Special ln_x init
                 layer_scale = (1+int(n.split('.')[1])) / layers
@@ -109,6 +111,7 @@ def main():
     parser.add_argument('--skip-if-exists', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Skip the init if the model already exists, enables --safe-init if set')
     parser.add_argument('--safe-init', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Init in safe mode, where the model is first init as a tmp file, before overwritting/moving to the output path')
     parser.add_argument('--emb-scale', type=float, default=0.0001, help='Embedding weight scale, default is 0.0001')
+    parser.add_argument('--version', type=str, default='5.2', help='RWKV Version, default is "5.2" options are "5.2" "6.0" "7.0"')
 
     # (todo) implement in the future, to support model resizing
     # parser.add_argument('--existing_model_path', type=str, help='Existing model path', default=None)
@@ -129,7 +132,8 @@ def main():
     init_model(
         args.n_layer, args.n_embd, vocab_size, args.output_model_path, 
         skip_if_exists=args.skip_if_exists, safe_init=args.safe_init,
-        emb_scale=args.emb_scale
+        emb_scale=args.emb_scale,
+        version=args.version,
     ) #, args.existing_model_path
 
 if __name__ == "__main__":
