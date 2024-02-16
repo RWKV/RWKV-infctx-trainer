@@ -1063,14 +1063,17 @@ class RWKV(L.LightningModule):
             optimizer = self.optimizers()
             cur_device = self.device
             
-            # We use the average segment size, instead of ctx length size.
-            # this helps ensure that the segment cutoffs do not make the last segment too small.
-            # (eg, the last chunk having only 1 token)
-            #
-            # it also helps ensure the segment cutoff points are more varied, across mixed dataset sizes
-            # and avoid potentially undesired training behaviour at fixed cutoff points
-            # (this only applies for segmented learning)
-            segment_size = min(math.ceil(T / segment_count)+2, self.ctx_len)
+            # # We use the average segment size, instead of ctx length size.
+            # # this helps ensure that the segment cutoffs do not make the last segment too small.
+            # # (eg, the last chunk having only 1 token)
+            # #
+            # # it also helps ensure the segment cutoff points are more varied, across mixed dataset sizes
+            # # and avoid potentially undesired training behaviour at fixed cutoff points
+            # # (this only applies for segmented learning)
+            # segment_size = min(math.ceil(T / segment_count)+2, self.ctx_len)
+
+            # We now enforce segment_size, to be self.ctx_len, to improve overall torch.compile training performance
+            segment_size = self.ctx_len
 
             # Dummy 2D tensor of shape [B,0], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
             dummy_empty_zero = torch.zeros(B,0, dtype=torch.long, device=cur_device)
