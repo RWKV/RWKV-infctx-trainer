@@ -203,7 +203,7 @@ class RWKV(L.LightningModule):
                  beta1: float = 0.9,
                  beta2: float = 0.99,
                  adam_eps: float = 1.0e-08,
-                 weight_decay: float = 0.01,
+                 weight_decay: float = 0.001,
                  warmup_steps: int = -1,
 
                  # loss bias start
@@ -429,21 +429,27 @@ class RWKV(L.LightningModule):
 
         # Setup layerwise learning rate
         if self.layerwise_lr:
+            lr_decay = set()
             lr_1x = set()
             lr_2x = set()
             lr_3x = set()
             for n, p in self.named_parameters():
-                if "time_mix" in n:
+                if ("_w1" in n) or ("_w2" in n):
                     lr_1x.add(n)
-                elif "time_decay" in n:
+                elif ("time_mix" in n) or ("time_maa" in n):
+                    lr_1x.add(n)
+                elif ("time_decay" in n) or ("time_daaaa" in n):
                     lr_2x.add(n)
                 # V5-R2 changes
                 elif "time_faaaa" in n:
                     lr_2x.add(n)
-                # elif "time_first" in n:
-                #     lr_3x.add(n)
+                elif "time_first" in n:
+                    lr_3x.add(n)
+                elif (len(p.squeeze().shape) >= 2) and (self.weight_decay > 0):
+                    lr_decay.add(n)
                 else:
                     lr_1x.add(n)
+            lr_decay = sorted(list(lr_decay))
             lr_1x = sorted(list(lr_1x))
             lr_2x = sorted(list(lr_2x))
             lr_3x = sorted(list(lr_3x))
@@ -467,12 +473,17 @@ class RWKV(L.LightningModule):
                     "weight_decay": 0.0,
                     "lr": 3.0 * lr_init
                 },
+                {
+                    "params": [param_dict[n] for n in lr_decay],
+                    "weight_decay": self.weight_decay,
+                    "lr": 1.0 * lr_init
+                },
             ]
         else:
             optim_groups = [
                 {
                     "params": [p for n, p in self.named_parameters()],
-                    "weight_decay": 0.0
+                    "weight_decay": self.weight_decay
                 },
             ]
 
@@ -483,8 +494,7 @@ class RWKV(L.LightningModule):
                                          betas=(self.beta1, self.beta2),
                                          eps=self.adam_eps,
                                          bias_correction=True,
-                                         adamw_mode=False,
-                                         weight_decay=self.weight_decay,
+                                         adamw_mode= (self.weight_decay > 0),
                                          amsgrad=False)
         else:
             optimizer = FusedAdam(optim_groups,
@@ -492,8 +502,7 @@ class RWKV(L.LightningModule):
                                   betas=(self.beta1, self.beta2),
                                   eps=self.adam_eps,
                                   bias_correction=True,
-                                  adam_w_mode=False,
-                                  weight_decay=self.weight_decay,
+                                  adam_w_mode= (self.weight_decay > 0),
                                   amsgrad=False)
             
         # Throw if wramup_steps and lr_period are both set (not supported)
@@ -1381,16 +1390,15 @@ class RWKV(L.LightningModule):
         margs = metrics.MetricArgs(inputs, logits, preds, labels, training_loss)
         for metric in self.metrics.values():
             metric.update(margs)
-
         if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
             global_device_count = self.trainer.num_devices * self.trainer.num_nodes
             B, T = inputs.shape
-            self.log('train/tok', int(batch_idx * global_device_count * B * T))
+            self.log('train/tok', int(batch_idx * global_device_count * B * T), on_step=True, prog_bar=True)
             self.log('global_step', self.global_step)
             for name, metric in self.metrics.items():
                 metric_value = metric.compute()
                 metric.clear()
-                self.log('train/'+name, metric_value, prog_bar=True)
+                self.log('train/'+name, metric_value, on_step=True, prog_bar=True)
 
 
 
