@@ -1065,9 +1065,9 @@ def dataloader_collator_fn(records, length_multiple=128):
         # token_type_ids_len = max(token_type_ids_len, len(records[i]["token_type_ids"]))
         # attention_mask_len = max(attention_mask_len, len(records[i]["attention_mask"]))
 
-    # Enforce the record length to be a multiple of the length_multiple
-    length_multiple_count = math.ceil(input_ids_len / length_multiple)
-    input_ids_len = length_multiple_count * length_multiple
+    # Enforce the record length to be one plus a multiple of the length_multiple (so that the inputs and targets are both an exact multiple of length_multiple)
+    length_multiple_count = math.ceil((input_ids_len - 1) / length_multiple)
+    input_ids_len = length_multiple_count * length_multiple + 1
 
     # First row of the records
     first_row = records[0]
