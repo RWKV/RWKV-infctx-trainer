@@ -8,6 +8,7 @@ from .module.CoreDependencies import *
 from .module.ChannelMix import RWKV_ChannelMix
 from .module.TimeMix import RWKV_TimeMix
 
+from . import metrics
 # ---
 # Isolating out known operations that **does not work** with torch.compile
 # and wrapping them within a torch._dynamo.disable, this is required to get
@@ -188,7 +189,7 @@ class RWKV(L.LightningModule):
                  beta1: float = 0.9,
                  beta2: float = 0.99,
                  adam_eps: float = 1.0e-08,
-                 weight_decay: float = 0.01,
+                 weight_decay: float = 0.001,
                  warmup_steps: int = -1,
 
                  # loss bias start
@@ -361,6 +362,9 @@ class RWKV(L.LightningModule):
         self._counting_tokens = 0.0
         self._counting_time_start = 0
 
+        self.metrics = dict(loss=metrics.Loss())
+
+
     def configure_optimizers(self):
         if self.bptt_learning == False:
             if self.deepspeed_stage >= 2 or self.deepspeed_offload:
@@ -409,21 +413,27 @@ class RWKV(L.LightningModule):
 
         # Setup layerwise learning rate
         if self.layerwise_lr:
+            lr_decay = set()
             lr_1x = set()
             lr_2x = set()
             lr_3x = set()
             for n, p in self.named_parameters():
-                if "time_mix" in n:
+                if ("_w1" in n) or ("_w2" in n):
                     lr_1x.add(n)
-                elif "time_decay" in n:
+                elif ("time_mix" in n) or ("time_maa" in n):
+                    lr_1x.add(n)
+                elif ("time_decay" in n) or ("time_daaaa" in n):
                     lr_2x.add(n)
                 # V5-R2 changes
                 elif "time_faaaa" in n:
                     lr_2x.add(n)
-                # elif "time_first" in n:
-                #     lr_3x.add(n)
+                elif "time_first" in n:
+                    lr_3x.add(n)
+                elif (len(p.squeeze().shape) >= 2) and (self.weight_decay > 0):
+                    lr_decay.add(n)
                 else:
                     lr_1x.add(n)
+            lr_decay = sorted(list(lr_decay))
             lr_1x = sorted(list(lr_1x))
             lr_2x = sorted(list(lr_2x))
             lr_3x = sorted(list(lr_3x))
@@ -447,12 +457,17 @@ class RWKV(L.LightningModule):
                     "weight_decay": 0.0,
                     "lr": 3.0 * lr_init
                 },
+                {
+                    "params": [param_dict[n] for n in lr_decay],
+                    "weight_decay": self.weight_decay,
+                    "lr": 1.0 * lr_init
+                },
             ]
         else:
             optim_groups = [
                 {
                     "params": [p for n, p in self.named_parameters()],
-                    "weight_decay": 0.0
+                    "weight_decay": self.weight_decay
                 },
             ]
 
@@ -463,8 +478,7 @@ class RWKV(L.LightningModule):
                                          betas=(self.beta1, self.beta2),
                                          eps=self.adam_eps,
                                          bias_correction=True,
-                                         adamw_mode=False,
-                                         weight_decay=self.weight_decay,
+                                         adamw_mode= (self.weight_decay > 0),
                                          amsgrad=False)
         else:
             optimizer = FusedAdam(optim_groups,
@@ -472,8 +486,7 @@ class RWKV(L.LightningModule):
                                   betas=(self.beta1, self.beta2),
                                   eps=self.adam_eps,
                                   bias_correction=True,
-                                  adam_w_mode=False,
-                                  weight_decay=self.weight_decay,
+                                  adam_w_mode= (self.weight_decay > 0),
                                   amsgrad=False)
             
         # Throw if wramup_steps and lr_period are both set (not supported)
@@ -591,9 +604,7 @@ class RWKV(L.LightningModule):
 
         num_devices = max(1, self.trainer.num_devices)
         num_nodes = max(1, self.trainer.num_nodes)
-        num_steps = dataset_size // (self.trainer.accumulate_grad_batches * num_devices * num_nodes)
-
-        # Total number of steps
+        num_steps = dataset_size // (self.trainer.microbatch_size * num_devices * num_nodes)
         return num_steps
     
     @property
@@ -1353,7 +1364,29 @@ class RWKV(L.LightningModule):
 
         sampling_loss, training_loss = self.compute_loss(batch, batch_idx, True, False)
 
-        self.log('train/loss', training_loss, prog_bar=True)
+        seq = batch['input_ids']
+        inputs = seq[:, :-1]
+        labels = seq[:, 1:]
+        logits = None # FIXME
+        preds = None # FIXME
+
+        margs = metrics.MetricArgs(inputs, logits, preds, labels, training_loss)
+        for metric in self.metrics.values():
+            metric.update(margs)
+        if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
+            global_device_count = self.trainer.num_devices * self.trainer.num_nodes
+            B, T = inputs.shape
+            self.log('train/tok', int(batch_idx * global_device_count * B * T), on_step=True, prog_bar=True)
+            self.log('global_step', self.global_step)
+            for name, metric in self.metrics.items():
+                metric_value = metric.compute()
+                metric.clear()
+                self.log('train/'+name, metric_value, on_step=True, prog_bar=True)
+
+
+
+        #self.log('train/loss', training_loss, prog_bar=True)
+                
         # If set - forces the above train/loss log line to always be on a new line
         if self.substep_logging:
             print("")
