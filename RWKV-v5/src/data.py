@@ -1041,6 +1041,75 @@ def prepare_data_static(
         # there is nothing, return none
         return None
 
+#
+# dataloader_collator_fn
+#
+# Dataloader collator for merging multiple dataset records together
+# we use token 0 for padding, with a learning mask value of 0
+#
+# Used to merge mini batches per gpu, and enforce blank token paddings
+#
+def dataloader_collator_fn(records, length_multiple=128):
+    # Get the maximum number of records 
+    # (aka the batch size)
+    records_len = len(records)
+    
+    # Compute the total length of the records
+    input_ids_len = 0
+    # token_type_ids_len = 0
+    # attention_mask_len = 0
+
+    # Loop through the records and compute the max length
+    for i in range(records_len):
+        input_ids_len = max(input_ids_len, len(records[i]["input_ids"]))
+        # token_type_ids_len = max(token_type_ids_len, len(records[i]["token_type_ids"]))
+        # attention_mask_len = max(attention_mask_len, len(records[i]["attention_mask"]))
+
+    # Enforce the record length to be a multiple of the length_multiple
+    length_multiple_count = math.ceil(input_ids_len / length_multiple)
+    input_ids_len = length_multiple_count * length_multiple
+
+    # First row of the records
+    first_row = records[0]
+
+    # Create the output arrays, with the default 0 values (no learning mask)
+    out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"].dtype)
+    out_token_type_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["token_type_ids"].dtype)
+    out_attention_mask = torch.zeros((records_len, input_ids_len), dtype=first_row["attention_mask"].dtype)
+    out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
+
+    out_index = 0
+    out_name = None
+    # # Add dataset_index if its set
+    # if "dataset_index" in records:
+    #     out_index = records[0]["dataset_index"]
+    # if "dataset_name" in records:
+    #     out_name = records[0]["dataset_name"]
+    
+
+    # Loop through the records and copy the values to the output arrays
+    for i in range(records_len):
+        out_input_ids[i][:len(records[i]["input_ids"])] = records[i]["input_ids"]
+        out_token_type_ids[i][:len(records[i]["token_type_ids"])] = records[i]["token_type_ids"]
+        out_attention_mask[i][:len(records[i]["attention_mask"])] = records[i]["attention_mask"]
+        out_data_ctx_len[i] = len(records[i]["input_ids"])
+
+        # if i > 0 and out_index > 0 and out_index != records[i]["dataset_index"]:
+        #     out_index = -1
+        #     out_name = "mixed"
+    
+    # Build & return the output object
+    out = {
+        'input_ids': out_input_ids,
+        'token_type_ids': out_token_type_ids,
+        'attention_mask': out_attention_mask,
+        'data_ctx_len': out_data_ctx_len,
+        # 'dataset_index': out_index,
+        # 'dataset_name': out_name
+    }
+
+    return out
+
 # Build the datapack given the given settings
 def prepare_datapack_static(
         # Preload and return without merging
@@ -1385,75 +1454,6 @@ def prepare_datapack_static(
 
     # Return the final dataset
     return final_dataset
-
-#
-# dataloader_collator_fn
-#
-# Dataloader collator for merging multiple dataset records together
-# we use token 0 for padding, with a learning mask value of 0
-#
-# Used to merge mini batches per gpu, and enforce blank token paddings
-#
-def dataloader_collator_fn(records, length_multiple=128):
-    # Get the maximum number of records 
-    # (aka the batch size)
-    records_len = len(records)
-    
-    # Compute the total length of the records
-    input_ids_len = 0
-    # token_type_ids_len = 0
-    # attention_mask_len = 0
-
-    # Loop through the records and compute the max length
-    for i in range(records_len):
-        input_ids_len = max(input_ids_len, len(records[i]["input_ids"]))
-        # token_type_ids_len = max(token_type_ids_len, len(records[i]["token_type_ids"]))
-        # attention_mask_len = max(attention_mask_len, len(records[i]["attention_mask"]))
-
-    # Enforce the record length to be a multiple of the length_multiple
-    length_multiple_count = math.ceil(input_ids_len / length_multiple)
-    input_ids_len = length_multiple_count * length_multiple
-
-    # First row of the records
-    first_row = records[0]
-
-    # Create the output arrays, with the default 0 values (no learning mask)
-    out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"].dtype)
-    out_token_type_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["token_type_ids"].dtype)
-    out_attention_mask = torch.zeros((records_len, input_ids_len), dtype=first_row["attention_mask"].dtype)
-    out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
-
-    out_index = 0
-    out_name = None
-    # # Add dataset_index if its set
-    # if "dataset_index" in records:
-    #     out_index = records[0]["dataset_index"]
-    # if "dataset_name" in records:
-    #     out_name = records[0]["dataset_name"]
-    
-
-    # Loop through the records and copy the values to the output arrays
-    for i in range(records_len):
-        out_input_ids[i][:len(records[i]["input_ids"])] = records[i]["input_ids"]
-        out_token_type_ids[i][:len(records[i]["token_type_ids"])] = records[i]["token_type_ids"]
-        out_attention_mask[i][:len(records[i]["attention_mask"])] = records[i]["attention_mask"]
-        out_data_ctx_len[i] = len(records[i]["input_ids"])
-
-        # if i > 0 and out_index > 0 and out_index != records[i]["dataset_index"]:
-        #     out_index = -1
-        #     out_name = "mixed"
-    
-    # Build & return the output object
-    out = {
-        'input_ids': out_input_ids,
-        'token_type_ids': out_token_type_ids,
-        'attention_mask': out_attention_mask,
-        'data_ctx_len': out_data_ctx_len,
-        # 'dataset_index': out_index,
-        # 'dataset_name': out_name
-    }
-
-    return out
 
 #
 # CheckPointResumeSafeDataLoader
