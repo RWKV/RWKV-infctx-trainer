@@ -1068,9 +1068,9 @@ def dataloader_collator_fn(records):
     assert "attention_mask" in first_row, "attention_mask is not in the record"
 
     # Create the output arrays, with the default 0 values (no learning mask)
-    out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"][0].dtype)
-    out_token_type_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["token_type_ids"][0].dtype)
-    out_attention_mask = torch.zeros((records_len, input_ids_len), dtype=first_row["attention_mask"][0].dtype)
+    out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"].dtype)
+    out_token_type_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["token_type_ids"].dtype)
+    out_attention_mask = torch.zeros((records_len, input_ids_len), dtype=first_row["attention_mask"].dtype)
     out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
 
     out_index = 0
