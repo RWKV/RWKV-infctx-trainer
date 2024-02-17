@@ -1062,10 +1062,15 @@ def dataloader_collator_fn(records):
     # First row of the records
     first_row = records[0]
 
+    # Assert that the record has all the respective keys
+    assert "input_ids" in first_row, "input_ids is not in the record"
+    assert "token_type_ids" in first_row, "token_type_ids is not in the record"
+    assert "attention_mask" in first_row, "attention_mask is not in the record"
+
     # Create the output arrays, with the default 0 values (no learning mask)
-    out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"].dtype)
-    out_token_type_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["token_type_ids"].dtype)
-    out_attention_mask = torch.zeros((records_len, input_ids_len), dtype=first_row["attention_mask"].dtype)
+    out_input_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["input_ids"][0].dtype)
+    out_token_type_ids = torch.zeros((records_len, input_ids_len), dtype=first_row["token_type_ids"][0].dtype)
+    out_attention_mask = torch.zeros((records_len, input_ids_len), dtype=first_row["attention_mask"][0].dtype)
     out_data_ctx_len = torch.zeros((records_len), dtype=torch.int32)
 
     out_index = 0
@@ -1075,7 +1080,6 @@ def dataloader_collator_fn(records):
     #     out_index = records[0]["dataset_index"]
     # if "dataset_name" in records:
     #     out_name = records[0]["dataset_name"]
-    
 
     # Loop through the records and copy the values to the output arrays
     for i in range(records_len):
@@ -1108,10 +1112,17 @@ def prepare_datapack_static(
         return_without_counting=False,
         # Skip datapath setup, if set
         skip_datapath_setup=False,
+        # skip print logs
+        skip_print_logs=False,
 
         # Additional kargs
         **kargs
     ):
+
+    # Print logging, with feature flag
+    def print_log(*args):
+        if not skip_print_logs:
+            print(*args)
 
     # Get the config groups
     datapack_config = kargs["datapack"]
@@ -1171,17 +1182,24 @@ def prepare_datapack_static(
             datasets_test_count.append(0)
             datasets_train_used_count.append(0)
         
-        if "source" in one_dataset_config and one_dataset_config["source"] is not None:
+        if skip_datapath_setup is False and ( "source" in one_dataset_config and one_dataset_config["source"] is not None ):
             datasets_arr[i] = prepare_data_static(**one_dataset_config)
-        elif one_dataset_config["data_path"] != ".//<#|=@%!$skip_datapath$!%@=|#>//.":
+        elif skip_datapath_setup or ( one_dataset_config["data_path"] != ".//<#|=@%!$skip_datapath$!%@=|#>//." ):
             if "data_path_storage_options" in one_dataset_config and one_dataset_config["data_path_storage_options"] is not None:
-                datasets_arr[i] = load_from_disk(one_dataset_config["data_path"], storage_options=one_dataset_config["data_path_storage_options"])
+                datasets_arr[i] = load_from_disk(one_dataset_config["data_path"], storage_options=one_dataset_config["data_path_storage_options"]).with_format('torch')
             else:
-                datasets_arr[i] = load_from_disk(one_dataset_config["data_path"])
+                datasets_arr[i] = load_from_disk(one_dataset_config["data_path"]).with_format('torch')
         else:
-            raise ValueError("Invalid dataset config, missing both source / data_path")
+            raise ValueError("Invalid dataset config, missing both source / data_path (name/index): "+one_dataset_config["name"]+"/"+str(i))
 
         datasets_config_merged_arr[i] = one_dataset_config
+        if datasets_arr[i] is None:
+            raise ValueError("Invalid dataset config, dataset is empty")
+        
+        # Do a quick check for the critical values
+        assert datasets_arr[i]["train"]["input_ids"] is not None
+        assert datasets_arr[i]["train"]["token_type_ids"] is not None
+        assert datasets_arr[i]["train"]["attention_mask"] is not None
 
         # Get the dataset lengths
         datasets_train_count[i] = len(datasets_arr[i]["train"])
@@ -1192,9 +1210,9 @@ def prepare_datapack_static(
     # And prepare each dataset seperately
     for i in range(len(dataset_config_arr)):
         if "name" in dataset_config_arr[i]:
-            print(">> Preparing dataset - index: ", i, " - name: ", dataset_config_arr[i]["name"])
+            print_log(">> Preparing dataset - index: ", i, " - name: ", dataset_config_arr[i]["name"])
         else:
-            print(">> Preparing dataset - index: ", i)
+            print_log(">> Preparing dataset - index: ", i)
         reset_dataset_arr_item(i)
 
         # Perform GC between sets
@@ -1202,7 +1220,7 @@ def prepare_datapack_static(
 
     # If its preload, skip 
     if only_preload:
-        print(">> Preload enabled, skipping dataset merging")
+        print_log(">> Preload enabled, skipping dataset merging")
         return None
 
     # The final dataset to build together
@@ -1212,7 +1230,9 @@ def prepare_datapack_static(
 
     # Packing Mode
     mixing_mode = datapack_config["mixing_mode"]
-    print(">> Dataset Mixing mode: ", mixing_mode)
+
+    print_log(">> -----------------------------------")
+    print_log(">> Dataset Mixing mode: ", mixing_mode)
 
     if mixing_mode == "concat" or mixing_mode == "shuffle":
         # ---------------------------------
@@ -1280,7 +1300,7 @@ def prepare_datapack_static(
         # total_train_batches = math.floor( total_train_count / datapack_batchsize )
         # total_full_batches = sum( datasets_train_batches )
 
-        # print(">> Total approx train batches ( full | random ) :", total_train_batches, " ( ", total_full_batches, " | ", total_train_batches - total_full_batches, " )")
+        # print_log(">> Total approx train batches ( full | random ) :", total_train_batches, " ( ", total_full_batches, " | ", total_train_batches - total_full_batches, " )")
 
         # # ---
         # # The full dataset will contain the following columns
@@ -1382,7 +1402,7 @@ def prepare_datapack_static(
 
     # Finally save to disk
     if "data_path" in datapack_config and datapack_config["data_path"]:
-        print(">> Saving dataset to data_path : ", datapack_config["data_path"])
+        print_log(">> Saving dataset to data_path : ", datapack_config["data_path"])
         if "data_path_storage_options" in datapack_config and datapack_config["data_path_storage_options"]:
             final_dataset.save_to_disk(
                 datapack_config["data_path"], 
@@ -1392,20 +1412,20 @@ def prepare_datapack_static(
             final_dataset.save_to_disk(
                 datapack_config["data_path"]
             )
-        print(">> Dataset saved to data_path")
+        print_log(">> Dataset saved to data_path")
     else:
-        print(">> Skipping dataset saving to disk")
+        print_log(">> Skipping dataset saving to disk")
 
-    print(">> -----------------------------------")
-    print(">> Performing dataset counting")
-    print(">> -----------------------------------")
+    print_log(">> -----------------------------------")
+    print_log(">> Performing dataset counting")
+    print_log(">> -----------------------------------")
 
     # Log the finished dataset sizes
     final_train_len = len(final_dataset["train"])
     final_test_len = len(final_dataset["test"])
-    print(">> Final dataset count ( train ) :", "{:,}".format(final_train_len), " samples/chunks/packs")
-    print(">> Final dataset count ( test  ) :", "{:,}".format(final_test_len), " samples")
-    print(">> -----------------------------------")
+    print_log(">> Final dataset count ( train ) :", "{:,}".format(final_train_len), " samples/chunks/packs")
+    print_log(">> Final dataset count ( test  ) :", "{:,}".format(final_test_len), " samples")
+    print_log(">> -----------------------------------")
 
     ## Rapid return
     if return_without_counting:
@@ -1430,17 +1450,17 @@ def prepare_datapack_static(
     test_valid = sum( test_counting["valid_tokens"] )
     test_hidden = test_total - test_valid
 
-    print(">> -----------------------------------")
-    print(">> Final 'train' dataset token count ...")
-    print(">> - Total tokens :", "{:,}".format(train_total))
-    print(">> - Valid tokens :", "{:,}".format(train_valid))
-    print(">> - Hidden tokens :", "{:,}".format(train_hidden))
-    print(">> -----------------------------------")
-    print(">> Final 'test' dataset token count ...")
-    print(">> - Total tokens :", "{:,}".format(test_total))
-    print(">> - Valid tokens :", "{:,}".format(test_valid))
-    print(">> - Hidden tokens :", "{:,}".format(test_hidden))
-    print(">> -----------------------------------")
+    print_log(">> -----------------------------------")
+    print_log(">> Final 'train' dataset token count ...")
+    print_log(">> - Total tokens :", "{:,}".format(train_total))
+    print_log(">> - Valid tokens :", "{:,}".format(train_valid))
+    print_log(">> - Hidden tokens :", "{:,}".format(train_hidden))
+    print_log(">> -----------------------------------")
+    print_log(">> Final 'test' dataset token count ...")
+    print_log(">> - Total tokens :", "{:,}".format(test_total))
+    print_log(">> - Valid tokens :", "{:,}".format(test_valid))
+    print_log(">> - Hidden tokens :", "{:,}".format(test_hidden))
+    print_log(">> -----------------------------------")
 
     # Return the final dataset
     return final_dataset
@@ -1499,7 +1519,7 @@ class RWKVDataModule(LightningDataModule):
         self, 
 
         # Skip database setup checks if datapath exists, ignored if using preload_datapath.py
-        skip_datapath_setup: bool = False,
+        skip_datapath_setup: bool = True,
         
         # Datapack config yaml to use instead, this overwrites all other settings below
         datapack_config_path:str = None,
@@ -1669,6 +1689,7 @@ class RWKVDataModule(LightningDataModule):
         self.dataloader_shuffle_training = dataloader_shuffle_training
         self.sort_by_length = sort_by_length
         self.dataloader_swap_train_test_split = dataloader_swap_train_test_split
+        self.skip_datapath_setup = skip_datapath_setup
 
         self._loaded_dataset = None
 
@@ -1692,24 +1713,30 @@ class RWKVDataModule(LightningDataModule):
                     yaml_config = yaml.safe_load(f)
 
                 # Check if the data is configured, else throw error (default assertion)
-                assert 'datapack' in datapack_config, "`datapack` is not configured in the config file"
-                assert 'default'  in datapack_config, "`default` is not configured in the config file"
-                assert 'dataset'  in datapack_config, "`dataset` is not configured in the config file"
+                assert 'datapack' in yaml_config, "`datapack` is not configured in the config file"
+                assert 'default'  in yaml_config, "`default` is not configured in the config file"
+                assert 'dataset'  in yaml_config, "`dataset` is not configured in the config file"
 
                 # Disable preloadonly mode, etc
-                yaml_config["datapack"] = { **yaml_config["datapack"], **{ "only_preload": Fals }}
+                yaml_config["datapack"] = { **yaml_config["datapack"], **{ "only_preload": False }}
 
                 # Get the loaded datapack
+                print(">> Loading datapack from config file: ", self.datapack_config_path)
                 self._loaded_dataset = prepare_datapack_static(
-                    skip_datapath_setup=skip_datapath_setup,
+                    skip_datapath_setup=self.skip_datapath_setup,
                     return_without_counting=True,
+                    skip_print_logs=True,
                     **yaml_config
                 )
-
-            if self.data_path_storage_options:
-                self._loaded_dataset = load_from_disk(self.data_path, storage_options=self.data_path_storage_options).with_format('torch')
+                print(">> Datapack load finished: ", self.datapack_config_path)
             else:
-                self._loaded_dataset = load_from_disk(self.data_path).with_format('torch')
+                # Load normal dataset
+                print(">> Loading dataset from data_path: ", self.data_path)
+                if self.data_path_storage_options:
+                    self._loaded_dataset = load_from_disk(self.data_path, storage_options=self.data_path_storage_options).with_format('torch')
+                else:
+                    self._loaded_dataset = load_from_disk(self.data_path).with_format('torch')
+                print(">> Dataset load finished: ", self.data_path)
 
     # Called once for every process in DDP
     def setup(self, stage):
