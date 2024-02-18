@@ -1384,11 +1384,11 @@ class RWKV(L.LightningModule):
             if wandb.run is not None:
                 wandb.log(logobj)
             
-        if wandb.run is not None and is_validation_run:
+        if is_validation_run:
             global_rank = self.global_rank
 
             # Log the line values
-            wandb.log({
+            logobj = {
                 # The original loss and ctx_len (averaged by batch size)
                 'validation/data_ctxlen': T, 
                 'validation/data_loss': sampling_loss,
@@ -1408,7 +1408,39 @@ class RWKV(L.LightningModule):
                 'global_rank': global_rank, 
                 'trainer/global_step':self.global_step,
                 'batchidx': batch_idx
-            })
+            }
+
+            # Consolidated logging
+            if self.consolidated_logging:
+                # Prepare the floating tensor values, containing the validation values
+                sync_tensor = torch.tensor([
+                    sampling_loss, T, 
+                    training_loss, training_tokens
+                ], device=self.device, dtype=torch.float32)
+
+                # Get the sum across all devices, for each values
+                sync_tensor = self.trainer.strategy.reduce(sync_tensor, reduce_op="sum")
+
+                # Get the sum values
+                avg_data_loss = sync_tensor[0].item() / global_device_count
+                avg_ctx_len = sync_tensor[1].item() / global_device_count
+                avg_learn_loss = sync_tensor[2].item() / global_device_count
+                avg_learn_tokens = sync_tensor[3].item() / global_device_count
+
+                # Update the log object, merge with the previous log object
+                logobj = {
+                    **logobj,
+                        
+                    # Update the consolidate loss and lengths
+                    'validation/data_ctxlen': avg_ctx_len, 
+                    'validation/data_loss': avg_data_loss,
+                    'validation/learn_tokens': avg_learn_tokens,
+                    'validation/learn_loss': avg_learn_loss,
+                }
+
+            # Actual logging into wandb
+            if wandb.run is not None:
+                wandb.log(logobj)
 
         # Throw if total loss is NaN
         assert not torch.isnan(training_loss), "training_loss is NaN"
