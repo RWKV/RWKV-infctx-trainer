@@ -1394,9 +1394,9 @@ class RWKV(L.LightningModule):
                 'validation/data_loss': sampling_loss,
                 # "validation/dataset_index": dataset_index,
 
-                # The selective training tokens, and loss
-                'validation/learn_tokens': training_tokens,
-                'validation/learn_loss': training_loss,
+                # # The selective training tokens, and loss
+                # 'validation/learn_tokens': training_tokens,
+                # 'validation/learn_loss': training_loss,
 
                 # # Dataset based tracking (not working)
                 # f'dataset/validation/{dataset_index}.loss': training_loss,
@@ -1434,8 +1434,8 @@ class RWKV(L.LightningModule):
                     # Update the consolidate loss and lengths
                     'validation/data_ctxlen': avg_ctx_len, 
                     'validation/data_loss': avg_data_loss,
-                    'validation/learn_tokens': avg_learn_tokens,
-                    'validation/learn_loss': avg_learn_loss,
+                    # 'validation/learn_tokens': avg_learn_tokens,
+                    # 'validation/learn_loss': avg_learn_loss,
                 }
 
             # Actual logging into wandb
