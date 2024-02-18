@@ -17,7 +17,7 @@ from . import metrics
 from .moe.layer import MoE
 from .moe.utils import split_params_into_different_moe_groups_for_optimizer
 
-use_moe = False#True
+use_moe = True
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
@@ -38,9 +38,11 @@ def deepspeed_checkpoint(*args, **kwargs):
 class BlockState:
 
     def __init__(self, time_mix_state: tuple[torch.Tensor,torch.Tensor],
-                 channel_mix_state: torch.Tensor):
+                 channel_mix_state: torch.Tensor,
+                 moe_mix_state: torch.Tensor):
         self.time_mix_state = time_mix_state
         self.channel_mix_state = channel_mix_state
+        self.moe_mix_state = moe_mix_state
 
 
 class BlockStateList:
@@ -67,18 +69,21 @@ class BlockStateList:
                                  device=device,
                                 #  dtype=dtype)
                                  dtype=torch.float)
-        shift_states = torch.empty((N, 2, B, C), device=device, dtype=dtype)
+        shift_states = torch.empty((N, 3, B, C), device=device, dtype=dtype)
         return BlockStateList(shift_states, wkv_states)
 
     def __getitem__(self, layer: int):
         return BlockState(
             (self.shift_states[layer, 0], self.wkv_states[layer]),
-            (self.shift_states[layer, 1]))
+            self.shift_states[layer, 1], 
+            self.shift_states[layer, 2]
+        )
 
     def __setitem__(self, layer: int, state: BlockState):
         self.shift_states[layer, 0] = state.time_mix_state[0]
         self.wkv_states[layer] = state.time_mix_state[1]
         self.shift_states[layer, 1] = state.channel_mix_state
+        self.shift_states[layer, 2] = state.moe_mix_state
 
 ### ---
 # The RWKV Model blocks
@@ -127,7 +132,7 @@ class Block(nn.Module):
             # print("dim_ffn", dim_ffn)
             # print("dim_moe", dim_moe)
             # print("num_experts", num_experts)
-            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts=num_experts, ep_size=4, k=1, min_capacity=4, capacity_factor=1.25, eval_capacity_factor=1.25, drop_tokens=True)
+            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts=num_experts, ep_size=1, k=1, min_capacity=4, capacity_factor=1.25, eval_capacity_factor=1.25, drop_tokens=True)
             #self.moe.set_deepspeed_parallelism()
 
         # Setup droupout at block level
@@ -175,7 +180,8 @@ class Block(nn.Module):
         if use_moe:
             # fun hackery to do both halves of the tokenshift OUTSIDE of the expert, while leaving the parameters inside the FFN
             lnx = self.ln3(x)
-            lnxx = torch.cat([last_state.channel_mix_state.unsqueeze(1), lnx[:,:-1]], dim=1)
+            moe_state = lnx[:,-1]
+            lnxx = torch.cat([last_state.moe_mix_state.unsqueeze(1), lnx[:,:-1]], dim=1)
             lnxk = lnx * self.time_mix_k + lnxx * (1 - self.time_mix_k)
             lnxr = lnx * self.time_mix_r + lnxx * (1 - self.time_mix_r)
             
@@ -191,6 +197,7 @@ class Block(nn.Module):
             coef = F.sigmoid(coef)
             x = x + ffn_out * coef[..., 0:1] + moe_out * coef[..., 1:]
         else:
+            moe_state = ffn_state
             aux_loss = torch.tensor(0, dtype=x.dtype, device=x.device).requires_grad_()
             x = x + ffn_out
 
@@ -198,7 +205,7 @@ class Block(nn.Module):
 
         x = self.drop1(x)
            
-        return x, BlockState(att_state, ffn_state), aux_loss
+        return x, BlockState(att_state, ffn_state, moe_state), aux_loss
 
         
 class L2Wrap(torch.autograd.Function):
