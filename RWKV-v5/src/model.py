@@ -210,8 +210,12 @@ class RWKV(L.LightningModule):
                  dim_ffn: Optional[int] = None,
                  substep_cuda_cache_clear: bool = False,
                  substep_logging: bool = False,
-                 torch_set_float32_matmul_precision:str = 'high'
-                 ):
+                 torch_set_float32_matmul_precision:str = 'high',
+
+                 # Consolidated loss, and total token count tracking
+                 # this introduces a slight perf penalty if enabled
+                 consolidated_logging: bool = True
+                ):
 
         # Lets save everything in one shot
         # (this is used for wandb logging)
@@ -283,6 +287,7 @@ class RWKV(L.LightningModule):
         self.bptt_truncated_learning = bptt_truncated_learning
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
+        self.consolidated_logging = consolidated_logging
 
         # # Add warning that bptt_truncated_learning is forced to be true
         # # due to incomplete implementation of CUDA kernel for bptt_learning
@@ -1264,7 +1269,7 @@ class RWKV(L.LightningModule):
                 # torch.cuda.empty_cache()
 
         # Wandb logging only, if an active run exists (only applies for training)
-        if wandb.run is not None and is_training_run:
+        if is_training_run:
             global_rank = self.global_rank
             global_device_count = self.trainer.num_devices * self.trainer.num_nodes
             microbatch_size = self.trainer.microbatch_size
@@ -1277,28 +1282,33 @@ class RWKV(L.LightningModule):
                 batch_ctx_len = T * microbatch_size
 
             # Increment the counting tokens, and log it accordingly
-            self._counting_tokens += batch_ctx_len / 1000.0
+            batch_ktokens = batch_ctx_len / 1000.0
+            self._counting_tokens += batch_ktokens
 
             # Calculate various log values
             ctx_len = batch_ctx_len / microbatch_size
-            tokens = training_tokens / microbatch_size
+            training_tokens_avg = training_tokens / microbatch_size
 
             # Ending time for the step
             step_endin_time = time.time()
 
             # Get the previous step endin time
             step_prev_endin_time = self._prev_step_endin_timestamp
+            if step_prev_endin_time == 0:
+                step_prev_endin_time = self._counting_time_start
             self._prev_step_endin_timestamp = step_endin_time
 
-            # Log the line values
-            wandb.log({
+            # Compute the kT values, per GPU
+            kT_per_sec = self._counting_tokens / max(step_endin_time - self._counting_time_start, 1e-8)
+            kT_per_sec_step = (batch_ktokens) / max(step_endin_time - step_prev_endin_time, 1e-8)
+            
+            # The log object to use
+            logobj = {
                 # The original loss and ctx_len (averaged by batch size)
                 'train/data_ctxlen': ctx_len, 
                 'train/data_loss': sampling_loss,
-                # "train/dataset_index": dataset_index,
-
                 # The selective training tokens, and loss
-                'train/learn_tokens': tokens,
+                'train/learn_tokens': training_tokens_avg,
                 'train/learn_loss': training_loss,
 
                 # # Dataset based tracking (not working)
@@ -1309,9 +1319,14 @@ class RWKV(L.LightningModule):
                 # f'dataset/train/{dataset_index}.name': dataset_name,
 
                 # Perf tracking
-                f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(step_endin_time - self._counting_time_start, 1e-8),
-                f'perf/kTokens_per_sec_step.gpu.{global_rank}': (batch_ctx_len / 1000.0) / max(step_endin_time - step_prev_endin_time, 1e-8),
+                f'perf/kTokens_per_sec.gpu.{global_rank}': kT_per_sec,
+                f'perf/kTokens_per_sec_step.gpu.{global_rank}': kT_per_sec_step,
                 f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
+
+                # Perf tracking
+                f'perf/cluster/kTokens_per_sec': kT_per_sec * global_device_count,
+                f'perf/cluster/kTokens_per_sec_step': kT_per_sec_step * global_device_count,
+                f'perf/cluster/kTokens_total': self._counting_tokens * global_device_count,
 
                 # Step and trainer tracking
                 'global_rank': global_rank, 
@@ -1319,21 +1334,69 @@ class RWKV(L.LightningModule):
                 'trainer/global_step':self.global_step,
                 'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
                 'batchidx': batch_idx
-            })
+            }
+
+            # Consolidated logging
+            if self.consolidated_logging:
+                # Prepare the floating tensor values, containing the total kTokens, batch kTokens, data_loss, and learn_loss
+                sync_tensor = torch.tensor([
+                    self._counting_tokens, 
+                    batch_ktokens, 
+                    sampling_loss, ctx_len,
+                    training_loss, training_tokens_avg
+                ], device=self.device, dtype=torch.float32)
+
+                # Get the sum across all devices, for each values
+                sync_tensor = self.trainer.strategy.reduce(sync_tensor, reduce_op="sum")
+
+                # Get the sum values
+                sum_total_kTokens = sync_tensor[0].item()
+                sum_batch_kTokens = sync_tensor[1].item()
+                avg_data_loss = sync_tensor[2].item() / global_device_count
+                avg_ctx_len = sync_tensor[3].item() / global_device_count
+                avg_learn_loss = sync_tensor[4].item() / global_device_count
+                avg_learn_tokens = sync_tensor[5].item() / global_device_count
+
+                # Update the log object, merge with the previous log object
+                logobj = {
+                    **logobj,
+                        
+                    # Perf tracking
+                    f'perf/cluster/kTokens_per_sec': sum_total_kTokens / max(step_endin_time - self._counting_time_start, 1e-8),
+                    f'perf/cluster/kTokens_per_sec_step': (sum_batch_kTokens) / max(step_endin_time - step_prev_endin_time, 1e-8),
+                    f'perf/cluster/kTokens_total': sum_total_kTokens,
+
+                    # Update the consolidate loss and lengths
+                    'train/data_ctxlen': avg_ctx_len, 
+                    'train/data_loss': avg_data_loss,
+                    'train/learn_tokens': avg_learn_tokens,
+                    'train/learn_loss': avg_learn_loss,
+
+                    # # The original loss and ctx_len (averaged by batch size)
+                    # f'train/data_ctxlen.gpu.{global_rank}': ctx_len, 
+                    # f'train/data_loss.gpu.{global_rank}': sampling_loss,
+                    # # The selective training tokens, and loss
+                    # f'train/learn_tokens.gpu.{global_rank}': training_tokens_avg,
+                    # f'train/learn_loss.gpu.{global_rank}': training_loss,
+                }
+
+            # Actual logging into wandb
+            if wandb.run is not None:
+                wandb.log(logobj)
             
-        if wandb.run is not None and is_validation_run:
+        if is_validation_run:
             global_rank = self.global_rank
 
             # Log the line values
-            wandb.log({
+            logobj = {
                 # The original loss and ctx_len (averaged by batch size)
                 'validation/data_ctxlen': T, 
                 'validation/data_loss': sampling_loss,
                 # "validation/dataset_index": dataset_index,
 
-                # The selective training tokens, and loss
-                'validation/learn_tokens': training_tokens,
-                'validation/learn_loss': training_loss,
+                # # The selective training tokens, and loss
+                # 'validation/learn_tokens': training_tokens,
+                # 'validation/learn_loss': training_loss,
 
                 # # Dataset based tracking (not working)
                 # f'dataset/validation/{dataset_index}.loss': training_loss,
@@ -1345,7 +1408,39 @@ class RWKV(L.LightningModule):
                 'global_rank': global_rank, 
                 'trainer/global_step':self.global_step,
                 'batchidx': batch_idx
-            })
+            }
+
+            # Consolidated logging
+            if self.consolidated_logging:
+                # Prepare the floating tensor values, containing the validation values
+                sync_tensor = torch.tensor([
+                    sampling_loss, T, 
+                    training_loss, training_tokens
+                ], device=self.device, dtype=torch.float32)
+
+                # Get the sum across all devices, for each values
+                sync_tensor = self.trainer.strategy.reduce(sync_tensor, reduce_op="sum")
+
+                # Get the sum values
+                avg_data_loss = sync_tensor[0].item() / global_device_count
+                avg_ctx_len = sync_tensor[1].item() / global_device_count
+                avg_learn_loss = sync_tensor[2].item() / global_device_count
+                avg_learn_tokens = sync_tensor[3].item() / global_device_count
+
+                # Update the log object, merge with the previous log object
+                logobj = {
+                    **logobj,
+                        
+                    # Update the consolidate loss and lengths
+                    'validation/data_ctxlen': avg_ctx_len, 
+                    'validation/data_loss': avg_data_loss,
+                    # 'validation/learn_tokens': avg_learn_tokens,
+                    # 'validation/learn_loss': avg_learn_loss,
+                }
+
+            # Actual logging into wandb
+            if wandb.run is not None:
+                wandb.log(logobj)
 
         # Throw if total loss is NaN
         assert not torch.isnan(training_loss), "training_loss is NaN"
