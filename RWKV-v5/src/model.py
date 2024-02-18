@@ -1324,9 +1324,9 @@ class RWKV(L.LightningModule):
                 f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
 
                 # Perf tracking
-                f'perf/est_kTokens_per_sec': kT_per_sec * global_device_count,
-                f'perf/est_kTokens_per_sec_step': kT_per_sec_step * global_device_count,
-                f'perf/est_kTokens_total': self._counting_tokens * global_device_count,
+                f'perf/cluster/kTokens_per_sec': kT_per_sec * global_device_count,
+                f'perf/cluster/kTokens_per_sec_step': kT_per_sec_step * global_device_count,
+                f'perf/cluster/kTokens_total': self._counting_tokens * global_device_count,
 
                 # Step and trainer tracking
                 'global_rank': global_rank, 
@@ -1362,9 +1362,9 @@ class RWKV(L.LightningModule):
                     **logobj,
                         
                     # Perf tracking
-                    f'perf/est_kTokens_per_sec': sum_total_kTokens / max(step_endin_time - self._counting_time_start, 1e-8),
-                    f'perf/est_kTokens_per_sec_step': (sum_batch_kTokens) / max(step_endin_time - step_prev_endin_time, 1e-8),
-                    f'perf/est_kTokens_total': sum_total_kTokens,
+                    f'perf/cluster/kTokens_per_sec': sum_total_kTokens / max(step_endin_time - self._counting_time_start, 1e-8),
+                    f'perf/cluster/kTokens_per_sec_step': (sum_batch_kTokens) / max(step_endin_time - step_prev_endin_time, 1e-8),
+                    f'perf/cluster/kTokens_total': sum_total_kTokens,
 
                     # Update the consolidate loss and lengths
                     'train/data_ctxlen': avg_ctx_len, 
