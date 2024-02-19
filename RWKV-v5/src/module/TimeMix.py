@@ -325,7 +325,7 @@ class RWKV_TimeMix5_2(JITModClass):
     def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         shift_state_out = x[:,-1]
 
-        assert(x.size(-2) % self.chunk_len == 0)
+        assert x.size(-2) % self.chunk_len == 0 or x.size(-2) == 1, "optimized nocuda rwkv requires data len supplied to be an exact multiple of the chunk len"
 
         # Get the x sizing
         B, T, C = x.size()
