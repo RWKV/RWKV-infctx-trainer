@@ -1390,6 +1390,11 @@ class RWKV(L.LightningModule):
             ctx_len = batch_ctx_len / microbatch_size
             training_tokens_avg = training_tokens / microbatch_size
 
+            avg_ctx_len = ctx_len
+            avg_data_loss = sampling_loss
+            avg_learn_tokens = training_tokens_avg
+            avg_learn_loss = training_loss
+
             # Ending time for the step
             step_endin_time = time.time()
 
@@ -1402,12 +1407,7 @@ class RWKV(L.LightningModule):
             # Compute the kT values, per GPU
             kT_per_sec = self._counting_tokens / max(step_endin_time - self._counting_time_start, 1e-8)
             kT_per_sec_step = (batch_ktokens) / max(step_endin_time - step_prev_endin_time, 1e-8)
-
-            avg_data_loss = sampling_loss
-            avg_ctx_len = ctx_len
-            avg_learn_loss = training_loss
-            avg_learn_tokens = training_tokens_avg
-
+            
             # The log object to use
             logobj = {
                 # The original loss and ctx_len (averaged by batch size)
@@ -1487,14 +1487,10 @@ class RWKV(L.LightningModule):
                 }
 
             # Actual logging into wandb
-            if wandb.run is not None:
-                if rank_zero_only.rank == 0:
-                    wandb.log(logobj)
-
-            logits = None # FIXME
-            preds = None # FIXME
-
-            margs = metrics.MetricArgs(idx, logits, preds, targets, avg_learn_loss)
+            if wandb.run is not None and self.global_rank == 0:
+                wandb.log(logobj)
+            
+            margs = metrics.MetricArgs(idx, None, None, targets, avg_learn_loss)
             for metric in self.metrics.values():
                 metric.update(margs)
             if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
@@ -1559,9 +1555,8 @@ class RWKV(L.LightningModule):
                 }
 
             # Actual logging into wandb
-            if wandb.run is not None:
-                if rank_zero_only.rank == 0:
-                    wandb.log(logobj)
+            if wandb.run is not None and self.global_rank == 0:
+                wandb.log(logobj)
 
         # Throw if total loss is NaN
         assert not torch.isnan(training_loss), "training_loss is NaN"
