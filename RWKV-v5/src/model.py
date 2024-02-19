@@ -1268,10 +1268,11 @@ class RWKV(L.LightningModule):
                 gc.collect()
                 # torch.cuda.empty_cache()
 
+        global_rank = self.global_rank
+        global_device_count = self.trainer.num_devices * self.trainer.num_nodes
+
         # Wandb logging only, if an active run exists (only applies for training)
         if is_training_run:
-            global_rank = self.global_rank
-            global_device_count = self.trainer.num_devices * self.trainer.num_nodes
             microbatch_size = self.trainer.microbatch_size
 
             # Get the total dataset context length
@@ -1385,8 +1386,6 @@ class RWKV(L.LightningModule):
                 wandb.log(logobj)
             
         if is_validation_run:
-            global_rank = self.global_rank
-
             # Log the line values
             logobj = {
                 # The original loss and ctx_len (averaged by batch size)
