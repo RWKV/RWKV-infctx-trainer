@@ -1498,7 +1498,6 @@ class RWKV(L.LightningModule):
             for metric in self.metrics.values():
                 metric.update(margs)
             if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
-                global_device_count = self.trainer.num_devices * self.trainer.num_nodes
                 B, T = idx.shape
                 self.log('train/tok', int(batch_idx * global_device_count * B * T), on_step=True, prog_bar=True, rank_zero_only=True)
                 self.log('global_step', self.global_step, rank_zero_only=True)
