@@ -1290,6 +1290,11 @@ class RWKV(L.LightningModule):
             ctx_len = batch_ctx_len / microbatch_size
             training_tokens_avg = training_tokens / microbatch_size
 
+            avg_ctx_len = ctx_len
+            avg_data_loss = sampling_loss
+            avg_learn_tokens = training_tokens_avg
+            avg_learn_loss = training_loss
+
             # Ending time for the step
             step_endin_time = time.time()
 
@@ -1385,6 +1390,18 @@ class RWKV(L.LightningModule):
             if wandb.run is not None:
                 wandb.log(logobj)
             
+            margs = metrics.MetricArgs(idx, None, None, targets, avg_learn_loss)
+            for metric in self.metrics.values():
+                metric.update(margs)
+            if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
+                B, T = idx.shape
+                self.log('train/tok', int(batch_idx * global_device_count * B * T), on_step=True, prog_bar=True, rank_zero_only=True)
+                self.log('global_step', self.global_step, rank_zero_only=True)
+                for name, metric in self.metrics.items():
+                    metric_value = metric.compute()
+                    metric.clear()
+                    self.log('train/'+name, metric_value, on_step=True, prog_bar=True, rank_zero_only=True)
+
         if is_validation_run:
             # Log the line values
             logobj = {
@@ -1457,27 +1474,6 @@ class RWKV(L.LightningModule):
         # print("=== BATCH AM SHAPE ===", batch["attention_mask"].shape)
 
         sampling_loss, training_loss = self.compute_loss(batch, batch_idx, True, False)
-
-        seq = batch['input_ids']
-        inputs = seq[:, :-1]
-        labels = seq[:, 1:]
-        logits = None # FIXME
-        preds = None # FIXME
-
-        margs = metrics.MetricArgs(inputs, logits, preds, labels, training_loss)
-        for metric in self.metrics.values():
-            metric.update(margs)
-        if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
-            global_device_count = self.trainer.num_devices * self.trainer.num_nodes
-            B, T = inputs.shape
-            self.log('train/tok', int(batch_idx * global_device_count * B * T), on_step=True, prog_bar=True)
-            self.log('global_step', self.global_step)
-            for name, metric in self.metrics.items():
-                metric_value = metric.compute()
-                metric.clear()
-                self.log('train/'+name, metric_value, on_step=True, prog_bar=True)
-
-
 
         #self.log('train/loss', training_loss, prog_bar=True)
                 
