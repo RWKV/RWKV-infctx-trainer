@@ -158,7 +158,7 @@ def einsum(rule, a, b):
 # includes stateful caching logic which is incompatible with ONNX.
 
 
-@torch.jit.script
+#@torch.jit.script
 def _capacity(gates: Tensor, capacity_factor: Tensor, min_capacity: Tensor) -> Tensor:
     # gates has shape of SE
     num_tokens = gates.shape[0]
@@ -171,12 +171,12 @@ def _capacity(gates: Tensor, capacity_factor: Tensor, min_capacity: Tensor) -> T
     return capacity
 
 
-@torch.jit.script
+#@torch.jit.script
 def _top_idx(source, k):
     return torch.topk(source, k=k, dim=0)[1]
 
 
-@torch.jit.script
+#@torch.jit.script
 def _one_hot_to_float(x, num_classes):
     return F.one_hot(x, num_classes=num_classes).float()
 
