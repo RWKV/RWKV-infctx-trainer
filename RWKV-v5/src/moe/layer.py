@@ -77,7 +77,7 @@ class MoE(torch.nn.Module):
         if self.use_residual:
             self.mlp = expert
             # coefficient is used for weighted sum of the output of expert and mlp
-            self.coefficient = torch.nn.Linear(hidden_size, 2)
+            self.coefficient = torch.nn.Linear(hidden_size, 2, bias=False)
 
     def set_deepspeed_parallelism(self, use_data_before_expert_parallel_=False):
         self._create_process_groups(use_data_before_expert_parallel_=use_data_before_expert_parallel_)

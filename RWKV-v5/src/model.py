@@ -5,7 +5,7 @@
 global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 
 from .module.CoreDependencies import *
-from .module.ChannelMix import RWKV_ChannelMix, RWKV_FFN
+from .module.ChannelMix import RWKV_ChannelMix, RWKV_Expert
 from .module.TimeMix import RWKV_TimeMix5_2
 from .module.TimeMix6_0 import RWKV_TimeMix6_0
 from .module.TimeMix6_0Upgraded import RWKV_TimeMix6_0_Upgraded
@@ -17,7 +17,7 @@ from . import metrics
 from .moe.layer import MoE
 from .moe.utils import split_params_into_different_moe_groups_for_optimizer
 
-use_moe = False#True
+use_moe = True
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
@@ -38,12 +38,10 @@ def deepspeed_checkpoint(*args, **kwargs):
 class BlockState:
 
     def __init__(self, time_mix_state: tuple[torch.Tensor,torch.Tensor],
-                 channel_mix_state: torch.Tensor,
-                 moe_mix_state: torch.Tensor):
+                 channel_mix_state: torch.Tensor):
         self.time_mix_state = time_mix_state
         self.channel_mix_state = channel_mix_state
-        self.moe_mix_state = moe_mix_state
-
+ 
 
 class BlockStateList:
 
@@ -69,21 +67,19 @@ class BlockStateList:
                                  device=device,
                                 #  dtype=dtype)
                                  dtype=torch.float)
-        shift_states = torch.empty((N, 3, B, C), device=device, dtype=dtype)
+        shift_states = torch.empty((N, 2, B, C), device=device, dtype=dtype)
         return BlockStateList(shift_states, wkv_states)
 
     def __getitem__(self, layer: int):
         return BlockState(
             (self.shift_states[layer, 0], self.wkv_states[layer]),
             self.shift_states[layer, 1], 
-            self.shift_states[layer, 2]
         )
 
     def __setitem__(self, layer: int, state: BlockState):
         self.shift_states[layer, 0] = state.time_mix_state[0]
         self.wkv_states[layer] = state.time_mix_state[1]
         self.shift_states[layer, 1] = state.channel_mix_state
-        self.shift_states[layer, 2] = state.moe_mix_state
 
 ### ---
 # The RWKV Model blocks
@@ -97,8 +93,6 @@ class Block(nn.Module):
 
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
-        if use_moe:
-            self.ln3 = nn.LayerNorm(n_embd)
 
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
@@ -123,9 +117,9 @@ class Block(nn.Module):
         if use_moe:# and layer_id >= n_layer // 2:
             dim_moe_ratio = 1# / 2.0
             dim_moe = int(dim_ffn * dim_moe_ratio)
-            self.moe = RWKV_FFN(layer_id, n_layer, n_embd, dim_moe)#RWKV_FFN(layer_id, n_layer, n_embd, dim_moe)
+            self.moe = RWKV_Expert(layer_id, n_layer, n_embd, dim_moe)
 
-            self.residual_coefficients = torch.nn.Linear(n_embd, 2, bias=False)
+            self.residual_coefficient = torch.nn.Linear(n_embd, 1, bias=False)
 
             expert_params_ratio = 8
             num_experts = (expert_params_ratio * dim_ffn) // dim_moe
@@ -170,18 +164,9 @@ class Block(nn.Module):
         lnxx = torch.cat([last_state.channel_mix_state.unsqueeze(1), lnx[:,:-1]], dim=1)
         ffn_out = self.ffn(lnx, lnxx)
         ffn_state = lnx[:,-1]
-        # x = x + self.ffn(lnx, lnxx)
-        # if self.dropout > 0.0:
-        #     # Handle with dropout
-        #     x = self.drop0(x)
-
-        #xx_x = torch.cat([last_state.channel_mix_state.unsqueeze(1), self.ln3(x)], dim=1).unfold(1, x.size(1), 1).transpose(-1, -2).transpose(1,2)
 
         if use_moe:
             # fun hackery to do both halves of the tokenshift OUTSIDE of the expert, while leaving the parameters inside the FFN
-            lnx = self.ln3(x)
-            moe_state = lnx[:,-1]
-            lnxx = torch.cat([last_state.moe_mix_state.unsqueeze(1), lnx[:,:-1]], dim=1)
             lnxk = lnx * self.time_mix_k + lnxx * (1 - self.time_mix_k)
             lnxr = lnx * self.time_mix_r + lnxx * (1 - self.time_mix_r)
             
@@ -193,19 +178,16 @@ class Block(nn.Module):
 
             moe_out = torch.sigmoid(self.ffn_receptance(lnxr)) * moe_out
 
-            coef = self.residual_coefficients(lnx)
+            coef = self.residual_coefficient(lnx)
             coef = F.sigmoid(coef)
-            x = x + ffn_out * coef[..., 0:1] + moe_out * coef[..., 1:]
+            x = x + ffn_out * coef + moe_out
         else:
-            moe_state = ffn_state
             aux_loss = torch.tensor(0, dtype=x.dtype, device=x.device).requires_grad_()
             x = x + ffn_out
 
-        #x = x + moe_out
-
         x = self.drop1(x)
            
-        return x, BlockState(att_state, ffn_state, moe_state), aux_loss
+        return x, BlockState(att_state, ffn_state), aux_loss
 
         
 class L2Wrap(torch.autograd.Function):
