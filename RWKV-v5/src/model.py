@@ -119,7 +119,7 @@ class Block(nn.Module):
             dim_moe = int(dim_ffn * dim_moe_ratio)
             self.moe = RWKV_Expert(layer_id, n_layer, n_embd, dim_moe)
 
-            self.residual_coefficient = torch.nn.Linear(n_embd, 1, bias=False)
+            self.residual_coefficients = torch.nn.Linear(n_embd, 2, bias=False)
 
             expert_params_ratio = 8
             num_experts = (expert_params_ratio * dim_ffn) // dim_moe
@@ -178,9 +178,9 @@ class Block(nn.Module):
 
             moe_out = torch.sigmoid(self.ffn_receptance(lnxr)) * moe_out
 
-            coef = self.residual_coefficient(lnx)
+            coef = self.residual_coefficients(lnx)
             coef = F.sigmoid(coef)
-            x = x + ffn_out * coef + moe_out
+            x = x + ffn_out * coef[..., 0:1] + moe_out * coef[..., 1:]
         else:
             aux_loss = torch.tensor(0, dtype=x.dtype, device=x.device).requires_grad_()
             x = x + ffn_out
