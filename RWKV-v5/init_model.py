@@ -53,7 +53,7 @@ def init_model(
         gain = 1.0
         scale = 1.0
 
-        if len(shape) != 2 or ".wg" in n or "ln_" in n or ".ln" in n or "time_" in n or "_mask" in n or "pos_emb" in n or '.mask.' in n:
+        if len(shape) != 2 or "ln_" in n or ".ln" in n or "time_" in n or "_mask" in n or "pos_emb" in n or '.mask.' in n:
             if 'ln_x.weight' in n:
                 # Special ln_x init
                 layer_scale = (1+int(n.split('.')[1])) / layers
