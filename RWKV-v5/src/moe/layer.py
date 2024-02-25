@@ -12,8 +12,10 @@ from .sharded_moe import MOELayer, TopKGate
 from .experts import Experts
 import typing
 
+from deepspeed.moe.layer import MoE as DeepSpeedMoE
 
-class MoE(torch.nn.Module):
+# superclass to fool the rest of DeepSpeed into thinking this is their MoE class, so it initializes/loads/saves properly when it checks module instance types
+class MoE(DeepSpeedMoE):
     """Initialize an MoE layer.
 
     Arguments:
@@ -49,7 +51,7 @@ class MoE(torch.nn.Module):
                  use_tutel: bool = False,
                  enable_expert_tensor_parallelism: bool = False):
 
-        super(MoE, self).__init__()
+        super(DeepSpeedMoE, self).__init__()
 
         self.use_residual = use_residual
         self.enable_expert_tensor_parallelism = enable_expert_tensor_parallelism

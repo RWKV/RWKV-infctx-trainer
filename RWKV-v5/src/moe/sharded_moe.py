@@ -269,7 +269,7 @@ def top1gating(logits: Tensor,
 
     # Normalize gate probabilities
     mask1_float = mask1.float()
-    gates = gates * mask1_float
+    gates = gates.bool().float() * mask1_float
 
     locations1_sc = _one_hot_to_float(locations1_s, capacity)
     combine_weights = einsum("se,sc->sec", gates, locations1_sc)
