@@ -126,7 +126,7 @@ class Block(nn.Module):
             # print("dim_ffn", dim_ffn)
             # print("dim_moe", dim_moe)
             # print("num_experts", num_experts)
-            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts=num_experts, ep_size=1, k=1, min_capacity=4, capacity_factor=1.25, eval_capacity_factor=1.25, drop_tokens=True)
+            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts=num_experts, ep_size=1, k=1, min_capacity=4, capacity_factor=1, eval_capacity_factor=1, drop_tokens=True)
             #self.moe.set_deepspeed_parallelism()
 
         # Setup droupout at block level
@@ -540,16 +540,22 @@ class RWKV(L.LightningModule):
                 {
                     "params": [param_dict[n] for n in lr_decay],
                     "weight_decay": self.weight_decay,
-                    "lr": 1.0 * lr_init
+                    "lr": 1.0 * lr_init,
+                    'name': 'random-unique-name4'
                 },
             ]
         else:
             optim_groups = [
                 {
                     "params": [p for n, p in self.named_parameters()],
-                    "weight_decay": self.weight_decay
+                    "weight_decay": self.weight_decay,
+                    'name': 'random-unique-name1'
                 },
             ]
+
+        if use_moe:
+            optim_groups = split_params_into_different_moe_groups_for_optimizer(optim_groups)
+        #print(optim_groups)
 
         # Setup the adam optimizers
         if self.deepspeed_offload:
