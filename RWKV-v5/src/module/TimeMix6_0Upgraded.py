@@ -102,7 +102,7 @@ class RWKV_TimeMix6_0_Upgraded(JITModClass):
                 ddd[0, 0, i] = i / n_embd
 
             # fancy time_mix
-            self.time_mix_x = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+            self.time_mix_x = nn.Parameter(torch.ones_like(ddd)) #self.time_mix_x = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
             self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
             self.time_mix_w = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
             self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)

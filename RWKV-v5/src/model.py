@@ -17,7 +17,7 @@ from . import metrics
 from .moe.layer import MoE
 from .moe.utils import split_params_into_different_moe_groups_for_optimizer
 
-use_moe = True
+torch._dynamo.config.cache_size_limit = 256
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
@@ -87,7 +87,7 @@ class BlockStateList:
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, version):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, version):
         super().__init__()
         self.layer_id = layer_id
 
@@ -113,32 +113,13 @@ class Block(nn.Module):
     
         self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
 
-
-        if use_moe:# and layer_id >= n_layer // 2:
-            dim_moe_ratio = 1# / 2.0
-            dim_moe = int(dim_ffn * dim_moe_ratio)
-            self.moe = RWKV_Expert(layer_id, n_layer, n_embd, dim_moe)
+        if num_experts > 0:# and layer_id >= n_layer // 2:
+            self.moe = RWKV_Expert(layer_id, n_layer, n_embd, dim_ffn)
 
             self.residual_coefficients = torch.nn.Linear(n_embd, 2, bias=False)
 
-            expert_params_ratio = 8
-            num_experts = (expert_params_ratio * dim_ffn) // dim_moe
-            # print("dim_ffn", dim_ffn)
-            # print("dim_moe", dim_moe)
-            # print("num_experts", num_experts)
-            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts=num_experts, ep_size=1, k=1, min_capacity=4, capacity_factor=1, eval_capacity_factor=1, drop_tokens=True)
-            #self.moe.set_deepspeed_parallelism()
+            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts = num_experts, ep_size=1, k=1, min_capacity=4, capacity_factor=1, eval_capacity_factor=1, drop_tokens=True)
 
-        # Setup droupout at block level
-        self.dropout = dropout
-        if dropout > 0:            
-            self.drop0 = nn.Dropout(p = dropout)
-            self.drop1 = nn.Dropout(p = dropout)
-        else:
-            self.drop0 = nn.Identity()
-            self.drop1 = nn.Identity()
-
-        if use_moe:
             with torch.no_grad():  # fancy init of time_mix
                 ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
                 ddd = torch.ones(1, 1, n_embd)
@@ -148,6 +129,17 @@ class Block(nn.Module):
                 self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
 
             self.ffn_receptance = nn.Linear(n_embd, n_embd, bias=False)
+        else:
+            self.moe = None
+
+        # Setup droupout at block level
+        self.dropout = dropout
+        if dropout > 0:            
+            self.drop0 = nn.Dropout(p = dropout)
+            self.drop1 = nn.Dropout(p = dropout)
+        else:
+            self.drop0 = nn.Identity()
+            self.drop1 = nn.Identity()
 
     @TCompileBaseline
     def forward(self, x, last_state: BlockState):
@@ -165,7 +157,7 @@ class Block(nn.Module):
         ffn_out = self.ffn(lnx, lnxx)
         ffn_state = lnx[:,-1]
 
-        if use_moe:
+        if self.moe is not None:
             # fun hackery to do both halves of the tokenshift OUTSIDE of the expert, while leaving the parameters inside the FFN
             lnxk = lnx * self.time_mix_k + lnxx * (1 - self.time_mix_k)
             lnxr = lnx * self.time_mix_r + lnxx * (1 - self.time_mix_r)
@@ -286,6 +278,7 @@ class RWKV(L.LightningModule):
                  # this introduces a slight perf penalty if enabled
                  consolidated_logging: bool = True,
 
+                 num_experts: int = 8,
                  version: str = '5.2',
                 ):
 
@@ -360,6 +353,7 @@ class RWKV(L.LightningModule):
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
         self.consolidated_logging = consolidated_logging
+        self.version = version
 
         # # Add warning that bptt_truncated_learning is forced to be true
         # # due to incomplete implementation of CUDA kernel for bptt_learning
@@ -419,7 +413,7 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, version) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, version) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)
@@ -431,7 +425,7 @@ class RWKV(L.LightningModule):
 
         # load the state, and GC the original cpu copy
         if model_weights != None:
-            self.load_state_dict(model_weights, strict=not ('_upgrade' in version))
+            self.load_state_dict(model_weights, strict=not ('_upgraded' in version))
             del model_weights
             gc.collect()
 
@@ -494,8 +488,11 @@ class RWKV(L.LightningModule):
             lr_1x = set()
             lr_2x = set()
             lr_3x = set()
+            lr_upgraded = set()
             for n, p in self.named_parameters():
-                if ("_w1" in n) or ("_w2" in n):
+                if ('_upgraded' in self.version) and ((".deepspeed_moe." in n) or ("_w1" in n) or ("_w2" in n) or (".time_mix_x" in n) or (".time_mix_w" in n)):
+                    lr_upgraded.add(n)
+                elif ("_w1" in n) or ("_w2" in n):
                     lr_1x.add(n)
                 elif ("time_mix" in n) or ("time_maa" in n):
                     lr_1x.add(n)
@@ -514,9 +511,11 @@ class RWKV(L.LightningModule):
             lr_1x = sorted(list(lr_1x))
             lr_2x = sorted(list(lr_2x))
             lr_3x = sorted(list(lr_3x))
+            lr_upgraded = sorted(list(lr_upgraded))
             # print('1x', lr_1x)
             # print('2x', lr_2x)
             # print('3x', lr_3x)
+            # print('upgradedx', lr_upgraded)
             param_dict = {n: p for n, p in self.named_parameters()}
             optim_groups = [
                 {
@@ -543,6 +542,12 @@ class RWKV(L.LightningModule):
                     "lr": 1.0 * lr_init,
                     'name': 'random-unique-name4'
                 },
+                {
+                    "params": [param_dict[n] for n in lr_upgraded],
+                    "weight_decay": self.weight_decay,
+                    "lr": 4e-4,
+                    'name': 'random-unique-name5'
+                },
             ]
         else:
             optim_groups = [
@@ -553,7 +558,7 @@ class RWKV(L.LightningModule):
                 },
             ]
 
-        if use_moe:
+        if self.blocks[0].moe is not None:
             optim_groups = split_params_into_different_moe_groups_for_optimizer(optim_groups)
         #print(optim_groups)
 

@@ -29,9 +29,9 @@ class RWKV_ChannelMix(JITModClass):
             self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
             self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
 
-        self.ffn_key = nn.Linear(n_embd, dim_ffn, bias=False)
-        self.ffn_receptance = nn.Linear(n_embd, n_embd, bias=False)
-        self.ffn_value = nn.Linear(dim_ffn, n_embd, bias=False)
+        self.key = nn.Linear(n_embd, dim_ffn, bias=False)
+        self.receptance = nn.Linear(n_embd, n_embd, bias=False)
+        self.value = nn.Linear(dim_ffn, n_embd, bias=False)
 
     # forwarding channel mix given the model weights and the input tokens and states.
     #
@@ -56,8 +56,8 @@ class RWKV_ChannelMix(JITModClass):
         #                  dim=1)
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-        kv = self.ffn_value( torch.relu( self.ffn_key(xk) ) ** 2 )
-        return torch.sigmoid(self.ffn_receptance(xr)) * kv
+        kv = self.value( torch.relu( self.key(xk) ) ** 2 )
+        return torch.sigmoid(self.receptance(xr)) * kv
 
 # Pure lambda implementation, of forwarding channel mix given the model weights
 # and the input tokens and states.
