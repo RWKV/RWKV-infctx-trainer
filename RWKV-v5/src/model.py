@@ -5,7 +5,7 @@
 global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 
 from .module.CoreDependencies import *
-from .module.ChannelMix import RWKV_ChannelMix, RWKV_Expert
+from .module.ChannelMix import RWKV_ChannelMix, RWKV_Expert, RWKV_Expert6_0x
 from .module.TimeMix import RWKV_TimeMix5_2
 from .module.TimeMix6_0 import RWKV_TimeMix6_0
 from .module.TimeMix6_0Upgraded import RWKV_TimeMix6_0_Upgraded
@@ -88,9 +88,11 @@ class BlockStateList:
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, version):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, additive_moe, version):
         super().__init__()
         self.layer_id = layer_id
+
+        self.additive_moe = additive_moe
 
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
@@ -117,9 +119,15 @@ class Block(nn.Module):
         self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
 
         if num_experts > 0:# and layer_id >= n_layer // 2:
-            self.moe = RWKV_Expert(layer_id, n_layer, n_embd, dim_ffn)
+            if version == '6.0x_upgraded':
+                dim_moe = int((n_embd * 4) // 32 * 32)
+                self.moe = RWKV_Expert6_0x(layer_id, n_layer, n_embd, dim_moe)
+            else:
+                dim_moe = dim_ffn
+                self.moe = RWKV_Expert(layer_id, n_layer, n_embd, dim_moe)
 
-            self.residual_coefficients = torch.nn.Linear(n_embd, 2, bias=False)
+            if not additive_moe:
+                self.residual_coefficients = torch.nn.Linear(n_embd, 2, bias=False)
 
             self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts = num_experts, ep_size=1, k=1, min_capacity=4, capacity_factor=1, eval_capacity_factor=1, drop_tokens=True)
 
@@ -129,9 +137,9 @@ class Block(nn.Module):
                 for i in range(n_embd):
                     ddd[0, 0, i] = i / n_embd
                 self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-                self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-
-            self.ffn_receptance = nn.Linear(n_embd, n_embd, bias=False)
+                if not additive_moe:
+                    self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+                    self.ffn_receptance = nn.Linear(n_embd, n_embd, bias=False)
         else:
             self.moe = None
 
@@ -163,7 +171,6 @@ class Block(nn.Module):
         if self.moe is not None:
             # fun hackery to do both halves of the tokenshift OUTSIDE of the expert, while leaving the parameters inside the FFN
             lnxk = lnx * self.time_mix_k + lnxx * (1 - self.time_mix_k)
-            lnxr = lnx * self.time_mix_r + lnxx * (1 - self.time_mix_r)
             
             moe_out = self.moe(lnxk)
             if isinstance(moe_out, tuple):
@@ -171,11 +178,14 @@ class Block(nn.Module):
             else:
                 aux_loss = torch.tensor(0, dtype=x.dtype, device=x.device).requires_grad_()
 
-            moe_out = torch.sigmoid(self.ffn_receptance(lnxr)) * moe_out
-
-            coef = self.residual_coefficients(lnx)
-            coef = F.sigmoid(coef)
-            x = x + ffn_out * coef[..., 0:1] + moe_out * coef[..., 1:]
+            if self.additive_moe:
+                x = x + ffn_out + moe_out
+            else:
+                lnxr = lnx * self.time_mix_r + lnxx * (1 - self.time_mix_r)
+                moe_out = torch.sigmoid(self.ffn_receptance(lnxr)) * moe_out
+                coef = self.residual_coefficients(lnx)
+                coef = F.sigmoid(coef)
+                x = x + ffn_out * coef[..., 0:1] + moe_out * coef[..., 1:]
         else:
             aux_loss = torch.tensor(0, dtype=x.dtype, device=x.device).requires_grad_()
             x = x + ffn_out
@@ -282,6 +292,7 @@ class RWKV(L.LightningModule):
                  consolidated_logging: bool = True,
 
                  num_experts: int = 8,
+                 additive_moe: bool = True,
                  version: str = '5.2',
                 ):
 
@@ -329,6 +340,26 @@ class RWKV(L.LightningModule):
         
         if vocab_size < 0:
             vocab_size = model_weights['head.weight'].shape[0]
+
+        if model_weights is not None and num_experts > 0 and 'blocks.0.moe.deepspeed_moe.gate.wg.weight' in model_weights.keys():
+            #print(model_keys)
+            for i in range(n_layer):
+                #'blocks.0.ffn.time_mix_k', 'blocks.0.ffn.time_mix_r', 'blocks.0.ffn.key.weight', 'blocks.0.ffn.receptance.weight', 'blocks.0.ffn.value.weight',        
+                #'blocks.0.moe.deepspeed_moe.gate.wg.weight', 'blocks.0.moe.deepspeed_moe.experts.deepspeed_experts.0.ffn_key.weight', 'blocks.0.moe.deepspeed_moe.experts.deepspeed_experts.0.ffn_receptance.weight', 'blocks.0.moe.deepspeed_moe.experts.deepspeed_experts.0.ffn_value.weight', 'blocks.0.residual_coefficients.weight', 'blocks.0.ffn_receptance.weight', 
+                model_weights[f'blocks.{i}.time_mix_k'] = model_weights[f'blocks.{i}.ffn.time_mix_k']
+                model_weights[f'blocks.{i}.time_mix_r'] = model_weights[f'blocks.{i}.ffn.time_mix_r']
+                #del model_weights[f'blocks.{i}.ffn.time_mix_k']
+                #del model_weights[f'blocks.{i}.ffn.time_mix_r']
+
+                for e in range(num_experts):
+                    #model_weights[f'blocks.{i}.moe.deepspeed_moe.experts.deepspeed_experts.{e}.ffn_key.weight'] = model_weights[f'blocks.{i}.ffn.key.weight']
+                    model_weights[f'blocks.{i}.moe.deepspeed_moe.experts.deepspeed_experts.{e}.ffn_receptance.weight'] = torch.zeros_like(model_weights[f'blocks.{i}.ffn.receptance.weight'])
+                    model_weights[f'blocks.{i}.moe.deepspeed_moe.experts.deepspeed_experts.{e}.ffn_value.weight'] = torch.zeros_like(model_weights[f'blocks.{i}.ffn.value.weight'])
+                #del model_weights[f'blocks.{i}.ffn.key.weight']
+                #model_weights[f'blocks.{i}.ffn_receptance.weight'] = torch.zeros_like(model_weights[f'blocks.{i}.ffn.receptance.weight'])
+                #del model_weights[f'blocks.{i}.ffn.receptance.weight']
+                #del model_weights[f'blocks.{i}.ffn.value.weight']
+
 
         # Save the various other params for later
         self.ctx_len = ctx_len
@@ -416,7 +447,7 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, version) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, additive_moe, version) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)

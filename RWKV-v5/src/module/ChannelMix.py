@@ -14,6 +14,38 @@ class RWKV_Expert(nn.Module):
         # NOTE - we use the same x for receptance here, unlike in normal chanmix
         return torch.sigmoid(self.ffn_receptance(x)) * kv
 
+class DDLorExp(nn.Module):
+    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int):
+        super().__init__()
+        self.in_dim = in_dim
+        self.hidden_dim = hidden_dim
+        self.out_dim = out_dim
+
+        self.w1 = nn.Parameter(torch.empty(in_dim, hidden_dim).uniform_(-0.01, 0.01))
+        self.w2 = nn.Parameter(torch.zeros(hidden_dim, out_dim))
+        self.gmult = nn.Parameter(torch.ones(out_dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        glora = (torch.tanh(x @ self.w1) @ self.w2).exp()
+        gate = self.gmult.to(glora) * glora
+        return gate
+
+
+class RWKV_Expert6_0x(nn.Module):
+    def __init__(self, layer_id, n_layer, D, F):
+        super().__init__()
+
+        self.w_hidden = nn.Linear(D, F, bias=False)
+        self.w_out = nn.Linear(F, D, bias=False)
+        GATE_EXP_DIM = max(64, D // 16)
+        self.w_gate = DDLorExp(in_dim=D, hidden_dim=GATE_EXP_DIM, out_dim=D)
+
+    def forward(self, x: torch.Tensor):
+        hidden = self.w_hidden(x)
+        hidden = torch.relu(hidden).pow(2)
+        gate = self.w_gate(x)
+        return gate * self.w_out(hidden)
+
 class RWKV_ChannelMix(JITModClass):
     
     def __init__(self, layer_id, n_layer, n_embd, dim_ffn):
