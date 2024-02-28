@@ -9,6 +9,7 @@ from .module.ChannelMix import RWKV_ChannelMix, RWKV_Expert
 from .module.TimeMix import RWKV_TimeMix5_2
 from .module.TimeMix6_0 import RWKV_TimeMix6_0
 from .module.TimeMix6_0Upgraded import RWKV_TimeMix6_0_Upgraded
+from .module.TimeMix6_0xUpgraded import RWKV_TimeMix6_0x_Upgraded
 from .module.TimeMix7_0 import RWKV_TimeMix7_0
 
 from . import metrics
@@ -99,13 +100,15 @@ class Block(nn.Module):
         else:
             self.ln0 = nn.Identity()
 
-        assert version in ['5.2','6.0_upgraded','6.0','7.0'], 'unrecognized version'
+        assert version in ['5.2','6.0_upgraded','6.0','6.0x_upgraded','7.0'], 'unrecognized version'
         if version == '5.2':
             self.att = RWKV_TimeMix5_2(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         elif version == '6.0_upgraded':
             self.att = RWKV_TimeMix6_0_Upgraded(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         elif version == '6.0':
             self.att = RWKV_TimeMix6_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        elif version == '6.0x_upgraded':
+            self.att = RWKV_TimeMix6_0x_Upgraded(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         elif version == '7.0':
             self.att = RWKV_TimeMix7_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         else:
@@ -490,7 +493,7 @@ class RWKV(L.LightningModule):
             lr_3x = set()
             lr_upgraded = set()
             for n, p in self.named_parameters():
-                if ('_upgraded' in self.version) and ((".deepspeed_moe." in n) or ("_w1" in n) or ("_w2" in n) or (".time_mix_x" in n) or (".time_mix_w" in n)):
+                if ('_upgraded' in self.version) and ((".deepspeed_moe." in n) or ("_w1" in n) or ("_w2" in n) or (".time_mix_x" in n) or (".time_mix_w" in n) or (".time_t" in n)):
                     lr_upgraded.add(n)
                 elif ("_w1" in n) or ("_w2" in n):
                     lr_1x.add(n)
