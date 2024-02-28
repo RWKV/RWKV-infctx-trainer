@@ -620,16 +620,20 @@ class RWKV(L.LightningModule):
                 "Use either warmup_steps or lr_period, not both.")
 
         if self.warmup_steps > 0:
-            lr_scheduler = deepspeed.runtime.lr_schedules.WarmupLR(
+            lr_scheduler = torch.optim.lr_scheduler.LinearLR(
                 optimizer,
-                warmup_min_lr=0.2 * self.lr_init,
-                warmup_max_lr=self.lr_init,
-                warmup_num_steps=self.warmup_steps,
-                warmup_type='linear')
+                start_factor = 0.2,
+                end_factor = 1.0,
+                total_iters = self.warmup_steps
+            )
 
             return {
                 'optimizer': optimizer,
-                'lr_scheduler': lr_scheduler,
+                'lr_scheduler': {
+                    "scheduler": lr_scheduler,
+                    "interval": "step",
+                    "frequency": 1,
+                },
             }
 
         else:
