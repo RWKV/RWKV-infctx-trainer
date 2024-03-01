@@ -431,7 +431,7 @@ class RWKV(L.LightningModule):
                     lr_2x.add(n)
                 # V5-R2 changes
                 elif "time_faaaa" in n:
-                    lr_2x.add(n)
+                    lr_1x.add(n)
                 elif "time_first" in n:
                     lr_3x.add(n)
                 elif (len(p.squeeze().shape) >= 2) and (self.weight_decay > 0):
