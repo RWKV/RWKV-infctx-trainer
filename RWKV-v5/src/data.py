@@ -45,7 +45,9 @@ def prepare_data_static(
         source_dataset_params: dict = None,
         # Source dataset split to use
         source_dataset_split: str = "train",
-        # Test split of source data, if it was not already done
+        # test dataset split (if any)
+        test_dataset_split: str = "test",
+        # Test split of source data, if the test_dataset_split was not found
         test_split: float = 0.01,
         test_split_shuffle: bool = False,
         # Text rechunking size
@@ -298,13 +300,23 @@ def prepare_data_static(
             # Load the dataset
             src_dataset = load_dataset(**load_dataset_params)
 
-            # If for some reason the dataset is a "test" only split, and missing a "train" split, we remap it as a "train" split
+            # If for some reason the dataset missing the "train" split, we throw accordingly
             if source_dataset_split not in src_dataset.keys():
                 raise ValueError('Dataset missing split: ' + source_dataset_split)
 
             if source_dataset_split != "train":
                 src_dataset["train"] = src_dataset[source_dataset_split]
                 del src_dataset[source_dataset_split]
+
+            # If test split exists, and != "test", we will move it to "test"
+            if test_dataset_split != "test" and test_dataset_split in src_dataset.keys():
+                src_dataset["test"] = src_dataset[test_dataset_split]
+                del src_dataset[test_dataset_split]
+            
+            # Remove all splits, that is not "train" or "test"
+            for key in src_dataset.keys():
+                if key not in ["train", "test"]:
+                    del src_dataset[key]
 
             # If an int value is used, it is interprated as document count
             # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
