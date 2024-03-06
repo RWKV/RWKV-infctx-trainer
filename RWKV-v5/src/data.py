@@ -309,12 +309,17 @@ def prepare_data_static(
                 del src_dataset[source_dataset_split]
 
             # If test split exists, and != "test", we will move it to "test"
-            if test_dataset_split != "test" and test_dataset_split in src_dataset.keys():
-                src_dataset["test"] = src_dataset[test_dataset_split]
-                del src_dataset[test_dataset_split]
+            # or clear existing test (if not exists). This will allow the test_split fallback to work
+            if test_dataset_split != "test":
+                if test_dataset_split in src_dataset.keys():
+                    src_dataset["test"] = src_dataset[test_dataset_split]
+                    del src_dataset[test_dataset_split]
+                elif "test" in src_dataset.keys():
+                    del src_dataset["test"]
             
             # Remove all splits, that is not "train" or "test"
-            for key in src_dataset.keys():
+            src_dataset_keys = list(src_dataset.keys())
+            for key in src_dataset_keys:
                 if key not in ["train", "test"]:
                     del src_dataset[key]
 
