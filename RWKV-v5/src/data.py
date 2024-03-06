@@ -404,6 +404,14 @@ def prepare_data_static(
                             'attention_mask': mask_arr
                         }
                     
+                    # Empty / Null string handling
+                    if x is None or len(str(x)) == 0:
+                        return {
+                            'input_ids': [[]],
+                            'token_type_ids': [[]],
+                            'attention_mask': [[]],
+                        }
+                    
                     # Else we encode the string and return it following the HF tokenizer format
                     enc_str = world_tokenizer_encode(str(x), world_add_endoftext_token=world_add_endoftext_token)
                     return {
