@@ -392,7 +392,7 @@ def prepare_data_static(
                         type_arr = []
                         mask_arr = []
                         for i in range(len(x)):
-                            enc_str = world_tokenizer_encode(x[i], world_add_endoftext_token=world_add_endoftext_token)
+                            enc_str = world_tokenizer_encode(str(x[i]), world_add_endoftext_token=world_add_endoftext_token)
                             id_arr.append(enc_str)
                             type_arr.append([0] * len(enc_str))
                             mask_arr.append([1] * len(enc_str))
@@ -405,7 +405,7 @@ def prepare_data_static(
                         }
                     
                     # Else we encode the string and return it following the HF tokenizer format
-                    enc_str = world_tokenizer_encode(x, world_add_endoftext_token=world_add_endoftext_token)
+                    enc_str = world_tokenizer_encode(str(x), world_add_endoftext_token=world_add_endoftext_token)
                     return {
                         'input_ids': enc_str,
                         'token_type_ids': [0] * len(enc_str),
@@ -591,7 +591,7 @@ def prepare_data_static(
                     # that have data in them
                     num_columns = 0
                     for i in range(len(multi_column_keys)):
-                        if multi_column_keys[i] in x and x[multi_column_keys[i]] is not None and len(x[multi_column_keys[i]]) > 0:
+                        if multi_column_keys[i] in x and x[multi_column_keys[i]] is not None and len(str(x[multi_column_keys[i]])) > 0:
                             num_columns += 1
                     # If we have more than 1 column, we will have to merge them
                     if num_columns > 1:
@@ -606,18 +606,18 @@ def prepare_data_static(
                         # Lets loop through each column
                         for i in range(len(multi_column_keys)):
                             # And process the column if it has data
-                            if multi_column_keys[i] in x and x[multi_column_keys[i]] is not None and len(x[multi_column_keys[i]]) > 0:
+                            if multi_column_keys[i] in x and x[multi_column_keys[i]] is not None and len(str(x[multi_column_keys[i]])) > 0:
                                 # Add the separator if this is not the first item
                                 if not is_first_item and multi_column_separator_encodings is not None:
                                     input_ids += multi_column_separator_encodings['input_ids']
                                     token_type_ids += multi_column_separator_encodings['token_type_ids']
-                                    attention_mask += multi_column_separator_encodings['attention_mask']
+                                    attention_mask += ([0] * len(multi_column_separator_encodings['input_ids']))
                                 
                                 # Add the prefix
                                 if len(multi_column_prefix_encodings) > i and multi_column_prefix_encodings[i] is not None:
                                     input_ids += multi_column_prefix_encodings[i]['input_ids']
                                     token_type_ids += multi_column_prefix_encodings[i]['token_type_ids']
-                                    attention_mask += multi_column_prefix_encodings[i]['attention_mask']
+                                    attention_mask += ([0] * len(multi_column_prefix_encodings[i]['input_ids']))
 
                                 # Tokenize the column
                                 column_encodings = encodeTokens(x[multi_column_keys[i]])
@@ -641,7 +641,7 @@ def prepare_data_static(
                                 if len(multi_column_suffix_encodings) > i and multi_column_suffix_encodings[i] is not None:
                                     input_ids += multi_column_suffix_encodings[i]['input_ids']
                                     token_type_ids += multi_column_suffix_encodings[i]['token_type_ids']
-                                    attention_mask += multi_column_suffix_encodings[i]['attention_mask']
+                                    attention_mask += ([0] * len(multi_column_suffix_encodings[i]['input_ids']))
                                 
                                 # Set the first item flag to false
                                 is_first_item = False
