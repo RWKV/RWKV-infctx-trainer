@@ -407,9 +407,9 @@ def prepare_data_static(
                     # Empty / Null string handling
                     if x is None or len(str(x)) == 0:
                         return {
-                            'input_ids': [[]],
-                            'token_type_ids': [[]],
-                            'attention_mask': [[]],
+                            'input_ids': [],
+                            'token_type_ids': [],
+                            'attention_mask': [],
                         }
                     
                     # Else we encode the string and return it following the HF tokenizer format
