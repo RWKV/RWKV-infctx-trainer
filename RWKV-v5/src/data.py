@@ -9,7 +9,7 @@ import wandb
 from datasets import load_from_disk, load_dataset, concatenate_datasets, Dataset, Features, Value, Sequence
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
-import gc, yaml
+import gc, yaml, json
 
 num_cpus = cpu_count()
 num_workers = cpu_count() if cpu_count() < 8 else 8
@@ -384,28 +384,51 @@ def prepare_data_static(
 
             # Function used to tokenize the dataset as per HF tokenizer format
             # if given the textual data, it will return the tokenized data
-            def encodeTokens(x):
+            def encodeTokens(x, enforceSingleItem = False):
                 if world_tokenizer is True:
-                    # If x is an array of strings, we encode them seperately, and conslidate the result
-                    if isinstance(x, list):
-                        id_arr = []
-                        type_arr = []
-                        mask_arr = []
-                        for i in range(len(x)):
-                            enc_str = world_tokenizer_encode(str(x[i]), world_add_endoftext_token=world_add_endoftext_token)
-                            id_arr.append(enc_str)
-                            type_arr.append([0] * len(enc_str))
-                            mask_arr.append([1] * len(enc_str))
 
-                        # Consolidate the result
+                    # Empty / Null string handling
+                    if x is None:
                         return {
-                            'input_ids': id_arr,
-                            'token_type_ids': type_arr,
-                            'attention_mask': mask_arr
+                            'input_ids': [],
+                            'token_type_ids': [],
+                            'attention_mask': [],
                         }
                     
+                    # If x is an array of strings, we encode them seperately, and conslidate the result
+                    if isinstance(x, list):
+                        if enforceSingleItem:
+                            # Converts it from list to str
+                            x = json.dumps(x)
+                        else:
+
+                            # Handles it as an array of string, that needs conversion
+                            id_arr = []
+                            type_arr = []
+                            mask_arr = []
+                            for i in range(len(x)):
+                                enc_str = world_tokenizer_encode(str(x[i]), world_add_endoftext_token=world_add_endoftext_token)
+                                id_arr.append(enc_str)
+                                type_arr.append([0] * len(enc_str))
+                                mask_arr.append([1] * len(enc_str))
+
+                            # Consolidate the result
+                            return {
+                                'input_ids': id_arr,
+                                'token_type_ids': type_arr,
+                                'attention_mask': mask_arr
+                            }
+                    
+                    # Converting from dictionary
+                    if isinstance(x, dict):
+                        # Dictionary to json string
+                        x = json.dumps(x)
+
+                    # Enforce string type
+                    x = str(x)
+
                     # Empty / Null string handling
-                    if x is None or len(str(x)) == 0:
+                    if len(x) == 0:
                         return {
                             'input_ids': [],
                             'token_type_ids': [],
@@ -449,23 +472,23 @@ def prepare_data_static(
                 # Tokenize the multi column strings
                 for i in range(len(multi_column_keys)):
                     if multi_column_prefix is not None and multi_column_prefix[i] is not None:
-                        multi_column_prefix_encodings.append(encodeTokens(multi_column_prefix[i]))
+                        multi_column_prefix_encodings.append(encodeTokens(multi_column_prefix[i], enforceSingleItem=True))
                     if multi_column_suffix is not None and multi_column_suffix[i] is not None:
-                        multi_column_suffix_encodings.append(encodeTokens(multi_column_suffix[i]))    
+                        multi_column_suffix_encodings.append(encodeTokens(multi_column_suffix[i], enforceSingleItem=True))    
                 
                 # Tokenize the multi column separator
                 if multi_column_separator is not None and len(multi_column_separator) > 0:
-                    multi_column_separator_encodings = encodeTokens(multi_column_separator)
+                    multi_column_separator_encodings = encodeTokens(multi_column_separator, enforceSingleItem=True)
 
             conversation_prefix_encoding_map = {}
             conversation_suffix_encoding_map = {}
-            conversation_end_of_conversation_token = encodeTokens(kargs["conversation_end_of_conversation"]) if kargs["conversation_end_of_conversation"] is not None else None
+            conversation_end_of_conversation_token = encodeTokens(kargs["conversation_end_of_conversation"], enforceSingleItem=True) if kargs["conversation_end_of_conversation"] is not None else None
             conversation_enabled = False
             if 'conversation_format' in kargs and kargs["conversation_format"] is not None:
                 if kargs["conversation_format"] == "iopairs":
                     # preencode all prefixes (keyed by the input key)
                     for key, prefix in kargs['conversation_input_key_prefix_map'].items():
-                        conversation_prefix_encoding_map[key] = encodeTokens(prefix)
+                        conversation_prefix_encoding_map[key] = encodeTokens(prefix, enforceSingleItem=True)
                     conversation_enabled = True
                 elif kargs["conversation_format"] == "sender":
                     # preencode all prefixes (keyed by the sender value)
@@ -473,10 +496,10 @@ def prepare_data_static(
                         for input_key, value in kargs['conversation_input_key_map'].items():
                             if input_key not in conversation_prefix_encoding_map:
                                 conversation_prefix_encoding_map[input_key] = {}
-                            conversation_prefix_encoding_map[input_key][key] = encodeTokens(value.replace('{sender}', relabel))
+                            conversation_prefix_encoding_map[input_key][key] = encodeTokens(value.replace('{sender}', relabel), enforceSingleItem=True)
 
                 for key, suffix in kargs['conversation_sender_suffix'].items():
-                    conversation_suffix_encoding_map[key] = encodeTokens(suffix)
+                    conversation_suffix_encoding_map[key] = encodeTokens(suffix, enforceSingleItem=True)
                             # example conversation_prefix_encoding_map['message']['user'] = encodeTokens('\n\nUser:')
 
                     conversation_enabled = True
@@ -496,7 +519,7 @@ def prepare_data_static(
                 # Custom text column support
                 if kargs["custom_text_key"] is not None:
                     if kargs["custom_text_key"] in x:
-                        return encodeTokens(x[kargs["custom_text_key"]])
+                        return encodeTokens(x[kargs["custom_text_key"]], enforceSingleItem=True)
                     
                 if conversation_enabled:
                     conv_key = kargs['conversation_key'] if 'conversation_key' in kargs else None
@@ -524,7 +547,7 @@ def prepare_data_static(
                                     attention_mask += prefix['attention_mask']
 
                                 # Tokenize the column
-                                column_encodings = encodeTokens(value)
+                                column_encodings = encodeTokens(value, enforceSingleItem=True)
 
                                 # Add the column
                                 input_ids += column_encodings['input_ids']
@@ -562,7 +585,7 @@ def prepare_data_static(
                                         attention_mask += prefix['attention_mask']
 
                                     # Tokenize the column
-                                    column_encodings = encodeTokens(turn[key])
+                                    column_encodings = encodeTokens(turn[key], enforceSingleItem=True)
 
                                     # Add the column
                                     input_ids += column_encodings['input_ids']
@@ -628,7 +651,7 @@ def prepare_data_static(
                                     attention_mask += ([0] * len(multi_column_prefix_encodings[i]['input_ids']))
 
                                 # Tokenize the column
-                                column_encodings = encodeTokens(x[multi_column_keys[i]])
+                                column_encodings = encodeTokens(x[multi_column_keys[i]], enforceSingleItem=True)
 
                                 # Add the column
                                 input_ids += column_encodings['input_ids']
@@ -670,8 +693,8 @@ def prepare_data_static(
 
                     # Tokenize both prompt and completion
                     # Note that the tokenizer will process and return the input_ids in batches
-                    prompt_encodings = encodeTokens(x['prompt'])
-                    completion_encodings = encodeTokens(x['completion'])
+                    prompt_encodings = encodeTokens(x['prompt'], enforceSingleItem=True)
+                    completion_encodings = encodeTokens(x['completion'], enforceSingleItem=True)
 
                     # Join the two input_ids lists
                     input_ids = prompt_encodings['input_ids'] + completion_encodings['input_ids']
