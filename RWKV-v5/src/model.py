@@ -1526,7 +1526,7 @@ class SimpleRWKV():
     def __init__(
             self,
             model_path: str,
-            ctx_len:int = 1024,
+            ctx_len:int = 256,
             device:str = "cuda",
             dtype:str = "fp32"
         ):
@@ -1610,10 +1610,38 @@ class SimpleRWKV():
         # The all_logits array, if requested
         all_logits_arr = None
 
-        # For each token, process the state, in batches up to ctx_len
-        for i in range(0, token_len, self.ctx_len):
+        # Number of times we can do batched
+        full_len_chunk = token_len // self.ctx_len
+        full_len_remain = token_len % self.ctx_len
+
+        # # For each token, we can process in full ctx_len batches
+        # for i in range(0, full_len_chunk * self.ctx_len, self.ctx_len):
+        #     # Token set
+        #     token_set = tokens[i:i+self.ctx_len]
+
+        #     # Check if tokens are already tensors
+        #     batch_tokens = torch.tensor(
+        #         token_set, 
+        #         dtype=torch.long, device=self.device
+        #     ).unsqueeze(0)
+            
+        #     # Compute the logits and state
+        #     logits_arr, shift_states, wkv_states = self.model.forward(
+        #         batch_tokens, shift_states, wkv_states
+        #     )
+
+        #     # Build the all_logits array
+        #     if all_logits:
+        #         if all_logits_arr is None:
+        #             all_logits_arr = logits_arr[0]
+        #         else:
+        #             all_logits_arr = torch.cat([all_logits_arr, logits_arr[0]], dim=0)
+
+        # For each remaining token, after the full batches
+        # full_len_chunk * self.ctx_len
+        for i in range(0, token_len, 1):
             # Token set
-            token_set = tokens[i:i+self.ctx_len]
+            token_set = tokens[i:i+1]
 
             # Check if tokens are already tensors
             batch_tokens = torch.tensor(
