@@ -424,6 +424,13 @@ def prepare_data_static(
                         # Dictionary to json string
                         x = json.dumps(x)
 
+                    # Converting from boolean
+                    if isinstance(x, bool):
+                        if x:
+                            x = "true"
+                        else:
+                            x = "false"
+
                     # Enforce string type
                     x = str(x)
 
