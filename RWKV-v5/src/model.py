@@ -5,7 +5,7 @@
 global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 
 from .module.CoreDependencies import *
-from .module.ChannelMix import RWKV_ChannelMix, RWKV_Expert, RWKV_Expert6_0x
+from .module.ChannelMix import RWKV_ChannelMix, RWKV_ChannelMix6_0, RWKV_Expert, RWKV_Expert6_0x
 from .module.TimeMix import RWKV_TimeMix5_2
 from .module.TimeMix6_0 import RWKV_TimeMix6_0
 from .module.TimeMix6_0Upgraded import RWKV_TimeMix6_0_Upgraded
@@ -116,7 +116,10 @@ class Block(nn.Module):
         else:
             self.att = None
     
-        self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
+        if version == '5.2' or version == '6.0_upgraded':
+            self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
+        else:
+            self.ffn = RWKV_ChannelMix6_0(layer_id, n_layer, n_embd, dim_ffn)
 
         if num_experts > 0:# and layer_id >= n_layer // 2:
             if version == '6.0x_upgraded':
