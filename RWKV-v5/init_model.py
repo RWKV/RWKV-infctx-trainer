@@ -5,10 +5,11 @@ from src.model import RWKV
 
 def init_model(
         layers, embedding_size, vocab_size, output_model_path, 
-        skip_if_exists=False, safe_init=False, emb_scale=0.0001
+        skip_if_exists=False, safe_init=False, emb_scale=0.0001,
+        version='5.2',
         # existing_model_path=None
         ):
-    # Insert your own function behavior here
+    
     print(f"---- Initializing model ----")
     print(f'No of layers: {layers}')
     print(f'Embedding size: {embedding_size}')
@@ -21,7 +22,7 @@ def init_model(
 
     # Check if the model exists
     if skip_if_exists and os.path.exists(output_model_path):
-        print(f"Model exists, skipping init_model")
+        print(f"Output model exists, skipping init_model")
         return
 
     # Enforce safe_init if skip_if_exists is set
@@ -36,17 +37,19 @@ def init_model(
     # Setup the RWKV model, with the special init_model str
     # this disable the loading of the init model file
     model = RWKV(n_layer=layers, 
-                 n_embd=embedding_size, vocab_size=vocab_size, 
+                 n_embd=embedding_size, vocab_size=vocab_size, version=version,
                  load_model=".//<#|=@%!$init_model$!%@=|#>//.",
                  ctx_len=1)
+    model_state_dict = model.state_dict()
     
     # Modified init code, from the original init code
     m = {}
-    for n in model.state_dict():
+    for n in model_state_dict:
 
         # Iterate each parameter group in state_dict
-        p = model.state_dict()[n]
+        p = model_state_dict[n]
         shape = p.shape
+
         gain = 1.0
         scale = 1.0
 
@@ -101,13 +104,14 @@ def init_model(
         torch.save(m, output_model_path)
 
 def main():
-    parser = argparse.ArgumentParser(description='CLI tool for model handling')
+    parser = argparse.ArgumentParser(description='CLI tool for RWKV model initialization')
     parser.add_argument('--n_layer', type=int, help='Number of layers')
     parser.add_argument('--n_embd',  type=int, help='Embedding size')
     parser.add_argument('--vocab_size', type=str, help="Vocab size for the model as an int, alternativey use 'neox' or 'world' if using their respective tokenizer", default="neox")
     parser.add_argument('--skip-if-exists', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Skip the init if the model already exists, enables --safe-init if set')
     parser.add_argument('--safe-init', type=bool, action=argparse.BooleanOptionalAction, default=False, help='Init in safe mode, where the model is first init as a tmp file, before overwritting/moving to the output path')
     parser.add_argument('--emb-scale', type=float, default=0.0001, help='Embedding weight scale, default is 0.0001')
+    parser.add_argument('--version', type=str, default='5.2', help='RWKV Version, default is "5.2" options are "5.2" "6.0"')
 
     # (todo) implement in the future, to support model resizing
     # parser.add_argument('--existing_model_path', type=str, help='Existing model path', default=None)
@@ -128,7 +132,8 @@ def main():
     init_model(
         args.n_layer, args.n_embd, vocab_size, args.output_model_path, 
         skip_if_exists=args.skip_if_exists, safe_init=args.safe_init,
-        emb_scale=args.emb_scale
+        emb_scale=args.emb_scale,
+        version=args.version,
     ) #, args.existing_model_path
 
 if __name__ == "__main__":
