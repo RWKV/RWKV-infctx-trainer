@@ -4,8 +4,6 @@ from .OptimizedOps import modified_lerp
 from .rwkv_inner import rwkv_inner
 import os
 
-from .rwkv_inner import rwkv_inner
-
 # Current code file path
 code_file_path = os.path.realpath(__file__)
 code_dir = os.path.dirname(code_file_path)
@@ -33,6 +31,7 @@ class WKV6STATE_CUDA(torch.autograd.Function):
             assert v.dtype == torch.bfloat16
             assert w.dtype == torch.bfloat16
             assert u.dtype == torch.bfloat16
+            assert s.dtype == torch.bfloat16
             #assert HEAD_SIZE == C // H
             ctx.B = B
             ctx.T = T
@@ -219,13 +218,15 @@ class RWKV_TimeMix6_0(JITModClass):
         B, T, C = x.size()
         H = self.n_head
 
+        assert T <= self.max_ctx_len, "max_ctx_len exceeded"
+
         dxprev = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1) - x
         xxx = x + dxprev * self.time_maa_x
         xxx = torch.tanh(xxx @ self.time_maa_w1).view(B*T, 5, -1).transpose(0, 1)
         xxx = torch.bmm(xxx, self.time_maa_w2).view(5, B, T, -1)
         mw, mk, mv, mr, mg = xxx.unbind(dim=0)
 
-		# Get the xk, xv, xr, xg, xw, and rkvg
+        # Get the xk, xv, xr, xg, xw, and rkvg
         xk = x + dxprev * (self.time_maa_k + mk)
         xv = x + dxprev * (self.time_maa_v + mv)
         xr = x + dxprev * (self.time_maa_r + mr)
@@ -242,7 +243,7 @@ class RWKV_TimeMix6_0(JITModClass):
         u = self.time_faaaa
 
         # Logits and state
-        wkv_state = last_state[1].to(r.dtype)
+        wkv_state = last_state[1].to(r.dtype).clone().contiguous()
 
         # Perform the cuda forward pass
         x_logits = RUN_WKV6STATE_CUDA(

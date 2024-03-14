@@ -31,6 +31,7 @@ class WKV6STATE_CUDA(torch.autograd.Function):
             assert v.dtype == torch.bfloat16
             assert w.dtype == torch.bfloat16
             assert u.dtype == torch.bfloat16
+            assert s.dtype == torch.bfloat16
             #assert HEAD_SIZE == C // H
             ctx.B = B
             ctx.T = T
@@ -43,7 +44,7 @@ class WKV6STATE_CUDA(torch.autograd.Function):
             assert u.is_contiguous()
             assert s.is_contiguous()
             ew = (-torch.exp(w.float())).contiguous()
-            ctx.save_for_backward(r, k, v, ew, u, s)
+            ctx.save_for_backward(r, k, v, ew, u, s.clone())
             y = torch.empty((B, T, C), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
             wkv6state_cuda_kernel.forward(B, T, C, H, r, k, v, ew, u, s, y)
             return y
@@ -211,6 +212,8 @@ class RWKV_TimeMix5_2(JITModClass):
         B, T, C = x.size()
         H = self.n_head
 
+        assert T <= self.max_ctx_len, "max_ctx_len exceeded"
+
         # Perform the tokenshift, and get the respective state
         xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
     
@@ -225,11 +228,11 @@ class RWKV_TimeMix5_2(JITModClass):
         v = self.value(xv)#.view(B, T, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
-        w = self.time_decay.view(-1).expand(1, T, C)
-        u = self.time_faaaa.view(-1)
+        w = self.time_decay.view(-1).expand(B, T, C).contiguous()
+        u = self.time_faaaa
 
         # Logits and state
-        wkv_state = last_state[1].clone().to(torch.float32).contiguous()
+        wkv_state = last_state[1].to(r.dtype).clone().contiguous()
 
         # Perform the cuda forward pass
         x_logits = RUN_WKV6STATE_CUDA(
@@ -242,7 +245,8 @@ class RWKV_TimeMix5_2(JITModClass):
 
         # Reshape and normalize the logits
         x_logits = x_logits.view(-1, C)
-        x_logits = self.ln_x(x_logits / self.head_size_divisor).view(B, T, C)
+        x_logits = x_logits / self.head_size_divisor
+        x_logits = self.ln_x(x_logits).view(B, T, C)
         x_logits = self.output(x_logits * g)
 
         # Return the logits and the state
