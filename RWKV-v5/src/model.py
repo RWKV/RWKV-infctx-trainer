@@ -5,8 +5,9 @@
 global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 
 from .module.CoreDependencies import *
-from .module.ChannelMix import RWKV_ChannelMix
-from .module.TimeMix import RWKV_TimeMix
+from .module.ChannelMix import RWKV_ChannelMix, RWKV_ChannelMix6_0
+from .module.TimeMix import RWKV_TimeMix5_2
+from .module.TimeMix6_0 import RWKV_TimeMix6_0
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
@@ -75,7 +76,7 @@ class BlockStateList:
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, version):
         super().__init__()
         self.layer_id = layer_id
 
@@ -85,8 +86,16 @@ class Block(nn.Module):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
 
-        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
-        self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
+        assert version in ['5.2','6.0'], 'unrecognized version'
+        if version == '5.2':
+            self.att = RWKV_TimeMix5_2(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        else: #elif version == '6.0':
+            self.att = RWKV_TimeMix6_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+    
+        if version == '5.2':
+            self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
+        else: #elif version == '6.0':
+            self.ffn = RWKV_ChannelMix6_0(layer_id, n_layer, n_embd, dim_ffn)
 
         # Setup droupout at block level
         self.dropout = dropout
@@ -214,7 +223,8 @@ class RWKV(L.LightningModule):
                  dim_ffn: Optional[int] = None,
                  substep_cuda_cache_clear: bool = False,
                  substep_logging: bool = False,
-                 torch_set_float32_matmul_precision:str = 'high'
+                 torch_set_float32_matmul_precision:str = 'high',
+                 version: str = '5.2',
                  ):
 
         # Lets save everything in one shot
@@ -287,6 +297,7 @@ class RWKV(L.LightningModule):
         self.bptt_truncated_learning = bptt_truncated_learning
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
+        self.version = version
 
         # Add warning that bptt_truncated_learning is forced to be true
         # due to incomplete implementation of CUDA kernel for bptt_learning
@@ -343,7 +354,7 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, version) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)

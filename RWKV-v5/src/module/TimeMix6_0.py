@@ -78,12 +78,8 @@ def RUN_WKV6STATE_CUDA(
     u:torch.Tensor, s:torch.Tensor):
     return WKV6STATE_CUDA.apply(B, T, C, H, r, k, v, w, u, s)
 
-### ---
-# TimeMix block class handling
-### ---
-
 # RWKV TimeMix module
-class RWKV_TimeMix5_2(JITModClass):
+class RWKV_TimeMix6_0(JITModClass):
 
     def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, chunk_len:int = 128, precision:int = 64, max_ctx_len:int = 4096):
         super().__init__()
@@ -97,8 +93,6 @@ class RWKV_TimeMix5_2(JITModClass):
         self.head_size = head_size
         self.head_size_divisor = 8
 
-        # V5-R4 changes
-        # https://github.com/BlinkDL/RWKV-LM/commit/5aab658f945ba80745d36c2ab411fb43df3a74f9    
         with torch.no_grad():
             ratio_0_to_1 = layer_id / (n_layer - 1)  # 0 to 1
             ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
@@ -107,17 +101,27 @@ class RWKV_TimeMix5_2(JITModClass):
                 ddd[0, 0, i] = i / n_embd
 
             # fancy time_mix
-            self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
-            self.time_mix_v = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1)
-            self.time_mix_r = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
-            self.time_mix_g = nn.Parameter(torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            self.time_maa_x = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.time_maa_w = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.time_maa_k = nn.Parameter(1 - torch.pow(ddd, ratio_1_to_almost0))
+            self.time_maa_v = nn.Parameter(1 - (torch.pow(ddd, ratio_1_to_almost0) + 0.3 * ratio_0_to_1))
+            self.time_maa_r = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+            self.time_maa_g = nn.Parameter(1 - torch.pow(ddd, 0.5 * ratio_1_to_almost0))
+
+            TIME_MIX_EXTRA_DIM = 32
+            self.time_maa_w1 = nn.Parameter(torch.empty(n_embd, TIME_MIX_EXTRA_DIM * 5).uniform_(-1e-4, 1e-4))
+            self.time_maa_w2 = nn.Parameter(torch.zeros(5, TIME_MIX_EXTRA_DIM, n_embd))
 
             # fancy time_decay
             decay_speed = torch.ones(dim_att)
             for n in range(dim_att):
                 decay_speed[n] = -6 + 5 * (n / (dim_att - 1)) ** (0.7 + 1.3 * ratio_0_to_1)
-            self.time_decay = nn.Parameter(decay_speed.reshape(self.n_head, self.head_size))
+            self.time_decay = nn.Parameter(decay_speed.reshape(1,1,dim_att))
             # print(layer_id, self.time_decay.flatten()[:3].cpu().numpy(), '...', self.time_decay.flatten()[-3:].cpu().numpy())
+
+            TIME_DECAY_EXTRA_DIM = 64
+            self.time_decay_w1 = nn.Parameter(torch.empty(n_embd, TIME_DECAY_EXTRA_DIM).uniform_(-1e-4, 1e-4))
+            self.time_decay_w2 = nn.Parameter(torch.zeros(TIME_DECAY_EXTRA_DIM, n_embd))
 
             tmp = torch.zeros(dim_att)
             for n in range(dim_att):
@@ -134,13 +138,13 @@ class RWKV_TimeMix5_2(JITModClass):
         self.value = nn.Linear(n_embd, dim_att, bias=False)
         self.output = nn.Linear(dim_att, n_embd, bias=False)
         self.gate = nn.Linear(n_embd, dim_att, bias=False)
-        self.ln_x = nn.GroupNorm(n_head, dim_att)
+        self.ln_x = nn.GroupNorm(n_head, dim_att, eps=(1e-5)*(self.head_size_divisor**2))
 
         # Preload the CUDA kernel if needed
         self.use_cuda = False
         self.max_ctx_len = max_ctx_len
         self._preload_cuda()
-
+        
         self.chunk_len = chunk_len
         self.precision = precision
 
@@ -151,7 +155,7 @@ class RWKV_TimeMix5_2(JITModClass):
         if RWKV_NO_CUDA is True:
             self.use_cuda = False
             return
-        
+
         # Load cuda if needed
         if wkv6state_cuda_kernel is None:
             # Log the compillation block
@@ -177,7 +181,7 @@ class RWKV_TimeMix5_2(JITModClass):
             )
 
             # Close log the compillation block
-            print(f"[RWKV.TimeMix] CUDA kernel compiled & loaded globally")
+            print(f"[RWKV.TimeMix6_0] CUDA kernel compiled & loaded globally")
             print("---")
         
         # Initialize the cuda kernel
@@ -208,27 +212,34 @@ class RWKV_TimeMix5_2(JITModClass):
         return self._forward_nocuda_optimized(x, last_state)
 
     def _forward_cuda(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
+        shift_state_out = x[:,-1]
+
         # Get the x sizing
         B, T, C = x.size()
         H = self.n_head
 
         assert T <= self.max_ctx_len, "max_ctx_len exceeded"
 
-        # Perform the tokenshift, and get the respective state
-        xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
-    
-        # Get the xk, xv, xr, xg, and rkvg
-        xk = modified_lerp(x, self.time_mix_k, xx)
-        xv = modified_lerp(x, self.time_mix_v, xx)
-        xr = modified_lerp(x, self.time_mix_r, xx)
-        xg = modified_lerp(x, self.time_mix_g, xx)
+        dxprev = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1) - x
+        xxx = x + dxprev * self.time_maa_x
+        xxx = torch.tanh(xxx @ self.time_maa_w1).view(B*T, 5, -1).transpose(0, 1)
+        xxx = torch.bmm(xxx, self.time_maa_w2).view(5, B, T, -1)
+        mw, mk, mv, mr, mg = xxx.unbind(dim=0)
 
-        r = self.receptance(xr)#.view(B, T, self.n_head, 1, -1)
-        k = self.key(xk)#.view(B, T, self.n_head, -1, 1)
-        v = self.value(xv)#.view(B, T, self.n_head, 1, -1)
+        # Get the xk, xv, xr, xg, xw, and rkvg
+        xk = x + dxprev * (self.time_maa_k + mk)
+        xv = x + dxprev * (self.time_maa_v + mv)
+        xr = x + dxprev * (self.time_maa_r + mr)
+        xg = x + dxprev * (self.time_maa_g + mg)
+        xw = x + dxprev * (self.time_maa_w + mw)
+
+        r = self.receptance(xr)
+        k = self.key(xk)
+        v = self.value(xv)
         g = F.silu(self.gate(xg))
 
-        w = self.time_decay.view(-1).expand(B, T, C).contiguous()
+        ww = torch.tanh(xw @ self.time_decay_w1) @ self.time_decay_w2
+        w = self.time_decay + ww
         u = self.time_faaaa
 
         # Logits and state
@@ -243,18 +254,18 @@ class RWKV_TimeMix5_2(JITModClass):
             wkv_state
         )
 
-        # Reshape and normalize the logits
         x_logits = x_logits.view(-1, C)
-        x_logits = self.ln_x(x_logits / self.head_size_divisor).view(B, T, C)
+        x_logits = self.ln_x(x_logits).view(B, T, C)
         x_logits = self.output(x_logits * g)
 
         # Return the logits and the state
-        return (x_logits, (x[:,-1],wkv_state))
 
+        return (x_logits, (shift_state_out,wkv_state))
+    
     def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         shift_state_out = x[:,-1]
 
-        assert x.size(-2) % self.chunk_len == 0 or x.size(-2) == 1, "optimized nocuda rwkv requires data len supplied to be an exact multiple of the chunk len"
+        assert(x.size(-2) % self.chunk_len == 0)
 
         # Get the x sizing
         B, T, C = x.size()
@@ -262,21 +273,27 @@ class RWKV_TimeMix5_2(JITModClass):
         K = self.head_size
         V = K
 
-        # Perform the tokenshift, and get the respective state
-        xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
+        dxprev = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1) - x
+        xxx = x + dxprev * self.time_x_maa
+        xxx = torch.tanh(xxx @ self.time_tm_w1).view(B*T, 5, -1).transpose(0, 1)
+        xxx = torch.bmm(xxx, self.time_tm_w2).view(5, B, T, -1)
+        mw, mk, mv, mr, mg = xxx.unbind(dim=0)
 
-        # Get the xk, xv, xr, xg, and rkvg
-        xk = modified_lerp(x, self.time_mix_k, xx)
-        xv = modified_lerp(x, self.time_mix_v, xx)
-        xr = modified_lerp(x, self.time_mix_r, xx)
-        xg = modified_lerp(x, self.time_mix_g, xx)
+		# Get the xk, xv, xr, xg, xw, and rkvg
+        xk = x + dxprev * (self.time_k_maa + mk)
+        xv = x + dxprev * (self.time_v_maa + mv)
+        xr = x + dxprev * (self.time_r_maa + mr)
+        xg = x + dxprev * (self.time_g_maa + mg)
+        xw = x + dxprev * (self.time_w_maa + mw)
 
         r = self.receptance(xr).view(B, T, H, K).transpose(1, 2) # BHTK
         k = self.key(xk).view(B, T, H, K).transpose(1, 2)      # BHTK
         v = self.value(xv).view(B, T, H, V).transpose(1, 2)    # BHTV
         g = F.silu(self.gate(xg))
 
-        w = torch.exp(-torch.exp(self.time_decay.float())).view(1,H,1,K).expand(1,H,T,K)
+        w = self.time_decay.float().view(1,H,1,K)
+        w = w + (torch.tanh(xw @ self.time_td_w1) @ self.time_td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
+        w = torch.exp(-torch.exp(w))
 
         u = self.time_faaaa.view(1,H,1,K).to(r.dtype)
 
@@ -288,43 +305,9 @@ class RWKV_TimeMix5_2(JITModClass):
 
         # Reshape and normalize the logits
         x_logits = x_logits.view(-1, C)
-        x_logits = self.ln_x(x_logits / self.head_size_divisor).view(B, T, C)
+        x_logits = self.ln_x(x_logits).view(B, T, C)
         x_logits = self.output(x_logits * g)
 
         # Return the logits and the state
         return (x_logits, (shift_state_out,wkv_state))
     
-
-def compute_wkv_state(
-        k, v, r,
-        time_faaaa: torch.nn.Parameter,
-        time_decay: torch.nn.Parameter,
-        wkv_state, 
-        n_head:int, head_size:int,
-        B:int, TT:int
-    ):
-    # Compute attent and the initial output tensor
-    at = k @ v
-    u = time_faaaa.view(1,1,n_head, 1, -1)
-
-    # Slightly inefficent, but it works, lets compute all the tokens
-    w = time_decay.exp().neg().exp().reshape(1, n_head,-1,1)
-
-    out = (u * r) @ at
-    for t in range(TT):
-        out[:,t] += r[:,t] @ wkv_state
-        
-        # We make a clone copy, so the previous object backprop state is tracked seperately
-        wkv_state = wkv_state.clone()
-        wkv_state *= w
-        wkv_state += at[:,t]
-
-    return wkv_state, out
-
-
-# @TCompileMax
-# @JITFunction
-# def x_logits_output_parsing(out_emb, head_size_divisor, B, TT, C, self_ln_x, self_output, g):
-#     x_logits = out_emb.view(-1, C)
-#     x_logits = self_ln_x(x_logits / head_size_divisor).view(B, TT, C)
-#     return self_output(x_logits * g)
