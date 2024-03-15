@@ -9,83 +9,158 @@ code_file_path = os.path.realpath(__file__)
 code_dir = os.path.dirname(code_file_path)
 
 ### ---
-# Special WKV6State CUDA kernel handling
+# Special WKV5 CUDA kernel handling
 ### ---
 
 # the cuda kernel (if its used)
-global wkv6state_cuda_kernel
-wkv6state_cuda_kernel = None
+global wkv5_cuda_kernel
+wkv5_cuda_kernel = None
 
-# WKV6STATE_CUDA autograd module
-class WKV6STATE_CUDA(torch.autograd.Function):
+# WKV5_CUDA autograd module
+class WKV5_CUDA(torch.autograd.Function):  
 
+    # WKV5 forwarding process
+    # NOTE: This will modify the state value as part of the forward process
     @staticmethod
     def forward(ctx, 
-                B:int, T:int, C:int, H:int, 
-                r:torch.Tensor, k:torch.Tensor, 
-                v:torch.Tensor, w:torch.Tensor, 
-                u:torch.Tensor, s:torch.Tensor):
+            B:int, T:int, C:int, H:int, 
+            state:torch.Tensor, 
+            r:torch.Tensor, k:torch.Tensor, 
+            v:torch.Tensor, w:torch.Tensor, 
+            u:torch.Tensor
+        ):
         with torch.no_grad():
-            assert r.dtype == torch.bfloat16
-            assert k.dtype == torch.bfloat16
-            assert v.dtype == torch.bfloat16
-            assert w.dtype == torch.bfloat16
-            assert u.dtype == torch.bfloat16
-            assert s.dtype == torch.bfloat16
-            #assert HEAD_SIZE == C // H
+            # Save the sizing & dtype
             ctx.B = B
             ctx.T = T
             ctx.C = C
             ctx.H = H
+            dtype = r.dtype
+            ctx.dtype = dtype
+
+            # State and W is expected to be float32
+            assert state.dtype == torch.float32
+            assert w.dtype == torch.float32
+            assert state.is_contiguous()
+            assert w.is_contiguous()
+
+            # Rest can be their respective types, but they are expected
+            # to be consistent with each other
+            assert dtype == k.dtype
+            assert dtype == v.dtype
+            assert dtype == u.dtype
             assert r.is_contiguous()
             assert k.is_contiguous()
             assert v.is_contiguous()
-            assert w.is_contiguous()
             assert u.is_contiguous()
-            assert s.is_contiguous()
-            ew = (-torch.exp(w.float())).contiguous()
-            ctx.save_for_backward(r, k, v, ew, u, s.clone())
-            y = torch.empty((B, T, C), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            wkv6state_cuda_kernel.forward(B, T, C, H, r, k, v, ew, u, s, y)
-            return y
 
+            # Lets pre-compute the exp(-w) and exp(exp(-w))
+            ew = (-torch.exp(w.float())).contiguous()
+            eew = (torch.exp(ew)).contiguous()
+            ctx.save_for_backward(r, k, v, eew, ew, u, state.clone())
+
+            # Output logits
+            y = torch.empty(B, T, C, device=r.device, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            
+            # # Debugging y value is populated by cuda kernel
+            # y = torch.zeros(B, T, C, device=r.device, dtype=dtype).contiguous() # .uniform_(-1, 1)
+            # assert torch.sum(y) == 0, "Initial zero check"
+            # assert not torch.isnan(y).any(), "Initial NaN check"
+
+            # # Asserting non NaN valeus in inputs
+            # assert not torch.isnan(state).any(), "Initial state NaN check"
+            # assert not torch.isnan(r).any(), "Initial r NaN check"
+            # assert not torch.isnan(k).any(), "Initial k NaN check"
+            # assert not torch.isnan(v).any(), "Initial v NaN check"
+            # assert not torch.isnan(w).any(), "Initial w NaN check"
+            # assert not torch.isnan(u).any(), "Initial u NaN check"
+
+            # Call the cuda kernel
+            if dtype == torch.bfloat16:
+                wkv5_cuda_kernel.forward_bf16(B, T, C, H, state, r, k, v, eew, u, y)
+            elif dtype == torch.float16:
+                wkv5_cuda_kernel.forward_fp16(B, T, C, H, state, r, k, v, eew, u, y)
+            elif dtype == torch.float32:
+                wkv5_cuda_kernel.forward_fp32(B, T, C, H, state, r, k, v, eew, u, y)
+            else:
+                raise ValueError(f"Unsupported dtype {dtype} for WKV5_CUDA")
+            
+            # # Assert output logits y is not zero, nor NaN
+            # assert torch.sum(y) != 0, "Post kernel, non zero check"
+            # assert not torch.isnan(y).any(), "Post kernel, NaN check"
+
+            # Logits (without state)
+            return y
+    
+    # WKV5 backward pass process
     @staticmethod
     def backward(ctx, gy):
         with torch.no_grad():
-            assert gy.dtype == torch.bfloat16
+
+            # Get the sizing & dtype
             B = ctx.B
             T = ctx.T
             C = ctx.C
             H = ctx.H
-            assert gy.is_contiguous()
-            r, k, v, ew, u, s = ctx.saved_tensors
-            gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gs = torch.empty((B, H, C//H, C//H), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            wkv6state_cuda_kernel.backward(B, T, C, H, r, k, v, ew, u, s, gy, gr, gk, gv, gw, gu, gs)
-            gu = torch.sum(gu, 0).view(H, C//H)
-            return (None, None, None, None, gr, gk, gv, gw, gu, gs)
+            dtype = ctx.dtype
 
+            # GY dtype
+            assert gy.dtype == dtype
+            assert gy.is_contiguous()
+            r, k, v, eew, ew, u, inState = ctx.saved_tensors
+
+            # Initialize all the backward pass vars required
+            gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            gw = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format) # .uniform_(-1, 1)
+            
+            # Perform the backward pass
+            if dtype == torch.bfloat16:
+                wkv5_cuda_kernel.backward_bf16(B, T, C, H, inState, r, k, v, eew, ew, u, gy, gr, gk, gv, gw, gu)
+            elif dtype == torch.float16:
+                wkv5_cuda_kernel.backward_fp16(B, T, C, H, inState, r, k, v, eew, ew, u, gy, gr, gk, gv, gw, gu)
+            elif dtype == torch.float32:
+                wkv5_cuda_kernel.backward_fp32(B, T, C, H, inState, r, k, v, eew, ew, u, gy, gr, gk, gv, gw, gu)
+            else:
+                raise ValueError(f"Unsupported dtype {dtype} for WKV5_CUDA")
+            
+            gw = torch.sum(gw, 0).view(H, C//H)
+            gu = torch.sum(gu, 0).view(H, C//H)
+
+            # # Log the shapes of gr-gu (debugging)
+            # print(f"[WKV5_CUDA] gr.shape={gr.shape}, gk.shape={gk.shape}, gv.shape={gv.shape}, gw.shape={gw.shape}, gu.shape={gu.shape}")
+
+            # Backprop values
+            return (
+                # B, T, C, H,
+                None, None, None, None,
+                # GState,
+                None,
+                # Gr, Gk, Gv, Gw, Gu
+                gr, gk, gv, gw, gu
+            )
+       
 @TCompileDisable 
 @torch.jit.ignore
-def RUN_WKV6STATE_CUDA(
+def RUN_WKV5_CUDA(
     B:int, T:int, C:int, H:int, 
+    state:torch.Tensor, 
     r:torch.Tensor, k:torch.Tensor, 
     v:torch.Tensor, w:torch.Tensor, 
-    u:torch.Tensor, s:torch.Tensor):
-    return WKV6STATE_CUDA.apply(B, T, C, H, r, k, v, w, u, s)
+    u:torch.Tensor
+):
+    return WKV5_CUDA.apply(B, T, C, H, state, r, k, v, w, u)
 
 ### ---
 # TimeMix block class handling
 ### ---
 
 # RWKV TimeMix module
-class RWKV_TimeMix5_2(JITModClass):
+class RWKV_TimeMix(JITModClass):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, chunk_len:int = 128, precision:int = 64, max_ctx_len:int = 4096):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dim_att, chunk_len:int = 128, precision:int = 64):
         super().__init__()
         
         self.dim_att = dim_att
@@ -126,7 +201,6 @@ class RWKV_TimeMix5_2(JITModClass):
 
             self.time_faaaa = nn.Parameter(tmp.reshape(self.n_head, self.head_size))
 
-
         # self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
         self.receptance = nn.Linear(n_embd, dim_att, bias=False)
         self.key = nn.Linear(n_embd, dim_att, bias=False)
@@ -138,14 +212,13 @@ class RWKV_TimeMix5_2(JITModClass):
 
         # Preload the CUDA kernel if needed
         self.use_cuda = False
-        self.max_ctx_len = max_ctx_len
         self._preload_cuda()
 
         self.chunk_len = chunk_len
         self.precision = precision
 
     def _preload_cuda(self):
-        global wkv6state_cuda_kernel, RWKV_NO_CUDA
+        global wkv5_cuda_kernel, RWKV_NO_CUDA
 
         # Skip preload if cuda is disabled
         if RWKV_NO_CUDA is True:
@@ -153,26 +226,28 @@ class RWKV_TimeMix5_2(JITModClass):
             return
         
         # Load cuda if needed
-        if wkv6state_cuda_kernel is None:
+        if wkv5_cuda_kernel is None:
+            # Head sizing
+            HEAD_SIZE = self.head_size
+
             # Log the compillation block
             print("---")
-            print(f"[RWKV.TimeMix] Compiling CUDA kernel with HEAD_SIZE={self.head_size}")
+            print(f"[RWKV.TimeMix] Compiling CUDA kernel with HEAD_SIZE={HEAD_SIZE}")
 
-            wkv6state_cuda_kernel = torch.utils.cpp_extension.load(
-                name="wkv6state", 
+            # The cuda kernel
+            wkv5_cuda_kernel = torch.utils.cpp_extension.load(
+                name="wkv5",
                 sources=[
-                    os.path.join(code_dir, "cuda/wkv6state_op.cpp"), 
-                    os.path.join(code_dir, "cuda/wkv6state_cuda_v1.cu")
+                    os.path.join(code_dir, "cuda/wkv5_op.cpp"),
+                    os.path.join(code_dir, "cuda/wkv5_cuda.cu"),
                 ],
                 verbose=True, 
                 extra_cuda_cflags=[
                     "-res-usage", 
                     "--use_fast_math", 
-                    "-O3", 
-                    "-Xptxas -O3", 
+                    "-O3", "-Xptxas -O3", 
                     "--extra-device-vectorization", 
-                    f"-D_N_={self.head_size}", 
-                    f"-D_T_={self.max_ctx_len}"
+                    f"-D_N_={HEAD_SIZE}"
                 ]
             )
 
@@ -212,8 +287,6 @@ class RWKV_TimeMix5_2(JITModClass):
         B, T, C = x.size()
         H = self.n_head
 
-        assert T <= self.max_ctx_len, "max_ctx_len exceeded"
-
         # Perform the tokenshift, and get the respective state
         xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
     
@@ -228,19 +301,16 @@ class RWKV_TimeMix5_2(JITModClass):
         v = self.value(xv)#.view(B, T, self.n_head, 1, -1)
         g = F.silu(self.gate(xg))
 
-        w = self.time_decay.view(-1).expand(B, T, C).contiguous()
-        u = self.time_faaaa
-
         # Logits and state
-        wkv_state = last_state[1].to(r.dtype).clone().contiguous()
+        state = last_state[1].clone().to(torch.float32).contiguous()
 
         # Perform the cuda forward pass
-        x_logits = RUN_WKV6STATE_CUDA(
+        x_logits = RUN_WKV5_CUDA(
             B, T, C, H, 
+            state, 
             r, k, v, 
-            w, 
-            u,
-            wkv_state
+            self.time_decay.float(), 
+            self.time_faaaa.to(r.dtype)
         )
 
         # Reshape and normalize the logits
@@ -249,7 +319,7 @@ class RWKV_TimeMix5_2(JITModClass):
         x_logits = self.output(x_logits * g)
 
         # Return the logits and the state
-        return (x_logits, (x[:,-1],wkv_state))
+        return (x_logits, (x[:,-1],state))
 
     def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         shift_state_out = x[:,-1]
