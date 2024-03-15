@@ -5,8 +5,8 @@
 global RWKV_JIT_ON, RWKV_TORCH_COMPILE, RWKV_NO_CUDA
 
 from .module.CoreDependencies import *
-from .module.ChannelMix import RWKV_ChannelMix
-from .module.TimeMix import RWKV_TimeMix
+from .module.ChannelMix import RWKV_ChannelMix6_0
+from .module.TimeMix import RWKV_TimeMix6_0
 
 # ---
 # Isolating out known operations that **does not work** with torch.compile
@@ -85,8 +85,8 @@ class Block(nn.Module):
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
 
-        self.att = RWKV_TimeMix(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
-        self.ffn = RWKV_ChannelMix(layer_id, n_layer, n_embd, dim_ffn)
+        self.att = RWKV_TimeMix6_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
+        self.ffn = RWKV_ChannelMix6_0(layer_id, n_layer, n_embd, dim_ffn)
 
         # Setup droupout at block level
         self.dropout = dropout
