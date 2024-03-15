@@ -245,8 +245,7 @@ class RWKV_TimeMix5_2(JITModClass):
 
         # Reshape and normalize the logits
         x_logits = x_logits.view(-1, C)
-        x_logits = x_logits / self.head_size_divisor
-        x_logits = self.ln_x(x_logits).view(B, T, C)
+        x_logits = self.ln_x(x_logits / self.head_size_divisor).view(B, T, C)
         x_logits = self.output(x_logits * g)
 
         # Return the logits and the state

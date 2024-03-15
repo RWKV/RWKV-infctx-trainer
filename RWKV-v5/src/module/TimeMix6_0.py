@@ -265,7 +265,7 @@ class RWKV_TimeMix6_0(JITModClass):
     def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         shift_state_out = x[:,-1]
 
-        assert(x.size(-2) % self.chunk_len == 0)
+        assert x.size(-2) % self.chunk_len == 0 or x.size(-2) == 1, "optimized nocuda rwkv requires data len supplied to be an exact multiple of the chunk len"
 
         # Get the x sizing
         B, T, C = x.size()
@@ -274,17 +274,17 @@ class RWKV_TimeMix6_0(JITModClass):
         V = K
 
         dxprev = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1) - x
-        xxx = x + dxprev * self.time_x_maa
-        xxx = torch.tanh(xxx @ self.time_tm_w1).view(B*T, 5, -1).transpose(0, 1)
-        xxx = torch.bmm(xxx, self.time_tm_w2).view(5, B, T, -1)
+        xxx = x + dxprev * self.time_maa_x
+        xxx = torch.tanh(xxx @ self.time_maa_w1).view(B*T, 5, -1).transpose(0, 1)
+        xxx = torch.bmm(xxx, self.time_maa_w2).view(5, B, T, -1)
         mw, mk, mv, mr, mg = xxx.unbind(dim=0)
 
 		# Get the xk, xv, xr, xg, xw, and rkvg
-        xk = x + dxprev * (self.time_k_maa + mk)
-        xv = x + dxprev * (self.time_v_maa + mv)
-        xr = x + dxprev * (self.time_r_maa + mr)
-        xg = x + dxprev * (self.time_g_maa + mg)
-        xw = x + dxprev * (self.time_w_maa + mw)
+        xk = x + dxprev * (self.time_maa_k + mk)
+        xv = x + dxprev * (self.time_maa_v + mv)
+        xr = x + dxprev * (self.time_maa_r + mr)
+        xg = x + dxprev * (self.time_maa_g + mg)
+        xw = x + dxprev * (self.time_maa_w + mw)
 
         r = self.receptance(xr).view(B, T, H, K).transpose(1, 2) # BHTK
         k = self.key(xk).view(B, T, H, K).transpose(1, 2)      # BHTK
@@ -292,7 +292,7 @@ class RWKV_TimeMix6_0(JITModClass):
         g = F.silu(self.gate(xg))
 
         w = self.time_decay.float().view(1,H,1,K)
-        w = w + (torch.tanh(xw @ self.time_td_w1) @ self.time_td_w2).view(B, T, H, K).transpose(1, 2) # BHTK
+        w = w + (torch.tanh(xw @ self.time_decay_w1) @ self.time_decay_w2).view(B, T, H, K).transpose(1, 2) # BHTK
         w = torch.exp(-torch.exp(w))
 
         u = self.time_faaaa.view(1,H,1,K).to(r.dtype)

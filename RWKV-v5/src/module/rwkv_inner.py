@@ -6,11 +6,8 @@ from torch import Tensor
 
 from .CoreDependencies import *
 
-# 24 is optimal chunk length for fp32 (longer will use too much memory and cause precision problems or even numerical instability, shorter is inefficient)
 @TCompileBaseline
-@torch.compile
-@torch.jit.ignore
-def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=24,precision:int=32)->tuple[Tensor,Tensor]:
+def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=128,precision:int=64)->tuple[Tensor,Tensor]:
     assert(chunk_len <= 24 or precision == 64)
     """
     expects
@@ -33,7 +30,7 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=24,precision:int=32)->tuple[Tens
     else:
         # FIXME - support fast path for non-exact multiples
         # ensure it's an exact multiple
-        assert(L%T == 0)
+        assert L%T == 0, "fast non-cuda rwkv5.2+ requires ctxlen to be an exact multiple of chunk_len"
 
         N = L // T
 
