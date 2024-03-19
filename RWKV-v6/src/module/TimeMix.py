@@ -1,6 +1,5 @@
 # Dependencies
 from .CoreDependencies import *
-from .OptimizedOps import modified_lerp
 from .rwkv_inner import rwkv_inner
 import os
 

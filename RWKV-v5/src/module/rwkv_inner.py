@@ -23,9 +23,9 @@ def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=128,precision:int=64)->tuple[Ten
     T = chunk_len
 
     if L == 1:
-        kv = k @ v
-        out = r @ (kv_state + u * kv)
-        kv_state = w * kv_state + kv
+        kv = k.mT @ v
+        out = r @ (kv_state + u.mT * kv)
+        kv_state = w.mT * kv_state + kv
         return out, kv_state
     else:
         # FIXME - support fast path for non-exact multiples
