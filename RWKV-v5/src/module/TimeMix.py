@@ -241,7 +241,7 @@ class RWKV_TimeMix(JITModClass):
                     os.path.join(code_dir, "cuda/wkv5_op.cpp"),
                     os.path.join(code_dir, "cuda/wkv5_cuda.cu"),
                 ],
-                verbose=True,
+                verbose=True, 
                 extra_cuda_cflags=[
                     "-res-usage", 
                     "--use_fast_math", 
@@ -273,6 +273,7 @@ class RWKV_TimeMix(JITModClass):
     #       [batch_size, state_size] ## Channel mix state,
     #       [batch_size, n_head, head_size, head_size] ## WKV state
     #   ]
+    @JITModMethod
     def forward(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         # Run with cuda
         if self.use_cuda is True:
@@ -281,7 +282,6 @@ class RWKV_TimeMix(JITModClass):
         # Run without cuda (cpu mode, etc)
         return self._forward_nocuda_optimized(x, last_state)
 
-    @JITModMethod
     def _forward_cuda(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         # Get the x sizing
         B, T, C = x.size()
@@ -321,11 +321,10 @@ class RWKV_TimeMix(JITModClass):
         # Return the logits and the state
         return (x_logits, (x[:,-1],state))
 
-    @JITModMethod
     def _forward_nocuda_optimized(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         shift_state_out = x[:,-1]
 
-        assert x.size(-2) % self.chunk_len == 0, "fast non-cuda rwkv5.2+ requires ctxlen to be an exact multiple of chunk_len"
+        assert x.size(-2) % self.chunk_len == 0 or x.size(-2) == 1, "optimized nocuda rwkv requires data len supplied to be an exact multiple of the chunk len"
 
         # Get the x sizing
         B, T, C = x.size()
