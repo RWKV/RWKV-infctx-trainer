@@ -288,7 +288,8 @@ class RWKV_TimeMix(JITModClass):
         H = self.n_head
 
         # Perform the tokenshift, and get the respective state
-        xx = torch.concat((last_state[0].unsqueeze(1), x[:, :-1]), dim=1)
+        shiftAmount = pow(2,self.layer_id//4)
+        xx = torch.concat((torch.zeros(B,shiftAmount,C), x[:, :-shiftAmount]), dim=1)
     
         # Get the xk, xv, xr, xg, and rkvg
         xk = modified_lerp(x, self.time_mix_k, xx)
