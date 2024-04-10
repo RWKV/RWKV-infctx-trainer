@@ -1,0 +1,227 @@
+###############################################
+##
+## Trainer settings are kept minimal
+## with checkpoint / model saving disabled,
+## as this tutorial focuses only on datasets
+## 
+## It only runs 10 steps, enough to prove that
+## the dataset configs are valid
+##
+## See the full `config-example.yaml` for more
+## detailes on the trainer/model configs
+##
+###############################################
+
+trainer:
+  # Limit to 1 epoch
+  max_epochs: 1
+
+  # Resonable batch size, for a more realistic it/s rate
+  # this is currently overwritten in the notebook
+  target_batch_size: 64
+
+  # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
+  # ---
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+    init_args:
+      name: 'Eagle-x-finetune'
+      project: 'RWKV-V5-Eagle-Finetune'
+      tags: ['Eagle', 'RWKV-V5']
+  
+  # Checkpoint settings for the training process
+  callbacks:
+    class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      # Configure this to the path you want to save your checkpoints to
+      # note that a subdir will be created with the name `epoch=x-step=y.ckpt`
+      # 
+      # to convert a checkpoint to a model, you can use the 
+      # `python3 export_checkpoint.py <checkpoint path>` script, 
+      # which will create a `rwkv_model.pth` in the checkpoint directory.
+      #
+      # Do not use the `zero_to_fp32.py` script as that will have export format issues
+      dirpath: ../checkpoint/finetune-example/Eagle-x-capybara-chat/
+      filename: null
+      
+      # Save the top/last K checkpoints
+      save_top_k: 2
+      # Choose the most recent checkpoints by steps
+      monitor: 'step'
+      mode: max
+      
+      # If enabled (true), save a copy of the latest checkpoint to 'last.ckpt'
+      # useful to simply checkpoint resume scripts, at a price of disk performance
+      save_last: true
+
+      # DO NOT set this as true, as the model weight exported will have format issues
+      # expert as checkpoint, and use the `export_checkpoint.py` script to convert to model instead
+      save_weights_only: false
+
+      # How frequent you want to save a checkpoint for every step.
+      # This will happen for every X data sample, where X = every_n_train_steps * accumulate_grad_batches
+      #
+      # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
+      # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
+      # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
+      every_n_train_steps: null
+      every_n_epochs: 1
+      save_on_train_epoch_end: true
+      train_time_interval: null
+
+      # Other pytorch lightning settings, which in most cases you can remove/ignore
+      # ---
+      # verbose: false
+      # auto_insert_metric_name: true
+  
+model:
+  # The model to load
+  load_model: ../model/L6-D512-neox-init.pth
+
+  # Starting and ending learning rate
+  lr_init: 1e-5
+  lr_final: 1e-5
+
+  # Training context length, note that the dataset can be
+  # larger then the context size, in which the trainer
+  # will process the dataset in chunks
+  ctx_len: 2048
+
+  # BPTT learning, this allows you to run the trainer against dataset
+  # larger then its training context length
+  bptt_learning: true
+  bptt_learning_range: -1
+
+########################################
+## Training model settings
+########################################
+data:
+  # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
+  #
+  # Use this if you have built your own dataset and saved it with `save_to_disk()`
+  # with source left as null. Other wise configure this to a directory which the 
+  # dataset will be built and tokenized by the huggingface dataset process.
+  data_path: ../datapath/world/capybara-chat-packed-16k/
+
+  # Other wise provide the source path, which is used as huggingface dataset path
+  # this will be used to populate the dataset_path
+  #
+  # Use either the following
+  # - hugging face dataset 
+  # - Directory path to a directory containing dataset files
+  # - Path to a single dataset file
+  # - hugging face dataset mode (ie: text,csv,etc - use data_dir, to configure the path then)
+  # - null
+  #
+  # If source is disabled, all other params, except data_path, is ignored
+  source: "LDJnr/Capybara"
+  # source: text
+  # source: /home/ubuntu/RWKV-LM-LoRA/dataset-text/enwik8.txt
+
+  # # Additional source dataset params, used to grab subsets of the dataset
+  # source_dataset_params:
+  #   language: en
+
+  # # Use data_dir, if you are using source=text/json/etc
+  # # this should be relative to the trainer script path
+  # source_data_dir: null
+
+  # Tokenizer to use, use either the inbuilt 'neox', or 'neox' tokenizer
+  # If using a custom tokenizer, provide the tokenizer file path
+  # ---
+  tokenizer: world
+
+  # Minimum / Maximum token size of the dataset to use
+  # useful for filtering out small noisy data samples from large datasets
+  # (eg. removal of small articles of less then 512 tokens from wikipedia)
+  #
+  # This is ignored, if set to -1
+  min_token_size: -1
+  max_token_size: 16384
+
+  # Multi Column merging process, default setting is used to support and merge
+  # "instruction", "input", "output", datasets. To disable set multi_column_keys to []
+  #
+  # A minimum of 2 columns is required, with non empty data, for the merge to occur
+  # If no match is found, this will fallback to the default prompt/completion or text column, 
+  # or throw an error if the default fallback is not found
+  #
+  # IMPORTANT NOTE: as newlines are commonly used for multi_column_suffix, etc. 
+  #                 you should use single quotes to ensure such values dun get escaped.
+  #                 eg. multi_column_suffix: ['\n\n']
+  #
+  # See: https://github.com/RWKV/RWKV-infctx-trainer/issues/34
+  # Need to use " or the new lines won't be tokenized properly
+  # ---
+  # multi_column_keys: ["instruction", "input", "output"]
+  # multi_column_prefix: ["Instruction:\n", "Input:\n", "Output:\n"]
+  # multi_column_suffix: ["\n\n", "\n\n", "\n\n"]
+  # multi_column_train_mask: [true, false, true]
+  # multi_column_separator: "\n\n"
+  
+  # Conversation merging process
+  # useful for merging full conversational datasets, into single documents
+  # default is off, (or set conversation_key to [])
+  # conversation_formatting supports "iopairs" or "sender" for now.
+  # ---
+  conversation_format: 'iopairs'
+  conversation_key: 'conversation'
+  conversation_end_of_conversation: "\n\nUser: "
+
+  # Iopairs specific config
+  # This means that every object in the conversation object is a pair of input output.
+  # In future it will also support a format where one of the keys dictates the format style
+  # if conversation_key is set to null, it will use the root object as the conversation object
+  # ---
+  conversation_input_key_prefix_map: {'input': "\n\nUser: ", 'output': "\n\nAssistant: "}
+  conversation_input_key_mask: {'input': false, 'output': true}
+  conversation_sender_suffix: {'input': "", 'output': ""}
+
+  # Sender specific config
+  # This means that every object in the conversation object is a single message (with sender and message keys - or similar)
+  # The output is dictated by the input key map, the rest of the "sender_" config is keyed by the value of the sender key
+  # conversation_input_key_map: {'message': "\n\n{sender}: ", 'context': ''}
+  # conversation_sender_key: 'sender'
+  # conversation_sender_value_map: {'user': 'Human', 'assistant': 'Assistant', 'system': 'System'}
+  # conversation_sender_mask: {'user': false, 'assistant': true, 'system': false}
+  # conversation_sender_suffix: {'user': "", 'assistant': "", 'system': ""}
+
+  # If processing prompt/completion jsonl pairs, the prompt is masked by default
+  # use this flag to disable this default behaviour
+  # ---
+  # disable_prompt_completion_mask: false
+
+  # After loading the dataset, split out test data used for validation, 
+  # This process is skipped if the dataset includes a test split
+  # This process is skipped if set to zero
+  test_split: 0.01
+  test_split_shuffle: false
+
+  # ----------------------------
+  # Dataset packing support
+  # Recommended to be used with mixed documents sized finetuning
+  # For foundation model "from scratch", rechunking is typically used instead
+  # ----------------------------
+
+  # Boolean flag to enable / disable dataset packing
+  packing_enable: True
+
+  # Used to ensure all training samples wihin this batch size is the same length
+  # Ideally this should align exactly with your real "batch size"
+  #
+  # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
+  # a large number of batch size combinations. This helps reduce the amount of
+  # misaligned batches, and thus reduce the amount of wasted training time.
+  packing_batchsize: 64
+
+  # Chunking size to align within each batch, this ideally should be equal to
+  # the training context length used.
+  packing_chunksize: 8192
+
+  # Minimum size to pack up to, this should be a multiple of packing_chunksize
+  # defautls to -1, which equals to packing_chunksize
+  packing_min_ctx_len: -1
+
+  # Pack the data sequentially if possible, in accordance to the dataset sequence
+  # this can be used together with sort_by_length, otherwise a shuffle will be done
+  packing_in_sequence: False

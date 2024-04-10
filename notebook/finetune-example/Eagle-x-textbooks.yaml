@@ -1,0 +1,167 @@
+###############################################
+##
+## Trainer settings are kept minimal
+## with checkpoint / model saving disabled,
+## as this tutorial focuses only on datasets
+## 
+## It only runs 10 steps, enough to prove that
+## the dataset configs are valid
+##
+## See the full `config-example.yaml` for more
+## detailes on the trainer/model configs
+##
+###############################################
+
+trainer:
+  # Limit to 1 epoch
+  max_epochs: 1
+
+  # Resonable batch size, for a more realistic it/s rate
+  # this is currently overwritten in the notebook
+  target_batch_size: 64
+
+  # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
+  # ---
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+    init_args:
+      name: 'Eagle-x-finetune'
+      project: 'RWKV-V5-Eagle-Finetune'
+      tags: ['Eagle', 'RWKV-V5']
+  
+  # Checkpoint settings for the training process
+  callbacks:
+    class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      # Configure this to the path you want to save your checkpoints to
+      # note that a subdir will be created with the name `epoch=x-step=y.ckpt`
+      # 
+      # to convert a checkpoint to a model, you can use the 
+      # `python3 export_checkpoint.py <checkpoint path>` script, 
+      # which will create a `rwkv_model.pth` in the checkpoint directory.
+      #
+      # Do not use the `zero_to_fp32.py` script as that will have export format issues
+      dirpath: ../checkpoint/finetune-example/Eagle-x-textbooks/
+      filename: null
+      
+      # Save the top/last K checkpoints
+      save_top_k: 2
+      # Choose the most recent checkpoints by steps
+      monitor: 'step'
+      mode: max
+      
+      # If enabled (true), save a copy of the latest checkpoint to 'last.ckpt'
+      # useful to simply checkpoint resume scripts, at a price of disk performance
+      save_last: true
+
+      # DO NOT set this as true, as the model weight exported will have format issues
+      # expert as checkpoint, and use the `export_checkpoint.py` script to convert to model instead
+      save_weights_only: false
+
+      # How frequent you want to save a checkpoint for every step.
+      # This will happen for every X data sample, where X = every_n_train_steps * accumulate_grad_batches
+      #
+      # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
+      # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
+      # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
+      every_n_train_steps: null
+      every_n_epochs: 1
+      save_on_train_epoch_end: true
+      train_time_interval: null
+
+      # Other pytorch lightning settings, which in most cases you can remove/ignore
+      # ---
+      # verbose: false
+      # auto_insert_metric_name: true
+  
+model:
+  # The model to load
+  load_model: ../model/L6-D512-neox-init.pth
+
+  # Starting and ending learning rate
+  lr_init: 1e-5
+  lr_final: 1e-5
+
+  # Training context length, note that the dataset can be
+  # larger then the context size, in which the trainer
+  # will process the dataset in chunks
+  ctx_len: 2048
+
+  # BPTT learning, this allows you to run the trainer against dataset
+  # larger then its training context length
+  bptt_learning: true
+  bptt_learning_range: -1
+
+########################################
+## Training model settings
+########################################
+data:
+  # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
+  #
+  # Use this if you have built your own dataset and saved it with `save_to_disk()`
+  # with source left as null. Other wise configure this to a directory which the 
+  # dataset will be built and tokenized by the huggingface dataset process.
+  data_path: ../datapath/world/textbooks-rechunk-16k/
+
+  # Other wise provide the source path, which is used as huggingface dataset path
+  # this will be used to populate the dataset_path
+  #
+  # Use either the following
+  # - hugging face dataset 
+  # - Directory path to a directory containing dataset files
+  # - Path to a single dataset file
+  # - hugging face dataset mode (ie: text,csv,etc - use data_dir, to configure the path then)
+  # - null
+  #
+  # If source is disabled, all other params, except data_path, is ignored
+  source: "TanvirOnHF/muse_textbooks"
+  # source: text
+  # source: /home/ubuntu/RWKV-LM-LoRA/dataset-text/enwik8.txt
+
+  # # Additional source dataset params, used to grab subsets of the dataset
+  # source_dataset_params:
+  #   language: en
+
+  # # Use data_dir, if you are using source=text/json/etc
+  # # this should be relative to the trainer script path
+  # source_data_dir: null
+
+  # Tokenizer to use, use either the inbuilt 'neox', or 'neox' tokenizer
+  # If using a custom tokenizer, provide the tokenizer file path
+  # ---
+  tokenizer: world
+
+  # Minimum / Maximum token size of the dataset to use
+  # useful for filtering out small noisy data samples from large datasets
+  # (eg. removal of small articles of less then 512 tokens from wikipedia)
+  #
+  # This is ignored, if set to -1
+  min_token_size: -1
+  max_token_size: -1
+
+  # Rechunking of text dataset, this is done only when source is set as 'text'
+  # and will merge the various sentencees, into larger chunks up to the target size
+  #
+  # Defaults to 4096
+  #
+  # This is ignored, if source is not set as text
+  # This is ignored, if set to zero
+  # ---
+  text_rechunk_size: 16384
+
+  # Apply text rechunk to the dataset, even if its not a 'text' source
+  # This is done only after dataset filtering, and if source is not 'text'
+  # ---
+  text_rechunk_force: true
+
+  # Custom text column to use, useful for dataset with alternative training columns labels
+  # This is checked before multi column merging, default is null (disabled)
+  # eg: 'code'
+  # ---
+  custom_text_key: 'text'
+
+  # After loading the dataset, split out test data used for validation, 
+  # This process is skipped if the dataset includes a test split
+  # This process is skipped if set to zero
+  test_split: 0.01
+  test_split_shuffle: false

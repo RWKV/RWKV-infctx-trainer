@@ -1,15 +1,15 @@
-name: Docker Env Image (cuda-11-8)
+name: Docker Env Image (cuda-12-1)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "rwkv-x-*" ]
     # Publish semver tags as releases.
     tags: [ 'v*.*.*' ]
     # Reduce build to only for the valid path
     paths:
       - docker/**
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "rwkv-x-*" ]
     paths:
       - docker/**
 
@@ -21,7 +21,7 @@ env:
 
 jobs:
   build_env:
-    name: Docker Env Image (cuda-11-8)
+    name: Docker Env Image (cuda-12-1)
   
     runs-on: ubuntu-latest
     permissions:
@@ -71,9 +71,9 @@ jobs:
       # https://github.com/sigstore/cosign-installer
       - name: Install cosign
         if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@f3c664df7af409cb4873aa5068053ba9d61a57b6 #v2.6.0
-        with:
-          cosign-release: 'v1.11.0'
+        uses: sigstore/cosign-installer@v3.3.0
+        # with:
+        #   cosign-release: 'v2.2.0'
 
       # Workaround: https://github.com/docker/build-push-action/issues/461
       - name: Setup Docker buildx
@@ -103,20 +103,20 @@ jobs:
       
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
-      - name: Build and push Docker image (env-cuda-11-8)
+      - name: Build and push Docker image (env-cuda-12-1)
         id: build-and-push
         uses: docker/build-push-action@v4
         with:
-          context: "{{defaultContext}}:docker/env-cuda-11-8"
+          context: "{{defaultContext}}:docker/env-cuda-12-1"
           push: ${{ github.event_name != 'pull_request' }} # Don't push on PR
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:env-cuda-11-8
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:env-cuda-12-1
           # tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,src=docker/env-cuda-11-8
+          cache-from: type=gha,src=docker/env-cuda-12-1
           cache-to: type=gha,mode=max
 
   build_runner:
-    name: Docker Env Image (github-worker-11-8)
+    name: Docker Env Image (github-worker-12-1)
   
     needs: build_env
     runs-on: ubuntu-latest
@@ -167,9 +167,9 @@ jobs:
       # https://github.com/sigstore/cosign-installer
       - name: Install cosign
         if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@f3c664df7af409cb4873aa5068053ba9d61a57b6 #v2.6.0
-        with:
-          cosign-release: 'v1.11.0'
+        uses: sigstore/cosign-installer@v3.3.0
+        # with:
+        #   cosign-release: 'v2.2.0'
 
       # Workaround: https://github.com/docker/build-push-action/issues/461
       - name: Setup Docker buildx
@@ -199,14 +199,14 @@ jobs:
       
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
-      - name: Build and push Docker image (github-worker-cuda-11-8)
+      - name: Build and push Docker image (github-worker-cuda-12-1)
         id: build-and-push
         uses: docker/build-push-action@v4
         with:
-          context: "{{defaultContext}}:docker/github-worker-cuda-11-8"
+          context: "{{defaultContext}}:docker/github-worker-cuda-12-1"
           push: ${{ github.event_name != 'pull_request' }} # Don't push on PR
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:github-worker-cuda-11-8
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:github-worker-cuda-12-1
           # tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,src=docker/github-worker-cuda-11-8
+          cache-from: type=gha,src=docker/github-worker-cuda-12-1
           cache-to: type=gha,mode=max

@@ -1,0 +1,588 @@
+#
+# Settings used for the final datapack, more specifically its data storage location, etc
+#
+datapack:
+
+  # dataset_path for the prebuilt dataset, to save into using HF `save _to_disk()`
+  #
+  # If using relative path, this should be relative to the trainer script path
+  data_path: /datapath/2T-train-set/chunk-1/HFfull/2T-train-set/chunk-1/HFfull
+
+  # Preload the intermiary dataset, without building the final datapath
+  # this is useful to split the dataset building process across multiple nodes
+  preload_only: False
+
+  # Data path storage options, this is used to support cloud storage
+  # via the huggingface dataset API. See:
+  # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
+  #
+  # Note: As of Jan 2023, these options has been only tested to work with AWS S3, and backblaze. YMMV
+  #       For S3 bucket support you will also need to install s3fs `python3 -m pip install s3fs`
+  #
+  # If you want to reduce the risk of accidental key/secret commits, you can use
+  # `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables instead
+  #
+  # For datapath, it should use the `s3://bucket-name/subpath` format
+  # ---
+  # data_path_storage_options:
+  #   key: <example S3 key>
+  #   secret: <example S3 secret>
+  #   endpoint_url: <example S3 endpoint>
+
+  # Mixing mode to use, this is used to alternate between datasets
+  #
+  # - concat  : Keep It Simple Silly, lets just concat the datasets together
+  # - shuffle : Dataset is mixed on a per sample level
+  #
+  # (@TODO: Advance operations)
+  # - batch   : Meaning one dataset worth per batch, partial batches are discarded
+  mixing_mode: "shuffle"
+
+  # Batch size to use to alternate between datasets
+  # This should be a multiple of the GPU and node count 
+  #
+  # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
+  # a large number of batch size combinations. This helps reduce the amount of
+  # misaligned batches, and thus reduce the amount of wasted training time
+  batchsize: 64
+
+  # # (@TODO: Advance operations)
+  # # 
+  # # Mixing distribution to use
+  # # - weighted : Dataset batches/mixture is distrbuted randomly, but weighted by dataset size
+  # # - uniform  : Dataset batches/mixture is distrbuted randomly, but with uniform probability
+  # distribution: "weighted"
+
+  # # (@TODO: Advance operations)
+  # #
+  # # Mixed batch percentage
+  # #
+  # # % of batches which will contain a mixture of records from multiple datasets
+  # # instad of limiting each batch to a single dataset
+  # #
+  # # Use 0, to disable mixed batches, sampled mixing_mode is the equavalent of mixed batch 1.0
+  # #
+  # # NOTE: This is a guideline percentage, and is not guaranteed to be exact
+  # #       if a partial batch is built, it may get converted to a mixed batch
+  # mixed_batch_percentage: 0.2
+
+#
+# Default settings used across all datasets in the datapack
+# These settings can be overriden by the dataset specific settings
+#
+default:
+
+  # dataset_path for the prebuilt dataset, to save into using HF `save _to_disk()`
+  #
+  # Datapath here is entirely optional, and only used if you intend to save each individual dataset
+  # seperately (makes it easier to tweak and rebuild the datapack if it crash mid-way)
+  #
+  # The dataset index will be appended to the default value, if set
+  # ---
+  # data_path: /path/to/store/your/data_path_dir/
+
+  # Data path storage options, this is used to support cloud storage
+  # via the huggingface dataset API. See:
+  # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
+  #
+  # Note: As of Jan 2023, these options has been only tested to work with AWS S3, and backblaze. YMMV
+  #       For S3 bucket support you will also need to install s3fs `python3 -m pip install s3fs`
+  #
+  # If you want to reduce the risk of accidental key/secret commits, you can use
+  # `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables instead
+  #
+  # For datapath, it should use the `s3://bucket-name/subpath` format
+  # ---
+  # data_path_storage_options:
+  #   key: <example S3 key>
+  #   secret: <example S3 secret>
+  #   endpoint_url: <example S3 endpoint>
+
+  # Additional source dataset params, used to grab subsets of the dataset
+  # ---
+  # source_dataset_params:
+  #   language: en
+
+  # Sort the dataset by length, useful to reduce gpu waiting time (also useful for RWKV long context coherence)
+  # ---
+  # sort_by_length: false
+  # sort_asc: true # Sort in ascending order, true = shortest first, false = longest first
+
+  # Limit the document count, to an offset/length limit
+  # If an int value is used, it is interprated as document count
+  # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
+  # ---
+  # dataset_offset: -1
+  # dataset_length: -1
+
+  # Use data_dir, if you are using source=text/json/etc
+  # If using relative path, this should be relative to the trainer script path
+  # source_data_dir: ../dataset-text/
+
+  # After loading the dataset, split out test data used for validation, 
+  # This process is skipped if the dataset includes a test split
+  #
+  # If given a float value, a percentage of the dataset is used (1.0 being 100%)
+  # If given an int value, the number of data sample is used.
+  #
+  # Due to the limitaitons in the trainer process, there is always a minimum of 1 test sample
+  test_split: 0.001
+  test_split_shuffle: true
+
+  # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
+  # If using a custom tokenizer, provide the HF tokenizer name/path
+  # ---
+  tokenizer: world
+
+  # Minimum / Maximum token size of the dataset to use
+  # useful for filtering out small noisy data samples from large datasets
+  # (eg. removal of small articles of less then 1024 tokens from wikipedia)
+  #
+  # This is ignored, if set to -1
+  # ---
+  # min_token_size: 1024
+  # max_token_size: -1
+
+  # ----------------------------
+  # Rechunking support
+  # ----------------------------
+
+  # Rechunking of text dataset, this is done only when source is set as 'text'
+  # and will merge the various sentencees, into larger chunks up to the target size
+  #
+  # Defaults to 2048
+  #
+  # This is ignored, if source is not set as text (unless text_rechunk_force)
+  # This is ignored, if set to zero / -1
+  # ---
+  text_rechunk_size: 16384
+
+  # Apply text rechunk to the dataset, even if its not a 'text' source
+  # This is done only after dataset filtering, and if source is not 'text'
+  # ---
+  text_rechunk_force: True
+
+  # Used to disable the automated text rechunkin for text files, if set as false
+  # ---
+  text_rechunk_auto: True
+
+#
+# The dataset specific settings
+# 
+dataset:
+  - #source: json
+    name: "books_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/books_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/books_0"
+  - #source: json
+    name: "code_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_0"
+  - #source: json
+    name: "code_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_1"
+  - #source: json
+    name: "code_10"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_10"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_10"
+  - #source: json
+    name: "code_11"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_11"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_11"
+  - #source: json
+    name: "code_12"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_12"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_12"
+  - #source: json
+    name: "code_13"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_13"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_13"
+  - #source: json
+    name: "code_14"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_14"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_14"
+  - #source: json
+    name: "code_15"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_15"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_15"
+  - #source: json
+    name: "code_16"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_16"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_16"
+  - #source: json
+    name: "code_17"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_17"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_17"
+  - #source: json
+    name: "code_18"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_18"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_18"
+  - #source: json
+    name: "code_19"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_19"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_19"
+  - #source: json
+    name: "code_2"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_2"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_2"
+  - #source: json
+    name: "code_20"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_20"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_20"
+  - #source: json
+    name: "code_21"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_21"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_21"
+  - #source: json
+    name: "code_3"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_3"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_3"
+  - #source: json
+    name: "code_4"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_4"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_4"
+  - #source: json
+    name: "code_5"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_5"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_5"
+  - #source: json
+    name: "code_6"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_6"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_6"
+  - #source: json
+    name: "code_7"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_7"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_7"
+  - #source: json
+    name: "code_8"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_8"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_8"
+  - #source: json
+    name: "code_9"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/code_9"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/code_9"
+  - #source: json
+    name: "law_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/law_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/law_0"
+  - #source: json
+    name: "law_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/law_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/law_1"
+  - #source: json
+    name: "law_2"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/law_2"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/law_2"
+  - #source: json
+    name: "news_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/news_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/news_0"
+  - #source: json
+    name: "papers-split-aa_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-aa_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-aa_0"
+  - #source: json
+    name: "papers-split-aa_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-aa_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-aa_1"
+  - #source: json
+    name: "papers-split-ab_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ab_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ab_0"
+  - #source: json
+    name: "papers-split-ab_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ab_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ab_1"
+  - #source: json
+    name: "papers-split-ab_2"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ab_2"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ab_2"
+  - #source: json
+    name: "papers-split-ab_3"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ab_3"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ab_3"
+  - #source: json
+    name: "papers-split-ac_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ac_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ac_0"
+  - #source: json
+    name: "papers-split-ac_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ac_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ac_1"
+  - #source: json
+    name: "papers-split-ad_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ad_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ad_0"
+  - #source: json
+    name: "papers-split-ad_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ad_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ad_1"
+  - #source: json
+    name: "papers-split-ae_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_0"
+  - #source: json
+    name: "papers-split-ae_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_1"
+  - #source: json
+    name: "papers-split-ae_10"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_10"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_10"
+  - #source: json
+    name: "papers-split-ae_11"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_11"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_11"
+  - #source: json
+    name: "papers-split-ae_12"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_12"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_12"
+  - #source: json
+    name: "papers-split-ae_13"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_13"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_13"
+  - #source: json
+    name: "papers-split-ae_14"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_14"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_14"
+  - #source: json
+    name: "papers-split-ae_15"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_15"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_15"
+  - #source: json
+    name: "papers-split-ae_16"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_16"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_16"
+  - #source: json
+    name: "papers-split-ae_17"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_17"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_17"
+  - #source: json
+    name: "papers-split-ae_2"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_2"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_2"
+  - #source: json
+    name: "papers-split-ae_3"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_3"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_3"
+  - #source: json
+    name: "papers-split-ae_4"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_4"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_4"
+  - #source: json
+    name: "papers-split-ae_5"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_5"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_5"
+  - #source: json
+    name: "papers-split-ae_6"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_6"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_6"
+  - #source: json
+    name: "papers-split-ae_7"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_7"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_7"
+  - #source: json
+    name: "papers-split-ae_8"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_8"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_8"
+  - #source: json
+    name: "papers-split-ae_9"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-ae_9"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-ae_9"
+  - #source: json
+    name: "papers-split-af_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-af_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-af_0"
+  - #source: json
+    name: "papers-split-af_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-af_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-af_1"
+  - #source: json
+    name: "papers-split-af_2"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/papers-split-af_2"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/papers-split-af_2"
+  - #source: json
+    name: "qna_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_0"
+  - #source: json
+    name: "qna_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_1"
+  - #source: json
+    name: "qna_10"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_10"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_10"
+  - #source: json
+    name: "qna_11"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_11"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_11"
+  - #source: json
+    name: "qna_12"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_12"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_12"
+  - #source: json
+    name: "qna_13"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_13"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_13"
+  - #source: json
+    name: "qna_14"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_14"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_14"
+  - #source: json
+    name: "qna_15"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_15"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_15"
+  - #source: json
+    name: "qna_16"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_16"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_16"
+  - #source: json
+    name: "qna_2"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_2"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_2"
+  - #source: json
+    name: "qna_3"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_3"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_3"
+  - #source: json
+    name: "qna_4"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_4"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_4"
+  - #source: json
+    name: "qna_5"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_5"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_5"
+  - #source: json
+    name: "qna_6"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_6"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_6"
+  - #source: json
+    name: "qna_7"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_7"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_7"
+  - #source: json
+    name: "qna_8"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_8"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_8"
+  - #source: json
+    name: "qna_9"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/qna_9"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/qna_9"
+  - #source: json
+    name: "various_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/various_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/various_0"
+  - #source: json
+    name: "various_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/various_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/various_1"
+  - #source: json
+    name: "various_2"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/various_2"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/various_2"
+  - #source: json
+    name: "various_3"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/various_3"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/various_3"
+  - #source: json
+    name: "wiki-split-aa_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-aa_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-aa_0"
+  - #source: json
+    name: "wiki-split-aa_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-aa_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-aa_1"
+  - #source: json
+    name: "wiki-split-ab_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ab_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ab_0"
+  - #source: json
+    name: "wiki-split-ab_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ab_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ab_1"
+  - #source: json
+    name: "wiki-split-ac_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ac_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ac_0"
+  - #source: json
+    name: "wiki-split-ac_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ac_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ac_1"
+  - #source: json
+    name: "wiki-split-ad_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ad_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ad_0"
+  - #source: json
+    name: "wiki-split-ad_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ad_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ad_1"
+  - #source: json
+    name: "wiki-split-ae_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ae_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ae_0"
+  - #source: json
+    name: "wiki-split-ae_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ae_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ae_1"
+  - #source: json
+    name: "wiki-split-af_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-af_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-af_0"
+  - #source: json
+    name: "wiki-split-af_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-af_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-af_1"
+  - #source: json
+    name: "wiki-split-ag_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ag_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ag_0"
+  - #source: json
+    name: "wiki-split-ag_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ag_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ag_1"
+  - #source: json
+    name: "wiki-split-ah_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ah_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ah_0"
+  - #source: json
+    name: "wiki-split-ah_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ah_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ah_1"
+  - #source: json
+    name: "wiki-split-ai_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ai_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ai_0"
+  - #source: json
+    name: "wiki-split-ai_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ai_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ai_1"
+  - #source: json
+    name: "wiki-split-ai_2"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ai_2"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ai_2"
+  - #source: json
+    name: "wiki-split-aj_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-aj_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-aj_0"
+  - #source: json
+    name: "wiki-split-aj_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-aj_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-aj_1"
+  - #source: json
+    name: "wiki-split-aj_2"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-aj_2"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-aj_2"
+  - #source: json
+    name: "wiki-split-ak_0"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ak_0"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ak_0"
+  - #source: json
+    name: "wiki-split-ak_1"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ak_1"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ak_1"
+  - #source: json
+    name: "wiki-split-ak_2"
+    #source_data_dir: "/datapath/2T-train-set/chunk-1/jsonl/wiki-split-ak_2"
+    data_path: "/datapath/2T-train-set/chunk-1/HFpart/wiki-split-ak_2"

@@ -325,6 +325,17 @@ model:
   # dim_att: null
   # dim_ffn: null
 data:
+  # Skip the datapath setup
+  #
+  # ignored if using the preload_datapath.py, useful for speeding up the trainer startup
+  # provided you have your datasets all properly preinitialized
+  # ---
+  # skip_datapath_setup: True
+
+  # Datapack config yaml to use instead, this overwrites all other settings below
+  # ---
+  # datapack_config_path: null
+
   # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
   #
   # Use this if you have built your own dataset and saved it with `save_to_disk()`
@@ -334,6 +345,23 @@ data:
   # If using relative path, this should be relative to the trainer script path
   data_path: /path/to/store/your/data_path/
 
+  # Data path storage options, this is used to support cloud storage
+  # via the huggingface dataset API. See:
+  # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
+  #
+  # Note: As of Jan 2023, these options has been only tested to work with AWS S3, and backblaze. YMMV
+  #       For S3 bucket support you will also need to install s3fs `python3 -m pip install s3fs`
+  #
+  # If you want to reduce the risk of accidental key/secret commits, you can use
+  # `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables instead
+  #
+  # For datapath, it should use the `s3://bucket-name/subpath` format
+  # ---
+  # data_path_storage_options:
+  #   key: <example S3 key>
+  #   secret: <example S3 secret>
+  #   endpoint_url: <example S3 endpoint>
+  
   # Other wise provide the source path, which is used as huggingface dataset path
   # this will be used to populate the dataset_path
   #
@@ -348,6 +376,10 @@ data:
   source: null
   # source: "teven/enwiki_00k"   # Hugging face dataset
   # source: text                 # Text mode, used with source_data_dir
+
+  # Dataset split to use from HF dataset
+  # ---
+  # source_dataset_split: train
 
   # Additional source dataset params, used to grab subsets of the dataset
   # ---
@@ -395,6 +427,7 @@ data:
 
   # Custom text column to use, useful for dataset with alternative training columns labels
   # This is checked before multi column merging, default is null (disabled)
+  # If set this takes priority
   # eg: 'code'
   # ---
   # custom_text_key: 'code'
@@ -407,18 +440,17 @@ data:
   # or throw an error if the default fallback is not found
   #
   # IMPORTANT NOTE: as newlines are commonly used for multi_column_suffix, etc. 
-  #                 you should use single quotes to ensure such values dun get escaped.
-  #                 eg. multi_column_suffix: ['\n\n']
+  #                 you should use double quotes to ensure such values dun get escaped.
+  #                 eg. multi_column_suffix: ["\n\n"]
   #
   # See: https://github.com/RWKV/RWKV-infctx-trainer/issues/34
   # Need to use " or the new lines won't be tokenized properly
   # ---
   # multi_column_keys: ["instruction", "input", "output"]
   # multi_column_prefix: ["Instruction:\n", "Input:\n", "Output:\n"]
-  # multi_column_suffix: ["\n\n", "\n\n", "\n\n"]
+  # multi_column_suffix: ['', '', '']
   # multi_column_train_mask: [true, false, true]
   # multi_column_separator: "\n\n"
-  
   
   # Conversation merging process
   # useful for merging full conversational datasets, into single documents
@@ -503,6 +535,16 @@ data:
   # Pack the data sequentially if possible, in accordance to the dataset sequence
   # this can be used together with sort_by_length, otherwise a shuffle will be done
   packing_in_sequence: False
+
+  # ----------------------------
+  # Specal use caes flags
+  # ----------------------------
+
+  # Reverse the training dataset order before saving, this is useful for,
+  # optimizing dataset packing process, when using packing_in_sequence
+  # and sort_by_length desc order together
+  reverse_train_dataset_before_save: False
+
 
 # Path to the current checkpoint to continue training from
 # this should be the directory path, and ends with `.ckpt/`

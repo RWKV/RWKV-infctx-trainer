@@ -8,7 +8,7 @@ def init_model(
         skip_if_exists=False, safe_init=False, emb_scale=0.0001
         # existing_model_path=None
         ):
-    # Insert your own function behavior here
+    
     print(f"---- Initializing model ----")
     print(f'No of layers: {layers}')
     print(f'Embedding size: {embedding_size}')
@@ -21,7 +21,7 @@ def init_model(
 
     # Check if the model exists
     if skip_if_exists and os.path.exists(output_model_path):
-        print(f"Model exists, skipping init_model")
+        print(f"Output model exists, skipping init_model")
         return
 
     # Enforce safe_init if skip_if_exists is set
@@ -39,14 +39,16 @@ def init_model(
                  n_embd=embedding_size, vocab_size=vocab_size, 
                  load_model=".//<#|=@%!$init_model$!%@=|#>//.",
                  ctx_len=1)
+    model_state_dict = model.state_dict()
     
     # Modified init code, from the original init code
     m = {}
-    for n in model.state_dict():
+    for n in model_state_dict:
 
         # Iterate each parameter group in state_dict
-        p = model.state_dict()[n]
+        p = model_state_dict[n]
         shape = p.shape
+
         gain = 1.0
         scale = 1.0
 
@@ -101,7 +103,7 @@ def init_model(
         torch.save(m, output_model_path)
 
 def main():
-    parser = argparse.ArgumentParser(description='CLI tool for model handling')
+    parser = argparse.ArgumentParser(description='CLI tool for RWKV model initialization')
     parser.add_argument('--n_layer', type=int, help='Number of layers')
     parser.add_argument('--n_embd',  type=int, help='Embedding size')
     parser.add_argument('--vocab_size', type=str, help="Vocab size for the model as an int, alternativey use 'neox' or 'world' if using their respective tokenizer", default="neox")

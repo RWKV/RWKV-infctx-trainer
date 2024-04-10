@@ -150,6 +150,7 @@ dmypy.json
 # and standard hidden files ignore. Including 
 # example files generated via notebook tutorials
 .*
+scratch/
 model/
 dataset/
 datapath/

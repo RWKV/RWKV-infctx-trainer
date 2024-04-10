@@ -1,0 +1,114 @@
+###############################################
+##
+## See the full `config-example.yaml` for more
+## detailes on the trainer/model configs
+##
+###############################################
+
+trainer:
+  # Multi node training settings
+  num_nodes: 1
+  microbatch_size: 8
+  strategy: deepspeed_stage_2
+  
+  # Limit to 1 epoch
+  # max_epochs: 1
+  max_steps: 26
+
+  # Resonable batch size, for a more realistic it/s rate
+  # this is currently overwritten in the notebook
+  target_batch_size: 1024
+
+  # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
+  # ---
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+    init_args:
+      name: 'Eagle-2T-P1'
+      project: 'RWKV-V5-Eagle-2T-exp'
+      tags: ['Eagle', 'RWKV-V5']
+  
+  # Checkpoint settings for the training process
+  callbacks:
+    class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      # Configure this to the path you want to save your checkpoints to
+      # note that a subdir will be created with the name `epoch=x-step=y.ckpt`
+      # 
+      # to convert a checkpoint to a model, you can use the 
+      # `python3 export_checkpoint.py <checkpoint path>` script, 
+      # which will create a `rwkv_model.pth` in the checkpoint directory.
+      #
+      # Do not use the `zero_to_fp32.py` script as that will have export format issues
+      dirpath: /checkpoint/calibration/Eagle-2T-p1/
+      filename: null
+      
+      # Save the top/last K checkpoints
+      save_top_k: 10
+      # Choose the most recent checkpoints by steps
+      monitor: 'step'
+      mode: max
+      
+      # If enabled (true), save a copy of the latest checkpoint to 'last.ckpt'
+      # useful to simply checkpoint resume scripts, at a price of disk performance
+      save_last: true
+
+      # DO NOT set this as true, as the model weight exported will have format issues
+      # expert as checkpoint, and use the `export_checkpoint.py` script to convert to model instead
+      save_weights_only: false
+
+      # How frequent you want to save a checkpoint for every step.
+      # This will happen for every X data sample, where X = every_n_train_steps * accumulate_grad_batches
+      #
+      # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
+      # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
+      # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
+      every_n_train_steps: 25
+      every_n_epochs: null
+      save_on_train_epoch_end: true
+      train_time_interval: null
+
+      # Other pytorch lightning settings, which in most cases you can remove/ignore
+      # ---
+      # verbose: false
+      # auto_insert_metric_name: true
+  
+model:
+  # The model to load
+  load_model: /workspace/RWKV-v5-Eagle-World-7B-v2-20240128-ctx4096.pth
+
+  # Starting and ending learning rate
+  lr_init: 3e-5
+  lr_final: 3e-5
+
+  # Training context length, note that the dataset can be
+  # larger then the context size, in which the trainer
+  # will process the dataset in chunks
+  ctx_len: 4096
+
+  # BPTT learning, this allows you to run the trainer against dataset
+  # larger then its training context length
+  bptt_learning: true
+  bptt_learning_range: -1
+
+########################################
+## Training model settings
+########################################
+data:
+  # Skip the datapath setup
+  #
+  # ignored if using the preload_datapath.py, useful for speeding up the trainer startup
+  # provided you have your datasets all properly preinitialized
+  # ---
+  skip_datapath_setup: True
+
+  # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
+  #
+  # Use this if you have built your own dataset and saved it with `save_to_disk()`
+  # with source left as null. Other wise configure this to a directory which the 
+  # dataset will be built and tokenized by the huggingface dataset process.
+  data_path: /datapath/world-v2.5-0.01-hfdataset-pt0/
+
+# Path to the current checkpoint to continue training from
+# this should be the directory path, and ends with `.ckpt/`
+# ckpt_path: /checkpoint/Eagle-2T-p1/last.ckpt
