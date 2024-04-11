@@ -40,7 +40,7 @@ def init_model(
                  load_model=".//<#|=@%!$init_model$!%@=|#>//.",
                  ctx_len=1)
     model_state_dict = model.state_dict()
-
+    
     # Modified init code, from the original init code
     m = {}
     for n in model_state_dict:

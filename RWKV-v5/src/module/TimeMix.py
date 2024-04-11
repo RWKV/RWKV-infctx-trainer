@@ -241,7 +241,7 @@ class RWKV_TimeMix(nn.Module):
                     os.path.join(code_dir, "cuda/wkv5_op.cpp"),
                     os.path.join(code_dir, "cuda/wkv5_cuda.cu"),
                 ],
-                verbose=True,
+                verbose=True, 
                 extra_cuda_cflags=[
                     "-res-usage", 
                     "--use_fast_math", 
@@ -273,6 +273,8 @@ class RWKV_TimeMix(nn.Module):
     #       [batch_size, state_size] ## Channel mix state,
     #       [batch_size, n_head, head_size, head_size] ## WKV state
     #   ]
+    
+    #@ #JITModMethod
     def forward(self, x, last_state: tuple[torch.Tensor,torch.Tensor]) -> tuple[torch.Tensor,tuple[torch.Tensor,torch.Tensor]]:
         # Run with cuda
         if self.use_cuda is True:

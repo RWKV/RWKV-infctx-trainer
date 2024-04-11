@@ -6,10 +6,8 @@ from torch import Tensor
 
 from .CoreDependencies import *
 
-# 24 is optimal chunk length for fp32 (longer will use too much memory and cause precision problems or even numerical instability, shorter is inefficient)
 @TCompileBaseline
-def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=24,precision:int=32)->tuple[Tensor,Tensor]:
-
+def rwkv_inner(r,k,v,w,u,kv_state,chunk_len:int=128,precision:int=64)->tuple[Tensor,Tensor]:
     assert(chunk_len <= 24 or precision == 64)
     """
     expects
