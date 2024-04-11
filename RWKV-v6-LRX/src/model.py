@@ -27,6 +27,11 @@ def deepspeed_checkpoint(*args, **kwargs):
 global RWKV_LAYER_REPEAT_MULTIPLIER
 RWKV_LAYER_REPEAT_MULTIPLIER = int(os.environ.get("RWKV_LAYER_REPEAT_MULTIPLIER", 2))
 
+# Print the layer repeat multiplier
+print("====================================================================")
+print(f"[RWKV] Layer Repeat Multiplier: {RWKV_LAYER_REPEAT_MULTIPLIER}")
+print("====================================================================")
+
 ### ---
 # RWKV: State Blocks
 ### ---
@@ -157,6 +162,27 @@ class L2Wrap(torch.autograd.Function):
         # We ensure the mask is reshaped accordingly, and apply it against gy
         gy = gy * currentMask.reshape(gy.shape[0],gy.shape[1],1) # currentMask[:, None][None, :]
         return (grad_output, gy, None, None)
+
+### ---
+# Static optimized functions
+### ---
+
+# LRX block executor, to handle the block execution in a loop
+def lrx_block_forward(block, output_x, last_state_arr):
+
+    # Get the new_state_arr
+    new_state_arr = [None] * RWKV_LAYER_REPEAT_MULTIPLIER
+
+    # Repeat the block
+    for p in range(RWKV_LAYER_REPEAT_MULTIPLIER):
+        # Perform the block and state computation as per normal
+        output_x, new_state = block(output_x, last_state_arr[p])
+        
+        # Update the return state arr
+        new_state_arr[p] = new_state
+
+    # Return output, and new state arr
+    return output_x, new_state_arr
 
 ### ---
 # Static optimized functions
@@ -662,22 +688,41 @@ class RWKV(L.LightningModule):
         #             BlockStateList(last_shift_states, last_wkv_states))):
         # ---
         for b in range(len(self.blocks)):
-            for p in range(len(RWKV_LAYER_REPEAT_MULTIPLIER)):
 
-                # Get the block to loop
-                block = self.blocks[b]
+            # ---
+            # This does not work, as we cannot pass `use_reentrant` via deepspeed checkpoint
+            # ---
+            # for p in range(RWKV_LAYER_REPEAT_MULTIPLIER):
+            #     # Get the block to loop
+            #     block = self.blocks[b]
 
-                # Get the block state index
-                i = b * RWKV_LAYER_REPEAT_MULTIPLIER + p
+            #     # Get the block state index
+            #     i = b * RWKV_LAYER_REPEAT_MULTIPLIER + p
 
-                # Perform the block and state computation as per normal
-                last_state = cur_bs_list[i]
-                if self.grad_cp:
-                    output_x, new_state = deepspeed_checkpoint(
-                        block, output_x, last_state)
-                else:
-                    output_x, new_state = block(output_x, last_state)
-                new_states[i] = new_state
+            #     # Perform the block and state computation as per normal
+            #     last_state = cur_bs_list[i]
+            #     if self.grad_cp:
+            #         output_x, new_state = deepspeed_checkpoint(
+            #             block, output_x, last_state)
+            #     else:
+            #         output_x, new_state = block(output_x, last_state)
+            #     new_states[i] = new_state
+
+            # ---
+            
+            # Work around with the LRX block executor
+            last_state_arr = [cur_bs_list[b * RWKV_LAYER_REPEAT_MULTIPLIER + p] for p in range(RWKV_LAYER_REPEAT_MULTIPLIER)]
+            new_state_arr = None
+
+            # Perform the block and state computation
+            if self.grad_cp:
+                output_x, new_state_arr = deepspeed_checkpoint(lrx_block_forward, self.blocks[b], output_x, last_state_arr)
+            else:
+                output_x, new_state_arr = lrx_block_forward(self.blocks[b], output_x, last_state_arr)
+
+            # Update the new states
+            for p in range(RWKV_LAYER_REPEAT_MULTIPLIER):
+                new_states[b * RWKV_LAYER_REPEAT_MULTIPLIER + p] = new_state_arr[p]
 
         ########
         ### Forking block loop (its slower sadly)
@@ -1033,7 +1078,7 @@ class RWKV(L.LightningModule):
             return sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
 
         # Initialize the states, and compute the segment count
-        states = BlockStateList.create(self.n_layer, B, C, 
+        states = BlockStateList.create(self.n_layer * RWKV_LAYER_REPEAT_MULTIPLIER, B, C, 
                                        self.n_head, self.head_size,
                                        seq.device, self.emb.weight.dtype)
         segment_count = math.ceil(T / self.ctx_len)
