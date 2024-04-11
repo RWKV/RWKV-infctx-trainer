@@ -27,8 +27,8 @@ trainer:
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      name: 'infctx-v5-unit-test-baseline (train-ctx=4096, data-ctx=16k-packing)'
-      project: 'RWKV-X-SLoss'
+      name: 'infctx-v5-unit-test-baseline (train-ctx=4k, data-ctx=32k)'
+      project: 'RWKV-infctx-v6-validation'
       tags: ['RWKV', 'infctx']
   
   # Checkpoint settings for the training process
