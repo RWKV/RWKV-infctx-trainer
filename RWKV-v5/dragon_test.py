@@ -52,6 +52,10 @@ elif RAW_DEVICE.find('fp32') != -1:
 # Disable torch compile for dragon test
 os.environ["RWKV_TORCH_COMPILE"] = "0"
 
+# If CUDA, enforce cuda mode, for optimized inference
+if DEVICE == "cuda":
+    os.environ["RWKV_NO_CUDA"] = "0"
+
 # Setup the model
 from src.model import SimpleRWKV
 model = SimpleRWKV(MODEL_PATH, device=DEVICE, dtype=DTYPE)
