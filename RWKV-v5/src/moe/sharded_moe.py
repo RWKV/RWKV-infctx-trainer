@@ -603,9 +603,12 @@ class MOELayer(Base):
         flat_input = input.reshape(-1, d_model)
         flat_input_in_expert_order = torch.gather(flat_input, 0, flat_idx_sorted_by_expert_unsqueezed)
 
-        flat_input_for_my_experts_from_all = self.all_to_all(flat_input_in_expert_order)
-        flat_output_for_my_experts = self.experts(flat_input_for_my_experts_from_all)
-        flat_output_from_all = self.all_to_all(flat_output_for_my_experts)
+        if self.ep_size == 1:
+            flat_output_from_all = self.experts(flat_input_in_expert_order.unsqueeze(0)).squeeze(0)
+        else:
+            flat_input_for_my_experts_from_all = self.all_to_all(flat_input_in_expert_order)
+            flat_output_for_my_experts = self.experts(flat_input_for_my_experts_from_all)
+            flat_output_from_all = self.all_to_all(flat_output_for_my_experts)
 
         combined_flat_output = torch.zeros_like(flat_input).scatter(dim=0, index=flat_idx_sorted_by_expert_unsqueezed, src=flat_output_from_all)
         return combined_flat_output.reshape(input.shape)
