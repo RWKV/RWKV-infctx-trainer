@@ -1,15 +1,16 @@
 from lightning import LightningDataModule
 
 import torch
-from torch.utils.data import DataLoader
-from torch.utils.data import DistributedSampler, BatchSampler, SequentialSampler
+from torch.utils.data import DataLoader, DistributedSampler, BatchSampler, SequentialSampler, Subset
 
 import math, random, numpy
 import wandb
-from datasets import load_from_disk, load_dataset, concatenate_datasets, Dataset, Features, Value, Sequence
+from datasets import load_from_disk, load_dataset, concatenate_datasets, Dataset, Features, Value, Sequence, DatasetDict
 from transformers import PreTrainedTokenizerFast, AutoTokenizer
 from multiprocessing import cpu_count
 import gc, yaml
+
+from src.dataset import MMapDataset
 
 num_cpus = cpu_count()
 num_workers = cpu_count() if cpu_count() < 8 else 8
@@ -1538,6 +1539,7 @@ class RWKVDataModule(LightningDataModule):
 
         # load_from_disk(dataset_path) param
         data_path: str = None,
+        val_data_path: str = None,
         # Data path storage options, this is used to support cloud storage
         # via the huggingface dataset API. See:
         # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
@@ -1693,6 +1695,7 @@ class RWKVDataModule(LightningDataModule):
         super().__init__()
         self.datapack_config_path = datapack_config_path
         self.data_path = data_path
+        self.val_data_path = val_data_path
         self.data_path_storage_options = data_path_storage_options
         self.dataloader_prefetch_factor = dataloader_prefetch_factor
         self.dataloader_pin_memory = dataloader_pin_memory
@@ -1742,24 +1745,37 @@ class RWKVDataModule(LightningDataModule):
             else:
                 # Load normal dataset
                 print(">> Loading dataset from data_path: ", self.data_path)
-                if self.data_path_storage_options:
+
+                if self.data_path.endswith('.bin'):
+                    self._loaded_dataset = DatasetDict()
+                    self._loaded_dataset['train'] = MMapDataset(self.data_path[:-4], req_len=self.trainer.model.ctx_len)
+                    assert self.val_data_path is not None, "You must specify a val_data_path when using binidx files for training"
+                elif self.data_path_storage_options:
                     self._loaded_dataset = load_from_disk(self.data_path, storage_options=self.data_path_storage_options).with_format('torch')
                 else:
                     self._loaded_dataset = load_from_disk(self.data_path).with_format('torch')
+
                 print(">> Dataset load finished: ", self.data_path)
+
+                if self.val_data_path is not None:                    
+                    print(">> Loading validation dataset from data_path: ", self.val_data_path)
+                    if self.val_data_path.endswith('.bin'):
+                        val_dataset = MMapDataset(self.val_data_path[:-4], req_len=self.trainer.model.ctx_len)
+                    else:
+                        val_dataset = load_from_disk(self.val_data_path).with_format('torch')
+                    val_dataset = Subset(val_dataset, range(1024)) # FIXME - hack to shorten val dataset
+                    self._loaded_dataset['validation'] = val_dataset
+                    print(">> Validation dataset load finished: ", self.val_data_path)
+
 
     # Called once for every process in DDP
     def setup(self, stage):
         self._internal_setup()
-
-    # Return the train dataloader
-    def train_dataloader(self):
+    
+    def dataloader(self, split_name:str, shuffle:bool, set_epoch:bool, dataloader_class):
         self._internal_setup()
 
-        if self.dataloader_swap_train_test_split == False:
-            dataset = self._loaded_dataset['train'];
-        else:
-            dataset = self._loaded_dataset['test'];
+        dataset = self._loaded_dataset[split_name]
 
         microbatch_size = 1
         if hasattr(self, "trainer") and hasattr(self.trainer, "microbatch_size"):
@@ -1782,24 +1798,23 @@ class RWKVDataModule(LightningDataModule):
         #     drop_last=True
         # )
 
-        _train_sampler = DistributedSampler(
+        sampler = DistributedSampler(
             dataset, 
-            shuffle=self.dataloader_shuffle_training and not self.sort_by_length,
+            shuffle=shuffle,
             num_replicas=self.trainer.world_size,
             rank=self.trainer.global_rank,
             ## This is required due to multi node alignment errors
             drop_last=True
         )
-        self._train_sampler = _train_sampler
-        self._train_sampler.set_epoch(self.trainer.current_epoch)
+        if set_epoch:
+            sampler.set_epoch(self.trainer.current_epoch)
 
-        training_ctx_len = self.trainer.model.ctx_len
         def _train_dataloader_collator_fn(records):
-            return dataloader_collator_fn(records, length_multiple=training_ctx_len)
+            return dataloader_collator_fn(records, length_multiple=self.trainer.model.ctx_len-1)
 
-        _train_dataloader = CheckPointResumeSafeDataLoader(
+        _train_dataloader = dataloader_class(
             dataset, 
-            sampler=_train_sampler,
+            sampler=sampler,
             shuffle=False,
             # prefetch workers per GPU
             num_workers=self.dataloader_prefetch_factor,
@@ -1814,46 +1829,22 @@ class RWKVDataModule(LightningDataModule):
         )
 
         return _train_dataloader
-    
+
+
+    # Return the train dataloader
+    def train_dataloader(self):
+        if self.dataloader_swap_train_test_split == False:
+            split_name = 'train'
+        else:
+            split_name = 'test'
+        shuffle = self.dataloader_shuffle_training and not self.sort_by_length
+        return self.dataloader(split_name, shuffle, True, CheckPointResumeSafeDataLoader)
+
     # Return the validation dataloader
     def val_dataloader(self):
-        self._internal_setup()
         if self.dataloader_swap_train_test_split == False:
-            dataset = self._loaded_dataset['test'];
+            split_name = 'validation'
         else:
-            dataset = self._loaded_dataset['train'];
-        
-        sampler = DistributedSampler(
-            dataset, 
-            shuffle=False, 
-            num_replicas=self.trainer.world_size,
-            rank=self.trainer.global_rank,
-            ## This is required due to multi node alignment errors
-            drop_last=True
-        )
-        self._val_sampler = sampler
-
-        training_ctx_len = 128
-        microbatch_size = 1
-        if hasattr(self, "trainer") and hasattr(self.trainer, "microbatch_size"):
-            microbatch_size = self.trainer.microbatch_size
-            training_ctx_len = self.trainer.model.ctx_len
-
-        def _val_dataloader_collator_fn(records):
-            return dataloader_collator_fn(records, length_multiple=training_ctx_len)
-
-        return DataLoader(
-            dataset, 
-            sampler=sampler,
-            shuffle=False,
-            # prefetch workers per GPU
-            num_workers=self.dataloader_prefetch_factor,
-            # Prefetching 8 batches
-            prefetch_factor=self.dataloader_prefetch_factor,
-            # Of batch sized datasets
-            batch_size=microbatch_size, 
-            # The collation function
-            collate_fn=_val_dataloader_collator_fn,
-            # Pinned in GPU memory
-            pin_memory=self.dataloader_pin_memory
-        )
+            split_name = 'train'
+        shuffle = False
+        return self.dataloader(split_name, shuffle, False, DataLoader)
