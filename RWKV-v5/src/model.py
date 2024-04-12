@@ -14,6 +14,8 @@ from .module.TimeMix7_0 import RWKV_TimeMix7_0
 
 from . import metrics
 
+from functools import partial
+
 #from deepspeed.moe.layer import MoE
 from .moe.layer import MoE
 from .moe.utils import split_params_into_different_moe_groups_for_optimizer
@@ -256,6 +258,7 @@ class RWKV(L.LightningModule):
                  # to configure a constant learning rate
                  lr_init: float = -1.0,
                  lr_final: float = -1.0,
+                 lr_upgraded_params_init: float = -1.0,
                  lr_period: int = -1,
                  lr_period_type: str = 'epoch',
                  # Use either "cosine" or "linear"
@@ -375,6 +378,7 @@ class RWKV(L.LightningModule):
         self.grad_cp = grad_cp
         self.lr_init = lr_init
         self.lr_final = lr_final
+        self.lr_upgraded_params_init = lr_upgraded_params_init
         self.lr_period = lr_period
         self.lr_period_type = lr_period_type
         self.lr_type = lr_type
@@ -485,9 +489,11 @@ class RWKV(L.LightningModule):
         # Get the learning rate used for the optimizer
         lr_init = self.lr_init
         lr_final = self.lr_final
+        lr_upgraded_params_init = self.lr_upgraded_params_init
         # If the final learning rate is not specified, use the initial learning rate
         if lr_final < 0:
             lr_final = self.lr_init
+        assert '_upgraded' not in self.version or lr_upgraded_params_init > 0, 'upgraded models must specify lr_upgraded_params_init'
 
         # Log the learning rate, and various other parameters
         if self.trainer.local_rank == 0:
@@ -582,11 +588,12 @@ class RWKV(L.LightningModule):
                 {
                     "params": [param_dict[n] for n in lr_upgraded],
                     "weight_decay": self.weight_decay,
-                    "lr": 4e-4,
-                    'name': 'random-unique-name5'
+                    "lr": lr_upgraded_params_init,
+                    'name': 'upgraded'
                 },
             ]
         else:
+            # FIXME - should we just always have five groups so LR scheduling can work consistently?
             optim_groups = [
                 {
                     "params": [p for n, p in self.named_parameters()],
@@ -622,77 +629,62 @@ class RWKV(L.LightningModule):
             raise ValueError(
                 "Use either warmup_steps or lr_period, not both.")
 
-        if self.warmup_steps > 0:
+        # The total number of steps to perform training rate decay with
+        lr_total_step = 0
+
+        # Handle lr_period -1 default behaviour of using the max_step / max_epoch
+        if self.lr_period == -1:
+            # Get trainer max_step / max_epoch
+            trainer_max_step = self.trainer.max_steps
+            trainer_max_epoch = self.trainer.max_epochs
+            if trainer_max_step > 0:
+                lr_total_step = trainer_max_step
+            elif trainer_max_epoch > 0:
+                lr_total_step = trainer_max_epoch * self.num_step_per_epoch()
+            else :
+                print("Warning: max_step/max_epoch not set, we would be performing lr_init to lr_final shift assuming 10 epoch")
+                lr_total_step = 10 * self.num_step_per_epoch()
+        else:
+            # Calculate lr_total_step based on lr_period
+            if self.lr_period_type == "step":
+                lr_total_step = self.lr_period
+            elif self.lr_period_type == "epoch":
+                lr_total_step = self.lr_period * self.num_step_per_epoch() # * self.trainer.microbatch_size
+            else:
+                raise ValueError(f"lr_period_type {self.lr_period_type} not supported.")
+
+        # Lets initialize the lr_scheduler
+        if lr_init == lr_final or self.lr_type == "linear":
             lr_scheduler = torch.optim.lr_scheduler.LinearLR(
+                optimizer,
+                start_factor=1.0,
+                end_factor= lr_final / lr_init,
+                total_iters=lr_total_step
+            )
+        elif self.lr_type == "cosine":
+            cos_fn = lambda t, a, b: a + (b-a) * (0.5 + 0.5 * math.cos(math.pi * t))
+            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(cos_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group.name else lr_upgraded_params_init)) for group in optim_groups])
+        else:  
+            raise ValueError(f"lr_type {self.lr_type} not supported.")
+
+        if self.warmup_steps > 0:
+            warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
                 optimizer,
                 start_factor = 0.2,
                 end_factor = 1.0,
                 total_iters = self.warmup_steps
             )
 
-            return {
-                'optimizer': optimizer,
-                'lr_scheduler': {
-                    "scheduler": lr_scheduler,
-                    "interval": "step",
-                    "frequency": 1,
-                },
-            }
+            lr_scheduler = torch.optim.lr_scheduler.ChainedScheduler([warmup_scheduler, lr_scheduler])
 
-        else:
-            # Skip the lr_scheduler process if lr_init and lr_final are the same
-            if lr_init == lr_final:
-                return optimizer
-
-            # The total number of steps to perform training rate decay with
-            lr_total_step = 0
-
-            # Handle lr_period -1 default behaviour of using the max_step / max_epoch
-            if self.lr_period == -1:
-                # Get trainer max_step / max_epoch
-                trainer_max_step = self.trainer.max_steps
-                trainer_max_epoch = self.trainer.max_epochs
-                if trainer_max_step > 0:
-                    lr_total_step = trainer_max_step
-                elif trainer_max_epoch > 0:
-                    lr_total_step = trainer_max_epoch * self.num_step_per_epoch()
-                else :
-                    print("Warning: max_step/max_epoch not set, we would be performing lr_init to lr_final shift assuming 10 epoch")
-                    lr_total_step = 10 * self.num_step_per_epoch()
-            else:
-                # Calculate lr_total_step based on lr_period
-                if self.lr_period_type == "step":
-                    lr_total_step = self.lr_period
-                elif self.lr_period_type == "epoch":
-                    lr_total_step = self.lr_period * self.num_step_per_epoch() # * self.trainer.microbatch_size
-                else:
-                    raise ValueError(f"lr_period_type {self.lr_period_type} not supported.")
-
-            # Lets initialize the lr_scheduler
-            if self.lr_type == "cosine":
-                lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer,
-                    T_max=lr_total_step,
-                    eta_min=lr_final
-                )
-            elif self.lr_type == "linear":
-                lr_scheduler = torch.optim.lr_scheduler.LinearLR(
-                    optimizer,
-                    start_factor=1.0,
-                    end_factor= lr_final / lr_init,
-                    total_iters=lr_total_step
-                )
-            else:  
-                raise ValueError(f"lr_type {self.lr_type} not supported.")
-
-            return {
-                'optimizer': optimizer,
-                'lr_scheduler': {
-                    "scheduler": lr_scheduler,
-                    "interval": "step",
-                    "frequency": 1,
-                },
-            }
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                "scheduler": lr_scheduler,
+                "interval": "step",
+                "frequency": 1,
+            },
+        }
                 
     
     # We have to compute the number of steps per epoch ourselves
