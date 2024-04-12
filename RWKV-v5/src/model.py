@@ -124,17 +124,19 @@ class Block(nn.Module):
             self.ffn = RWKV_ChannelMix6_0(layer_id, n_layer, n_embd, dim_ffn)
 
         if num_experts > 0:# and layer_id >= n_layer // 2:
-            if version == '6.0x_upgraded':
-                dim_moe = int((n_embd * 4) // 32 * 32)
-                self.moe = RWKV_Expert6_0x(layer_id, n_layer, n_embd, dim_moe)
-            else:
-                dim_moe = dim_ffn
-                self.moe = RWKV_Expert(layer_id, n_layer, n_embd, dim_moe)
+            #if version == '6.0x_upgraded':
+            dim_moe = int((n_embd * 4) // 32 * 32)
+            self.moe = RWKV_Expert6_0x(layer_id, n_layer, n_embd, dim_moe)
+            #else:
+            #    dim_moe = dim_ffn
+            #    self.moe = RWKV_Expert(layer_id, n_layer, n_embd, dim_moe)
 
             if not additive_moe:
                 self.residual_coefficients = torch.nn.Linear(n_embd, 2, bias=False)
 
-            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts = num_experts, ep_size=1, k=1, min_capacity=4, capacity_factor=1, eval_capacity_factor=1, drop_tokens=True)
+            primes = [5099, 5101, 5107, 5113, 5119, 5147, 5153, 5167, 5171, 5179, 5189, 5197, 5209, 5227, 5231, 5233, 5237, 5261, 5273, 5279, 5281, 5297, 5303, 5309, 5323, 5333, 5347, 5351, 5381, 5387, 5393, 5399, 5407, 5413, 5417, 5419, 5431, 5437, 5441, 5443]
+            hash_prime = primes[layer_id]
+            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts = num_experts, ep_size=8, k=1, min_capacity=4, capacity_factor=1, eval_capacity_factor=1, drop_tokens=True, hash_prime=hash_prime)
 
             with torch.no_grad():  # fancy init of time_mix
                 ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
@@ -158,7 +160,7 @@ class Block(nn.Module):
             self.drop1 = nn.Identity()
 
     @TCompileBaseline
-    def forward(self, x, last_state: BlockState):
+    def forward(self, x, tokens, last_state: BlockState):
         x = self.ln0(x)
 
         att_out, att_state = self.att(
@@ -177,7 +179,7 @@ class Block(nn.Module):
             # fun hackery to do both halves of the tokenshift OUTSIDE of the expert, while leaving the parameters inside the FFN
             lnxk = lnx * self.time_mix_k + lnxx * (1 - self.time_mix_k)
             
-            moe_out = self.moe(lnxk)
+            moe_out = self.moe(lnxk, tokens)
             if isinstance(moe_out, tuple):
                 moe_out, aux_loss, exp_counts = moe_out
             else:
@@ -234,6 +236,7 @@ class L2Wrap(torch.autograd.Function):
 # @ TCompileMax (no speed improvement)
 # def F_cross_entropy_reduction_none_optimized(logits, targets):
 #     return F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction="none")
+
 
 ### ---
 # Core RWKV module
@@ -466,7 +469,7 @@ class RWKV(L.LightningModule):
 
         # load the state, and GC the original cpu copy
         if model_weights != None:
-            self.load_state_dict(model_weights, strict=not ('_upgraded' in version))
+            self.load_state_dict(model_weights, strict=False)#not ('_upgrade' in version))
             del model_weights
             gc.collect()
 
@@ -534,6 +537,7 @@ class RWKV(L.LightningModule):
             lr_upgraded = set()
             for n, p in self.named_parameters():
                 if ('_upgraded' in self.version) and ((".deepspeed_moe." in n) or ("_w1" in n) or ("_w2" in n) or (".time_mix_x" in n) or (".time_mix_w" in n) or (".time_t" in n)):
+                #if ('_upgraded' in self.version) and (".deepspeed_moe." in n):
                     lr_upgraded.add(n)
                 elif ("_w1" in n) or ("_w2" in n):
                     lr_1x.add(n)
@@ -793,9 +797,9 @@ class RWKV(L.LightningModule):
             last_state = cur_bs_list[i]
             if self.grad_cp:
                 output_x, new_state, addl_aux_loss = deepspeed_checkpoint(
-                    block, output_x, last_state)
+                    block, output_x, idx, last_state)
             else:
-                output_x, new_state, addl_aux_loss = block(output_x, last_state)
+                output_x, new_state, addl_aux_loss = block(output_x, idx, last_state)
             aux_loss = aux_loss + addl_aux_loss
             new_states[i] = new_state
 

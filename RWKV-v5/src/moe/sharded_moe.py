@@ -99,17 +99,22 @@ class _AllToAll(torch.autograd.Function):
             ctx: Any,
             # TODO: replace with DS process group
             group: torch.distributed.ProcessGroup,
-            input: Tensor) -> Tensor:  # type: ignore
+            input: Tensor,
+            output_split_sizes: list|None,
+            input_split_sizes: list|None,
+            ) -> Tensor:  # type: ignore
         ctx.group = group
+        ctx.input_size = input.size()
+        ctx.output_split_sizes = input_split_sizes
+        ctx.input_split_sizes = output_split_sizes
         input = input.contiguous()
         output = torch.empty_like(input)
-        dist.all_to_all_single(output, input, group=group)
+        dist.all_to_all_single(output, input, output_split_sizes, input_split_sizes, group=group)
         return output
 
     @staticmethod
-    def backward(ctx: Any, *grad_output: Tensor) -> Tuple[None, Tensor]:
-        return (None, _AllToAll.apply(ctx.group, *grad_output))
-
+    def backward(ctx, grad_output):
+        return (None, _AllToAll.apply(ctx.group, grad_output.contiguous(), ctx.input_split_sizes, ctx.output_split_sizes), None, None)
 
 # einsum rewrites are on par or more performant
 # switch can be bubbled up in future
@@ -543,6 +548,7 @@ class MOELayer(Base):
                  ep_group_name,
                  ep_size,
                  num_local_experts: int,
+                 hash_prime: int,
                  use_tutel: bool = False) -> None:
         super().__init__()
         self.gate = gate
@@ -551,6 +557,7 @@ class MOELayer(Base):
         self.ep_size = ep_size
         self.ep_group_name = ep_group_name
         self.num_local_experts = num_local_experts
+        self.hash_prime = hash_prime
         self.time_falltoall = 0.0
         self.time_salltoall = 0.0
         self.time_moe = 0.0
@@ -573,84 +580,33 @@ class MOELayer(Base):
 
     @torch._dynamo.disable
     @torch.jit.ignore
-    def all_to_all(self, x:Tensor) -> Tensor:
-        return _AllToAll.apply(self.ep_group, x)
+    def all_to_all(self, x:Tensor, output_split_sizes:list|None=None, input_split_sizes:list|None=None) -> Tensor:
+        return _AllToAll.apply(self.ep_group, x, output_split_sizes, input_split_sizes)
 
-    def forward(self, *input: Tensor, **kwargs: Any) -> Tensor:
+    @torch._dynamo.disable
+    @torch.jit.ignore
+    def forward(self, input, tokens, used_token, **kwargs: Any) -> Tensor:
 
-        if self.wall_clock_breakdown:
-            self.timers(MOE_TIMER).start()
+        d_model = input.shape[-1]
 
-        # Implement Algorithm 2 from GShard paper.
-        d_model = input[0].shape[-1]
+        # FIXME
+        n_experts = self.ep_size * self.num_local_experts
 
-        # Initial implementation -> Reshape into S tokens by dropping sequence dimension.
-        # Reshape into G groups so that each group can distribute tokens equally
-        # group_size = kwargs['group_size'] if 'group_size' in kwargs.keys() else 1
-        reshaped_input = input[0].reshape(-1, d_model)
+        flat_tokens = tokens.reshape(-1)
+        expert_by_flat_idx = (flat_tokens * self.hash_prime) % n_experts
 
-        if self.use_tutel:
-            self.l_aux, C, E, indices_, locations_, gates_, self.exp_counts = self.gate(reshaped_input, input[1], True)
-            S, M = reshaped_input.size(0), reshaped_input.size(1)
+        # indices that reorder the inputs to be in per expert order
+        flat_idx_sorted_by_expert = torch.argsort(expert_by_flat_idx, dim=0)
+        # Reshape indices to be compatible with Tensor.gather (bc no broadcasting allowed?)
+        flat_idx_sorted_by_expert_unsqueezed = flat_idx_sorted_by_expert.view(-1, 1).expand(-1, d_model)
+        # Stage2: permute the tokens locally so that they are grouped by their expert assignment
+        flat_input = input.reshape(-1, d_model)
+        flat_input_in_expert_order = torch.gather(flat_input, 0, flat_idx_sorted_by_expert_unsqueezed)
 
-            if not hasattr(self, '_tutel_dispatcher'):
-                self._tutel_dispatcher = tutel_moe.fast_dispatcher(E, C, M, dispatch_dtype=reshaped_input.dtype)
-            self._tutel_dispatcher.update(indices_, locations_, gates_, capacity=C)
-            dispatched_input = self._tutel_dispatcher.encode(reshaped_input)
-        else:
-            self.l_aux, combine_weights, dispatch_mask, self.exp_counts = self.gate(reshaped_input, input[1])
-            dispatched_input = einsum("sec,sm->ecm", dispatch_mask.type_as(input[0]), reshaped_input)
+        flat_input_for_my_experts_from_all = self.all_to_all(flat_input_in_expert_order)
+        flat_output_for_my_experts = self.experts(flat_input_for_my_experts_from_all)
+        flat_output_from_all = self.all_to_all(flat_output_for_my_experts)
 
-        if self.wall_clock_breakdown:
-            self.timers(FIRST_ALLTOALL_TIMER).start()
-
-        if groups._get_expert_model_parallel_world_size() == 1:
-            # If the non-expert is tensor-parallel, it will create
-            # duplicate tokens on the tensor-parallel ranks.
-            # Since our experts are not tensor-parallel, these duplicates
-            # need to be dropped to ensure correctness.
-            # this also doubles up as a communication optimization as we are
-            # reducing the all-to-all communication volume.
-            dispatched_input = drop_tokens(dispatched_input, dim=1)
-
-        dispatched_input = self.all_to_all(dispatched_input)
-
-        if self.wall_clock_breakdown:
-            self.timers(FIRST_ALLTOALL_TIMER).stop()
-            self.time_falltoall = self.timers(FIRST_ALLTOALL_TIMER).elapsed(reset=False)
-
-        # Re-shape after all-to-all: ecm -> gecm
-        dispatched_input = dispatched_input.reshape(self.ep_size, self.num_local_experts, -1, d_model)
-
-        expert_output = self.experts(dispatched_input)
-
-        if self.wall_clock_breakdown:
-            self.timers(SECOND_ALLTOALL_TIMER).start()
-
-        expert_output = self.all_to_all(expert_output)
-
-        if self.wall_clock_breakdown:
-            self.timers(SECOND_ALLTOALL_TIMER).stop()
-            self.time_salltoall = self.timers(SECOND_ALLTOALL_TIMER).elapsed(reset=False)
-
-        # Re-shape back: gecm -> ecm
-        expert_output = expert_output.reshape(self.ep_size * self.num_local_experts, -1, d_model)
-
-        if groups._get_expert_model_parallel_world_size() == 1:
-            # the dropped duplicate tokens need to be gathered on each
-            # tensor parallel rank again for the tensor-parallel
-            # non-expert of the next layer.
-            expert_output = gather_tokens(expert_output, dim=1)
-
-        if self.use_tutel:
-            combined_output = self._tutel_dispatcher.decode(expert_output.view(E * C, M))
-        else:
-            combined_output = einsum("sec,ecm->sm", combine_weights.type_as(input[0]), expert_output)
-
-        a = combined_output.reshape(input[0].shape)
-
-        if self.wall_clock_breakdown:
-            self.timers(MOE_TIMER).stop()
-            self.time_moe = self.timers(MOE_TIMER).elapsed(reset=False)
-
-        return a
+        combined_flat_output = torch.zeros_like(flat_input).scatter(dim=0, index=flat_idx_sorted_by_expert_unsqueezed, src=flat_output_from_all)
+        return combined_flat_output.reshape(input.shape)
+    

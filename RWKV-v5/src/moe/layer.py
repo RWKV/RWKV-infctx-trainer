@@ -49,6 +49,7 @@ class MoE(DeepSpeedMoE):
                  drop_tokens: bool = True,
                  use_rts=True,
                  use_tutel: bool = False,
+                 hash_prime: int = 1,
                  enable_expert_tensor_parallelism: bool = False):
 
         super(DeepSpeedMoE, self).__init__()
@@ -75,6 +76,7 @@ class MoE(DeepSpeedMoE):
                                       self.expert_group_name,
                                       self.ep_size,
                                       self.num_local_experts,
+                                      hash_prime=hash_prime,
                                       use_tutel=use_tutel)
         if self.use_residual:
             self.mlp = expert
@@ -100,7 +102,7 @@ class MoE(DeepSpeedMoE):
         # Set the group handle for the MOELayer (deepspeed_moe) object
         self.deepspeed_moe._set_ep_group(groups._get_expert_parallel_group(self.expert_group_name))
 
-    def forward(self, hidden_states, used_token=None):
+    def forward(self, hidden_states, tokens, used_token=None):
         """ MoE forward
 
         Arguments:
@@ -116,7 +118,7 @@ class MoE(DeepSpeedMoE):
 
             * exp_counts (int): expert count
         """
-        output = self.deepspeed_moe(hidden_states, used_token)
+        output = self.deepspeed_moe(hidden_states, tokens, used_token)
         if self.use_residual:
             # Residual MoE
             output_mlp = self.mlp(hidden_states)
@@ -125,4 +127,5 @@ class MoE(DeepSpeedMoE):
             coef = self.coefficient(hidden_states)
             coef = torch.nn.functional.softmax(coef, dim=-1)
             output = output * coef[..., 0:1] + output_mlp * coef[..., 1:]
-        return output, self.deepspeed_moe.l_aux, self.deepspeed_moe.exp_counts
+        return output
+        #return output, self.deepspeed_moe.l_aux, self.deepspeed_moe.exp_counts
