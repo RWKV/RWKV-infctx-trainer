@@ -515,11 +515,10 @@ class RWKV(L.LightningModule):
                 "#"
             ))
 
-            lr_init_e = "{:.3e}".format(lr_init)
-            lr_final_e = "{:.3e}".format(lr_final)
             print(f"\n[RWKV.model] Configuring optimizer with\n"+
-                  f"    - lr_init:  {lr_init_e} ({lr_init})\n"+
-                  f"    - lr_final: {lr_final_e} ({lr_final})\n")
+                  f"    - lr_init:  {lr_init:.3e} ({lr_init})\n"+
+                  f"    - lr_upgraded_params_init:  {lr_upgraded_params_init:.3e} ({lr_init})\n"+
+                  f"    - lr_final: {lr_final:.3e} ({lr_final})\n")
 
             # Get the setup args
             model_args = dict(self.setup_args)
@@ -538,8 +537,9 @@ class RWKV(L.LightningModule):
             lr_3x = set()
             lr_upgraded = set()
             for n, p in self.named_parameters():
-                if ('_upgraded' in self.version) and ((".deepspeed_moe." in n) or ("_w1" in n) or ("_w2" in n) or (".time_mix_x" in n) or (".time_mix_w" in n) or (".time_t" in n)):
+                #if ('_upgraded' in self.version) and ((".deepspeed_moe." in n) or ("_w1" in n) or ("_w2" in n) or (".time_mix_x" in n) or (".time_mix_w" in n) or (".time_t" in n)):
                 #if ('_upgraded' in self.version) and (".deepspeed_moe." in n):
+                if (lr_upgraded_params_init != lr_init) and (".deepspeed_moe." in n):
                     lr_upgraded.add(n)
                 elif ("_w1" in n) or ("_w2" in n):
                     lr_1x.add(n)
@@ -595,7 +595,8 @@ class RWKV(L.LightningModule):
                     "params": [param_dict[n] for n in lr_upgraded],
                     "weight_decay": self.weight_decay,
                     "lr": lr_upgraded_params_init,
-                    'name': 'upgraded'
+                    'name': 'random-unique-name5',
+                    'upgraded': True,
                 },
             ]
         else:
@@ -668,10 +669,10 @@ class RWKV(L.LightningModule):
             #     total_iters=lr_total_step
             # )
             linear_fn = lambda a, b, t: a + (b-a) * min(1.0, t / lr_total_step)
-            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(linear_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group['name'] else lr_upgraded_params_init)) for group in optim_groups])
+            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(linear_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init)) for group in optim_groups])
         elif self.lr_type == "cosine":
-            cos_fn = lambda a, b, t: a + (b-a) * (0.5 + 0.5 * math.cos(math.pi * min(1.0, t / lr_total_step)))
-            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(cos_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group['name'] else lr_upgraded_params_init)) for group in optim_groups])
+            cos_fn = lambda a, b, t: (print("cosine", a, b, t, lr_total_step, min(1.0, t / lr_total_step), (0.5 + 0.5 * math.cos(math.pi + math.pi * min(1.0, t / lr_total_step))), a + (b-a) * (0.5 + 0.5 * math.cos(math.pi + math.pi * min(1.0, t / lr_total_step)))) if self.global_rank==0 else None, a + (b-a) * (0.5 + 0.5 * math.cos(math.pi + math.pi * min(1.0, t / lr_total_step))))[1]
+            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(cos_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init)) for group in optim_groups])
         else:  
             raise ValueError(f"lr_type {self.lr_type} not supported.")
 
@@ -1476,9 +1477,14 @@ class RWKV(L.LightningModule):
                 'batchidx': batch_idx
             }
 
+            upgraded_lr_total = 0.0
+            upgraded_lr_count = 0
             for group in self.trainer.optimizers[0].param_groups:
-                if group['name'] == 'upgraded':
-                    logobj['trainer/learning_rate_upgraded'] = group['lr']
+                if 'upgraded' in group:
+                    upgraded_lr_total += group['lr']
+                    upgraded_lr_count += 1
+            if upgraded_lr_count > 0:
+                logobj['trainer/learning_rate_upgraded'] = upgraded_lr_total / upgraded_lr_count
 
 
             # Consolidated logging
