@@ -416,7 +416,7 @@ class RWKV(L.LightningModule):
         self._prev_step_endin_timestamp = 0
 
         dim_att = dim_att or n_embd
-        dim_ffn = dim_ffn or (int((n_embd * 4) // 32 * 32) if version == '7.0' else int((n_embd * 3.5) // 32 * 32))
+        dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
         self.dim_att = dim_att
         self.dim_ffn = dim_ffn
 
