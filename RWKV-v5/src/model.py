@@ -613,6 +613,9 @@ class RWKV(L.LightningModule):
         if self.blocks[0].moe is not None:
             optim_groups = split_params_into_different_moe_groups_for_optimizer(optim_groups)
         #print(optim_groups)
+        # if self.global_rank == 0:
+        #     for group in optim_groups:
+        #         print("optim group", group['name'], group['lr'], len(group['params']), group.get('upgraded', False))
 
         # Setup the adam optimizers
         if self.deepspeed_offload:
@@ -672,7 +675,7 @@ class RWKV(L.LightningModule):
             linear_fn = lambda a, b, t: a + (b-a) * min(1.0, t / lr_total_step)
             lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(linear_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init)) for group in optim_groups])
         elif self.lr_type == "cosine":
-            cos_fn = lambda a, b, t: (print("cosine", a, b, t, lr_total_step, min(1.0, t / lr_total_step), (0.5 + 0.5 * math.cos(math.pi + math.pi * min(1.0, t / lr_total_step))), a + (b-a) * (0.5 + 0.5 * math.cos(math.pi + math.pi * min(1.0, t / lr_total_step)))) if self.global_rank==0 else None, a + (b-a) * (0.5 + 0.5 * math.cos(math.pi + math.pi * min(1.0, t / lr_total_step))))[1]
+            cos_fn = lambda a, b, t: a + (b-a) * (0.5 + 0.5 * math.cos(math.pi + math.pi * min(1.0, t / lr_total_step)))
             lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(cos_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init)) for group in optim_groups])
         else:  
             raise ValueError(f"lr_type {self.lr_type} not supported.")
@@ -1484,8 +1487,10 @@ class RWKV(L.LightningModule):
                 if 'upgraded' in group:
                     upgraded_lr_total += group['lr']
                     upgraded_lr_count += 1
+                #self.print("optim group", group['name'], group['lr'], len(group['params']), group.get('upgraded', False), upgraded_lr_total, upgraded_lr_count)
             if upgraded_lr_count > 0:
                 logobj['trainer/learning_rate_upgraded'] = upgraded_lr_total / upgraded_lr_count
+            #self.print("optim group upgraded ", upgraded_lr_total, upgraded_lr_count)
 
 
             # Consolidated logging
