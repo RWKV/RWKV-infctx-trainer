@@ -90,7 +90,7 @@ class BlockStateList:
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, additive_moe, version):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, ep_size, additive_moe, version):
         super().__init__()
         self.layer_id = layer_id
 
@@ -136,7 +136,7 @@ class Block(nn.Module):
 
             primes = [5099, 5101, 5107, 5113, 5119, 5147, 5153, 5167, 5171, 5179, 5189, 5197, 5209, 5227, 5231, 5233, 5237, 5261, 5273, 5279, 5281, 5297, 5303, 5309, 5323, 5333, 5347, 5351, 5381, 5387, 5393, 5399, 5407, 5413, 5417, 5419, 5431, 5437, 5441, 5443]
             hash_prime = primes[layer_id]
-            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts = num_experts, ep_size=8, k=1, min_capacity=4, capacity_factor=1, eval_capacity_factor=1, drop_tokens=True, hash_prime=hash_prime)
+            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts = num_experts, ep_size=ep_size, k=1, min_capacity=4, capacity_factor=1, eval_capacity_factor=1, drop_tokens=True, hash_prime=hash_prime)
 
             with torch.no_grad():  # fancy init of time_mix
                 ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
@@ -300,7 +300,8 @@ class RWKV(L.LightningModule):
                  # this introduces a slight perf penalty if enabled
                  consolidated_logging: bool = True,
 
-                 num_experts: int = 8,
+                 num_experts: int = 0,
+                 ep_size:int = 1,
                  additive_moe: bool = True,
                  version: str = '5.2',
                 ):
@@ -457,7 +458,7 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, additive_moe, version) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, ep_size, additive_moe, version) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)
