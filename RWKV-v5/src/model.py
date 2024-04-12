@@ -963,7 +963,7 @@ class RWKV(L.LightningModule):
 
         # Used for token/second performance tracking
         # Reset the token tracking accordingly
-        if self._counting_time_start is None or batch_idx <= 1:
+        if is_training_run and (self._counting_time_start is None or batch_idx <= 1):
             self._counting_tokens = 0
         if self._counting_time_start is None or self._counting_time_start == 0:
             self._counting_time_start = step_start_time
