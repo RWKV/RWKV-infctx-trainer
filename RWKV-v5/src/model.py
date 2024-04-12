@@ -496,7 +496,9 @@ class RWKV(L.LightningModule):
         # If the final learning rate is not specified, use the initial learning rate
         if lr_final < 0:
             lr_final = self.lr_init
-        assert '_upgraded' not in self.version or lr_upgraded_params_init > 0, 'upgraded models must specify lr_upgraded_params_init'
+        assert '_upgraded' not in self.version or lr_upgraded_params_init >= 0, 'upgraded models must specify lr_upgraded_params_init'
+        if lr_upgraded_params_init < 0:
+            lr_upgraded_params_init = lr_init
 
         # Log the learning rate, and various other parameters
         if self.trainer.local_rank == 0:
@@ -658,16 +660,18 @@ class RWKV(L.LightningModule):
                 raise ValueError(f"lr_period_type {self.lr_period_type} not supported.")
 
         # Lets initialize the lr_scheduler
-        if lr_init == lr_final or self.lr_type == "linear":
-            lr_scheduler = torch.optim.lr_scheduler.LinearLR(
-                optimizer,
-                start_factor=1.0,
-                end_factor= lr_final / lr_init,
-                total_iters=lr_total_step
-            )
+        if self.lr_type == "linear":
+            # lr_scheduler = torch.optim.lr_scheduler.LinearLR(
+            #     optimizer,
+            #     start_factor=1.0,
+            #     end_factor= lr_final / lr_init,
+            #     total_iters=lr_total_step
+            # )
+            linear_fn = lambda a, b, t: a + (b-a) * min(1.0, t / lr_total_step)
+            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(linear_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group['name'] else lr_upgraded_params_init)) for group in optim_groups])
         elif self.lr_type == "cosine":
-            cos_fn = lambda t, a, b: a + (b-a) * (0.5 + 0.5 * math.cos(math.pi * t))
-            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(cos_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group.name else lr_upgraded_params_init)) for group in optim_groups])
+            cos_fn = lambda a, b, t: a + (b-a) * (0.5 + 0.5 * math.cos(math.pi * min(1.0, t / lr_total_step)))
+            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(cos_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group['name'] else lr_upgraded_params_init)) for group in optim_groups])
         else:  
             raise ValueError(f"lr_type {self.lr_type} not supported.")
 
@@ -1471,6 +1475,11 @@ class RWKV(L.LightningModule):
                 'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
                 'batchidx': batch_idx
             }
+
+            for group in self.trainer.optimizers[0].param_groups:
+                if group['name'] == 'upgraded':
+                    logobj['trainer/learning_rate_upgraded'] = group['lr']
+
 
             # Consolidated logging
             if self.consolidated_logging:
