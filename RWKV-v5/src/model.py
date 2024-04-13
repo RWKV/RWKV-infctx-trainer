@@ -234,6 +234,49 @@ class L2Wrap(torch.autograd.Function):
 # def F_cross_entropy_reduction_none_optimized(logits, targets):
 #     return F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction="none")
 
+class LambdaLR(torch.optim.lr_scheduler.LRScheduler):
+    """Sets the learning rate of each parameter group to the initial lr
+    times a given function. When last_epoch=-1, sets initial lr as lr.
+
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        lr_lambda (function or list): A function which computes a multiplicative
+            factor given an integer parameter epoch, or a list of such
+            functions, one for each group in optimizer.param_groups.
+        last_epoch (int): The index of last epoch. Default: -1.
+        verbose (bool): If ``True``, prints a message to stdout for
+            each update. Default: ``False``.
+
+    Example:
+        >>> # xdoctest: +SKIP
+        >>> # Assuming optimizer has two groups.
+        >>> lambda1 = lambda epoch: epoch // 30
+        >>> lambda2 = lambda epoch: 0.95 ** epoch
+        >>> scheduler = LambdaLR(optimizer, lr_lambda=[lambda1, lambda2])
+        >>> for epoch in range(100):
+        >>>     train(...)
+        >>>     validate(...)
+        >>>     scheduler.step()
+    """
+
+    def __init__(self, optimizer, lr_lambda, last_epoch=-1, verbose=False):
+        self.optimizer = optimizer
+
+        if not isinstance(lr_lambda, list) and not isinstance(lr_lambda, tuple):
+            self.lr_lambdas = [lr_lambda] * len(optimizer.param_groups)
+        else:
+            if len(lr_lambda) != len(optimizer.param_groups):
+                raise ValueError(f"Expected {len(optimizer.param_groups)} lr_lambdas, but got {len(lr_lambda)}")
+            self.lr_lambdas = list(lr_lambda)
+        super().__init__(optimizer, last_epoch, verbose)
+
+    def get_lr(self):
+        if not self._get_lr_called_within_step:
+            warnings.warn("To get the last learning rate computed by the scheduler, "
+                          "please use `get_last_lr()`.")
+
+        return [base_lr * lmbda(self.last_epoch)
+                for lmbda, base_lr in zip(self.lr_lambdas, self.base_lrs)]
 
 ### ---
 # Core RWKV module
@@ -671,10 +714,10 @@ class RWKV(L.LightningModule):
             #     total_iters=lr_total_step
             # )
             linear_fn = lambda a, b, t: a + (b-a) * min(1.0, t / lr_total_step)
-            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(linear_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init)) for group in optim_groups])
+            lr_scheduler = LambdaLR(optimizer, [partial(linear_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init)) for group in optim_groups])
         elif self.lr_type == "cosine":
             cos_fn = lambda a, b, t: a + (b-a) * (0.5 + 0.5 * math.cos(math.pi + math.pi * min(1.0, t / lr_total_step)))
-            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, [partial(cos_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init)) for group in optim_groups])
+            lr_scheduler = LambdaLR(optimizer, [partial(cos_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init)) for group in optim_groups])
         else:  
             raise ValueError(f"lr_type {self.lr_type} not supported.")
 
