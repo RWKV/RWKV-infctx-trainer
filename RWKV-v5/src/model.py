@@ -10,7 +10,6 @@ from .module.TimeMix import RWKV_TimeMix5_2
 from .module.TimeMix6_0 import RWKV_TimeMix6_0
 from .module.TimeMix6_0Upgraded import RWKV_TimeMix6_0_Upgraded
 from .module.TimeMix6_0xUpgraded import RWKV_TimeMix6_0x_Upgraded
-from .module.TimeMix7_0 import RWKV_TimeMix7_0
 
 from . import metrics
 
@@ -113,8 +112,6 @@ class Block(nn.Module):
             self.att = RWKV_TimeMix6_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         elif version == '6.0x_upgraded':
             self.att = RWKV_TimeMix6_0x_Upgraded(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
-        elif version == '7.0':
-            self.att = RWKV_TimeMix7_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         else:
             self.att = None
     
