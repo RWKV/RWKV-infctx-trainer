@@ -551,7 +551,7 @@ class MOELayer(Base):
                  hash_prime: int,
                  use_tutel: bool = False) -> None:
         super().__init__()
-        self.gate = gate
+        #self.gate = gate
         self.experts = experts
         self.ep_group = None
         self.ep_size = ep_size
