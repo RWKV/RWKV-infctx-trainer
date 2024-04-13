@@ -299,6 +299,7 @@ class RWKV(L.LightningModule):
 
                  num_experts: int = 0,
                  ep_size:int = 1,
+                 strict_loading:bool = True,
                  additive_moe: bool = True,
                  version: str = '5.2',
                 ):
@@ -467,7 +468,7 @@ class RWKV(L.LightningModule):
 
         # load the state, and GC the original cpu copy
         if model_weights != None:
-            self.load_state_dict(model_weights, strict=False)#not ('_upgrade' in version))
+            self.load_state_dict(model_weights, strict=strict_loading)
             del model_weights
             gc.collect()
 
