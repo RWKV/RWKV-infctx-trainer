@@ -713,10 +713,12 @@ class RWKV(L.LightningModule):
             #     end_factor= lr_final / lr_init,
             #     total_iters=lr_total_step
             # )
-            linear_fn = lambda a, b, t: a + (b-a) * min(1.0, t / lr_total_step)
+            def linear_fn(a, b, t): return a + (b-a) * min(1.0, t / lr_total_step)
+
             lr_scheduler = LambdaLR(optimizer, [partial(linear_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init)) for group in optim_groups])
         elif self.lr_type == "cosine":
-            cos_fn = lambda a, b, t: a + (b-a) * (0.5 + 0.5 * math.cos(math.pi + math.pi * min(1.0, t / lr_total_step)))
+            def cos_fn(a, b, t): return a + (b-a) * (0.5 + 0.5 * math.cos(math.pi + math.pi * min(1.0, t / lr_total_step)))
+            
             lr_scheduler = LambdaLR(optimizer, [partial(cos_fn, 1.0, lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init)) for group in optim_groups])
         else:  
             raise ValueError(f"lr_type {self.lr_type} not supported.")
