@@ -25,48 +25,91 @@ class WKV6STATE_CUDA(torch.autograd.Function):
                 v:torch.Tensor, w:torch.Tensor, 
                 u:torch.Tensor, s:torch.Tensor):
         with torch.no_grad():
-            assert r.dtype == torch.bfloat16
-            assert k.dtype == torch.bfloat16
-            assert v.dtype == torch.bfloat16
-            assert w.dtype == torch.bfloat16
-            assert u.dtype == torch.bfloat16
-            assert s.dtype == torch.bfloat16
-            #assert HEAD_SIZE == C // H
+            # Save the sizing & dtype
             ctx.B = B
             ctx.T = T
             ctx.C = C
             ctx.H = H
+            dtype = r.dtype
+            ctx.dtype = dtype
+
+            # State and W is expected to be float32
+            assert s.dtype == torch.float32
+            assert w.dtype == torch.float32
+            assert s.is_contiguous()
+            assert w.is_contiguous()
+
+            # Rest can be their respective types, but they are expected
+            # to be consistent with each other
+            assert dtype == k.dtype
+            assert dtype == v.dtype
+            assert dtype == u.dtype
             assert r.is_contiguous()
             assert k.is_contiguous()
             assert v.is_contiguous()
-            assert w.is_contiguous()
             assert u.is_contiguous()
-            assert s.is_contiguous()
+
+            # Lets pre-compute the exp(-w)
             ew = (-torch.exp(w.float())).contiguous()
             ctx.save_for_backward(r, k, v, ew, u, s.clone())
-            y = torch.empty((B, T, C), device=r.device, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            wkv6state_cuda_kernel.forward(B, T, C, H, r, k, v, ew, u, s, y)
+
+            s = s.to(dtype)
+
+            # Output logits
+            y = torch.empty((B, T, C), device=r.device, dtype=dtype, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+
+            # Call the cuda kernel
+            if dtype == torch.bfloat16:
+                wkv6state_cuda_kernel.forward_bf16(B, T, C, H, r, k, v, ew, u, s, y)
+            elif dtype == torch.float16:
+                wkv6state_cuda_kernel.forward_fp16(B, T, C, H, r, k, v, ew, u, s, y)
+            elif dtype == torch.float32:
+                wkv6state_cuda_kernel.forward_fp32(B, T, C, H, r, k, v, ew, u, s, y)
+            else:
+                raise ValueError(f"Unsupported dtype {dtype} for WKV6_CUDA")
+            
+            # Logits (without state)
             return y
 
     @staticmethod
     def backward(ctx, gy):
         with torch.no_grad():
-            assert gy.dtype == torch.bfloat16
+            # Get the sizing & dtype
             B = ctx.B
             T = ctx.T
             C = ctx.C
             H = ctx.H
+            dtype = ctx.dtype
+
+            # GY dtype
+            assert gy.dtype == dtype
             assert gy.is_contiguous()
             r, k, v, ew, u, s = ctx.saved_tensors
+
+            # Initialize all the backward pass vars required
             gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
             gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
             gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
             gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
             gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
             gs = torch.empty((B, H, C//H, C//H), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            wkv6state_cuda_kernel.backward(B, T, C, H, r, k, v, ew, u, s, gy, gr, gk, gv, gw, gu, gs)
+
+            # Perform the backward pass
+            if dtype == torch.bfloat16:
+                wkv6state_cuda_kernel.backward_bf16(B, T, C, H, r, k, v, ew, u, s, gy, gr, gk, gv, gw, gu, gs)
+            elif dtype == torch.float16:
+                wkv6state_cuda_kernel.backward_fp16(B, T, C, H, r, k, v, ew, u, s, gy, gr, gk, gv, gw, gu, gs)
+            elif dtype == torch.float32:
+                wkv6state_cuda_kernel.backward_fp32(B, T, C, H, r, k, v, ew, u, s, gy, gr, gk, gv, gw, gu, gs)
+            else:
+                raise ValueError(f"Unsupported dtype {dtype} for WKV5_CUDA")
+
+            #gw = torch.sum(gw, 0).view(H, C//H) # FIXME - not needed, because w is a different shape now in v6?
             gu = torch.sum(gu, 0).view(H, C//H)
-            return (None, None, None, None, gr, gk, gv, gw, gu, gs)
+            return (
+                # B, T, C, H,
+                None, None, None, None, 
+                gr, gk, gv, gw, gu, gs)
 
 @TCompileDisable 
 @torch.jit.ignore
