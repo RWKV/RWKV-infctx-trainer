@@ -33,9 +33,6 @@ class WKV6STATE_CUDA(torch.autograd.Function):
             dtype = r.dtype
             ctx.dtype = dtype
 
-            # State and W is expected to be float32
-            assert s.dtype == torch.float32
-            assert w.dtype == torch.float32
             assert s.is_contiguous()
             assert w.is_contiguous()
 
