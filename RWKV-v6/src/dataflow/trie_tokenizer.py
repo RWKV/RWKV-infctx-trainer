@@ -96,7 +96,7 @@ class TRIE_TOKENIZER():
         return self.encodeBytes(src.encode("utf-8"))
 
     def decode(self, tokens):
-        return self.decodeBytes(tokens).decode('utf-8')
+        return self.decodeBytes(tokens).decode('utf-8', errors='replace')
 
     def get_vocab_size(self):
         return self.vocab_size
@@ -108,7 +108,7 @@ class TRIE_TOKENIZER():
         for i in tokens:
             s = self.idx2token[i]
             try:
-                s = s.decode('utf-8')
+                s = s.decode('utf-8', errors='replace')
             except:
                 pass
             print(f'{repr(s)}{i}', end=' ')
