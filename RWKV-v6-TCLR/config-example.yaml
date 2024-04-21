@@ -1,0 +1,551 @@
+# -----
+#
+#  The infctx trainer is based on pytorch lightning - and uses the following yaml config file format
+#  For many of the undocumented trainer parameters / settings in this example, additional documentation details can be found in pytorch lightning documentation
+#  https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.cli.LightningCLI.html
+#
+#  For better dataset specific configuration, you may want to see the various notebooks in `notebook/dataset-config`
+#
+# -----
+
+# Use either an intger value to enable a fixed training seed.
+seed_everything: true
+trainer:
+  # Configure the number of GPU, avaliable on your machine
+  # auto means it will automatically detect and use all GPUs
+  accelerator: gpu
+  devices: auto
+  num_nodes: 1
+
+  #
+  # Configure the deepspeed strategy, we recommend you start with `deepspeed_stage_2_offload` 
+  # and adjust from there according to your training needs. `deepspeed_stage_3_offload` is useful  
+  # for training LoRA on large models on a single GPU.
+  #
+  # In general you would want to use the following:
+  #
+  # - deepspeed_stage_1 : Each of your GPU has too much vram, and you do not know what to do
+  #
+  # - deepspeed_stage_2 : Optimal distributed training strategy, across multiple gpu each with sufficient vram
+  # - deepspeed_stage_2_offload : Reduce vram usage by offloading the optimizer state and work to cpu
+  #
+  # - deepspeed_stage_3 : Split up the model across multiple gpu, useful for large models, at a performance cost
+  # - deepspeed_stage_3_offload : Additional offloading, for even greater performance cost
+  #
+  # For more details see:
+  # https://lightning.ai/docs/pytorch/stable/advanced/model_parallel.html#deepspeed-zero-stage-2
+  #
+  strategy: deepspeed_stage_2_offload
+
+  # Floating point precision for the model, because RWKV is built FOR bf16
+  # you should pretty much never change this setting
+  precision: bf16
+
+  # Logger setting for wandb, if you want to enable wandb, uncomment the whole logger section
+  # ---
+  # logger:
+  #   class_path: lightning.pytorch.loggers.WandbLogger
+  #   init_args:
+  #     # In most cases, all you would want to modify is name/project/tags
+  #     # or the run ID / resume flag
+  #     name: null
+  #     project: RWKV_training
+  #     tags: ['RWKV']
+  #     id: null
+  #     resume: null
+  #
+  #     # The rest is advance WANDB settings, which in most cases you can remove/ignore
+  #     save_dir: .
+  #     version: null
+  #     offline: false
+  #     dir: null
+  #     anonymous: null
+  #     log_model: false
+  #     experiment: null
+  #     prefix: ''
+  #     checkpoint_name: null
+  #     job_type: null
+  #     config: null
+  #     entity: null
+  #     reinit: null
+  #     group: null
+  #     notes: null
+  #     magic: null
+  #     config_exclude_keys: null
+  #     config_include_keys: null
+  #     mode: null
+  #     allow_val_change: null
+  #     force: null
+  #     tensorboard: null
+  #     sync_tensorboard: null
+  #     monitor_gym: null
+  #     save_code: null
+  #     settings: null
+  
+  # Checkpoint settings for the training process
+  callbacks:
+    class_path: lightning.pytorch.callbacks.ModelCheckpoint
+    init_args:
+      # Configure this to the path you want to save your checkpoints to
+      # note that a subdir will be created with the name `epoch=x-step=y.ckpt`
+      # 
+      # to convert a checkpoint to a model, you can use the 
+      # `python3 export_checkpoint.py <checkpoint path>` script, 
+      # which will create a `rwkv_model.pth` in the checkpoint directory.
+      #
+      # Do not use the `zero_to_fp32.py` script as that will have export format issues
+      dirpath: /path/to/your/checkpoint/dir
+      filename: null
+      
+      # Save the top/last K checkpoints
+      save_top_k: 3
+      # Choose the most recent checkpoints by steps
+      monitor: 'step'
+      mode: max
+      
+      # If enabled (true), save a copy of the latest checkpoint to 'last.ckpt'
+      # useful to simply checkpoint resume scripts, at a price of disk performance
+      save_last: true
+
+      # DO NOT set this as true, as the model weight exported will have format issues
+      # expert as checkpoint, and use the `export_checkpoint.py` script to convert to model instead
+      save_weights_only: false
+
+      # How frequent you want to save a checkpoint for every step.
+      # This will happen for every X data sample, where X = every_n_train_steps * accumulate_grad_batches
+      #
+      # In general you will want to avoid putting a low number (expecially if accumulate_grad_batches <= 100)
+      # as the checkpoint process, will pause all the gpu training for some time, slowing down the overall process
+      # However you do not want to configure too high of a number, where you will lose too much progress if the training crashes
+      every_n_train_steps: 100
+      every_n_epochs: null
+      save_on_train_epoch_end: true
+      train_time_interval: null
+
+      # Other pytorch lightning settings, which in most cases you can remove/ignore
+      # ---
+      # verbose: false
+      # auto_insert_metric_name: true
+  
+  ########################################
+  ## Training run parameter settings
+  ########################################
+
+  # Generally what you want to configure is the maximum number of epochs
+  # Leave it as -1, and it will keep going forever till interrupted
+  # Or set it as a number, and it will stop after that number of epochs
+  max_epochs: 1
+  min_epochs: null
+  max_steps: -1
+  min_steps: null
+  max_time: null
+
+  # Number of datasamples to train for each step, a data sample is considered
+  # a "substep" in wandb logs, and a "step" is tracked as "trainer/global_step"
+  #
+  # This decides the number of datasample, to learn together from, before backproping
+  # any weight changes at the end of the batch.
+  #
+  # `1 trainer/global_step = accumulate_grad_batches * number of GPU devices * number of nodes`
+  #
+  # Recommended to be a big enough number (like 128/256) where it prevents the training 
+  # loss from flucuating in the process. But not too big of a number where the increased
+  # GPU vRAM / offloaded RAM usage will cause the training to crash.
+  #
+  # You are also recommended to configure this to a large enough number to fully utilize
+  # your GPU processing time %, and avoid idle time for the GPU between batches
+  target_batch_size: 32
+
+  # Microbatching chunks which we split our data by, this substentially increase vram usage 
+  # for each GPU step, but increase throughput of the training process substentially. 
+  #
+  # So if you have 16 datasample per batch per GPU. And microbatch_size of 2, you have 8 substep
+  #
+  # It is generally recommended to tune this to be the highest you can resonably support 
+  # on your GPU as it has a direct impact on your overall tokens / second count.
+  #
+  # Typically you tune the microbatch_size first, before tuning the target_batch_size
+  microbatch_size: 1
+
+  # You can alternatively set the accumulate_grad_batches per GPU directly
+  # (not recommended)
+  #
+  # You can only either use target_batch_size, which would auto-compute this value for you
+  # based on the number of GPU's you have, or have this value set directly - not both
+  #
+  # `target_batch_size ~= number of GPU's * accumulate_grad_batches`
+  #
+  # In event that taget_batch_size cannot be "perfectly divided" by the number of GPU's
+  # this number is rounded down, with a minimum of 1
+  # ---
+  # accumulate_grad_batches: 256
+
+  # Various other pytorch lightning settings, which in most cases you can remove/ignore
+  # ---
+  # fast_dev_run: false
+  # limit_train_batches: null
+  # limit_val_batches: null
+  # limit_test_batches: null
+  # limit_predict_batches: null
+  # overfit_batches: 0.0
+  # val_check_interval: null
+  # check_val_every_n_epoch: 1
+  # num_sanity_val_steps: 0
+  # log_every_n_steps: 1
+  # enable_checkpointing: null
+  # enable_progress_bar: null
+  # enable_model_summary: null
+  # gradient_clip_val: 1.0
+  # gradient_clip_algorithm: null
+  # deterministic: null
+  # benchmark: null
+  # inference_mode: true
+  # use_distributed_sampler: true
+  # profiler: null
+  # detect_anomaly: false
+  # barebones: false
+  # plugins: null
+  # sync_batchnorm: false
+  # reload_dataloaders_every_n_epochs: 0
+  # default_root_dir: null
+
+########################################
+## Training model settings
+########################################
+model:
+  # Model to start the finetune/training process from
+  load_model: /path/to/your/model.pth
+
+  # Context length to use for the training process
+  # the larger the number (and batch size) the larger the vram usage
+  # 
+  # Note that if the datasample context length is larger then the ctx_len
+  # its training process would be split into ctx_len sized chunks.
+  #
+  # This allows the training of extreamly large context length (eg. 100k),
+  # without eating up too much vram by keeping the training context length
+  # to a resonable number sutible to the current GPU setup
+  ctx_len: 2048
+
+  # Learning rate of the training process
+  # ---
+  # Initia learning rate of the process
+  lr_init: 6e-4
+  # Final learning rate after the learning rate period
+  # learning rate will stay at final value from then onwards
+  #
+  # NOTE: lr_final / lr_period does not work with warmup_steps
+  #       and will be ignored (or replaced) with the warmup_steps logic instead
+  lr_final: 4e-4
+  # Number of epoch to reduce the learning rate from lr_init to lr_final
+  #  1 means a single epoch (so lr would be lr_final from epoch 2 onwards)
+  #  0 means lr_final will apply immediately
+  # -1 means we take the current max_step / max_epoch as the period
+  lr_period: -1
+  # lr_period type if its set, defaults to epoch
+  lr_period_type: epoch
+
+  # Back Propagation through time, used to work around training of large context length
+  # beyond what can be supported by the current GPU vram architecture
+  #
+  # This is not 1:1 equivalent to the same training process with the full vram
+  # as the training process is split into multiple segments, part by part.
+  # with limited learnings from the each segment.
+  bptt_learning: true
+
+  # Segmented range to performing backprop learning on
+  # 1 means to apply only for the last segment
+  # -1 means to apply for all segments
+  #
+  # For multi-gpu training, when possible, used a fixed value
+  # to reduce gpu sync overhead. When used with fixed dataset context length
+  # For mixed dataset sizes, -1 is a resonable trade-off
+  bptt_learning_range: -1
+
+  # Limits the bptt learning only to the "current" chunk
+  # being learned within the learning range. While this reduces the effectiveness
+  # of bptt, it also further reduces vram requirements. 
+  #
+  # This is also known as tbptt (Truncated Back Propagation through time)
+  bptt_truncated_learning: false
+
+  # Aggressively clear the cuda cache between each data samples.
+  # This causes a performance penalty, but reduces the vram pressure
+  #
+  # This is useful for mitigating the following memory pressure warning
+  # `1 pytorch allocator cache flushes since last step. this happens when there is high memory pressure and is detrimental to performance...`
+  substep_cuda_cache_clear: false
+
+  # The model size setting, to use against the current model
+  # It is recommended to not configure this, and simply use auto-detection
+  # Otherwise, this is useful to double check the model settings prior running
+  # 
+  # For your current model settings, refer to the model card
+  # of the downloaded model for more details
+  # ---
+  # n_embd: 768
+  # n_layer: 12
+  # vocab_size: 50277
+
+  # Experimental cutoff settings
+  # ---
+  # Data samples would be cut down to the respective max ctx_len_cutoffs
+  # values if its larger then ctx_len. If the data sample is larger then
+  # the largest len_cutoff, the remaining data will be discarded
+  #
+  # Leave it as a blank array to disable the feature
+  # ---
+  # ctx_len_cutoffs: []
+  # ---
+  # Experimental settings, number of tokens to skip in the data sample
+  # prefix, for the respective cutoff length. Used to speed up the process
+  #
+  # Leave it as a blank array to disable the feature
+  # ---
+  # ctx_len_warmup_steps: []
+
+  # torch.set_float32_matmul_precision, used to optimize operations with tensor cores
+  # this should be set as null, for non cuda core GPUs. Has no major impact AFAIK
+  # ---
+  # torch_set_float32_matmul_precision: 'high'
+
+  # Adam optimizer settings
+  # You probably want to leave this alone, unless you know what you are doing
+  # ---
+  # beta1: 0.9
+  # beta2: 0.99
+  # adam_eps: 1.0e-08
+  # weight_decay: 0.01
+
+  # various other pytorch lightning settings you probably should leave alone
+  # ---
+  # grad_cp: true
+  # warmup_steps: -1
+  # layerwise_lr: true
+  # dim_att: null
+  # dim_ffn: null
+data:
+  # Skip the datapath setup
+  #
+  # ignored if using the preload_datapath.py, useful for speeding up the trainer startup
+  # provided you have your datasets all properly preinitialized
+  # ---
+  # skip_datapath_setup: True
+
+  # Datapack config yaml to use instead, this overwrites all other settings below
+  # ---
+  # datapack_config_path: null
+
+  # dataset_path for the prebuilt dataset, using HF `load_from_disk()`
+  #
+  # Use this if you have built your own dataset and saved it with `save_to_disk()`
+  # with source left as null. Other wise configure this to a directory which the 
+  # dataset will be built and tokenized by the huggingface dataset process.
+  #
+  # If using relative path, this should be relative to the trainer script path
+  data_path: /path/to/store/your/data_path/
+
+  # Data path storage options, this is used to support cloud storage
+  # via the huggingface dataset API. See:
+  # https://huggingface.co/docs/datasets/v2.16.1/en/filesystems#amazon-s3
+  #
+  # Note: As of Jan 2023, these options has been only tested to work with AWS S3, and backblaze. YMMV
+  #       For S3 bucket support you will also need to install s3fs `python3 -m pip install s3fs`
+  #
+  # If you want to reduce the risk of accidental key/secret commits, you can use
+  # `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables instead
+  #
+  # For datapath, it should use the `s3://bucket-name/subpath` format
+  # ---
+  # data_path_storage_options:
+  #   key: <example S3 key>
+  #   secret: <example S3 secret>
+  #   endpoint_url: <example S3 endpoint>
+  
+  # Other wise provide the source path, which is used as huggingface dataset path
+  # this will be used to populate the dataset_path
+  #
+  # Use either the following
+  # - hugging face dataset 
+  # - local dataset mode (ie: text,json,csv - use source_data_dir, to configure the path then)
+  # - null
+  #
+  # If source is disabled, all other params, except data_path, is effectively ignored
+  # as the dataset building process is skipped. You are expected to prepare the huggingface
+  # compliant dataset yourself, and save it to the data_path
+  source: null
+  # source: "teven/enwiki_00k"   # Hugging face dataset
+  # source: text                 # Text mode, used with source_data_dir
+
+  # Dataset split to use from HF dataset
+  # ---
+  # source_dataset_split: train
+
+  # Additional source dataset params, used to grab subsets of the dataset
+  # ---
+  # source_dataset_params:
+  #   language: en
+
+  # Sort the dataset by length, useful to reduce gpu waiting time (also useful for RWKV long context coherence)
+  sort_by_length: false
+  sort_asc: true # Sort in ascending order, true = shortest first, false = longest first
+
+  # Limit the document count, to an offset/length limit
+  # If an int value is used, it is interprated as document count
+  # If a floating value (<1.0) is used, it is interprated as a percentage of the dataset
+  # ---
+  # dataset_offset: -1
+  # dataset_length: -1
+
+  # Use data_dir, if you are using source=text/json/etc
+  # If using relative path, this should be relative to the trainer script path
+  # source_data_dir: ../dataset-text/
+
+  # After loading the dataset, split out test data used for validation, 
+  # This process is skipped if the dataset includes a test split
+  #
+  # If given a float value, a percentage of the dataset is used (1.0 being 100%)
+  # If given an int value, the number of data sample is used.
+  #
+  # Due to the limitaitons in the trainer process, there is always a minimum of 1 test sample
+  test_split: 0.01
+  test_split_shuffle: true
+
+  # Tokenizer to use, use either the inbuilt 'neox', or 'world' tokenizer
+  # If using a custom tokenizer, provide the HF tokenizer name/path
+  # ---
+  tokenizer: world
+
+  # Minimum / Maximum token size of the dataset to use
+  # useful for filtering out small noisy data samples from large datasets
+  # (eg. removal of small articles of less then 1024 tokens from wikipedia)
+  #
+  # This is ignored, if set to -1
+  # ---
+  # min_token_size: 1024
+  # max_token_size: -1
+
+  # Custom text column to use, useful for dataset with alternative training columns labels
+  # This is checked before multi column merging, default is null (disabled)
+  # If set this takes priority
+  # eg: 'code'
+  # ---
+  # custom_text_key: 'code'
+
+  # Multi Column merging process, default setting is used to support and merge
+  # "instruction", "input", "output", datasets. To disable set multi_column_keys to []
+  #
+  # A minimum of 2 columns is required, with non empty data, for the merge to occur
+  # If no match is found, this will fallback to the default prompt/completion or text column, 
+  # or throw an error if the default fallback is not found
+  #
+  # IMPORTANT NOTE: as newlines are commonly used for multi_column_suffix, etc. 
+  #                 you should use double quotes to ensure such values dun get escaped.
+  #                 eg. multi_column_suffix: ["\n\n"]
+  #
+  # See: https://github.com/RWKV/RWKV-infctx-trainer/issues/34
+  # Need to use " or the new lines won't be tokenized properly
+  # ---
+  # multi_column_keys: ["instruction", "input", "output"]
+  # multi_column_prefix: ["Instruction:\n", "Input:\n", "Output:\n"]
+  # multi_column_suffix: ['', '', '']
+  # multi_column_train_mask: [true, false, true]
+  # multi_column_separator: "\n\n"
+  
+  # Conversation merging process
+  # useful for merging full conversational datasets, into single documents
+  # default is off, (or set conversation_key to [])
+  # conversation_formatting supports "iopairs" or "sender" for now.
+  # ---
+  # conversation_format: 'iopairs'
+  # conversation_key: 'conversation'
+  # conversation_end_of_conversation: "\n\nUser:"
+
+  # Iopairs specific config
+  # This means that every object in the conversation object is a pair of input output.
+  # In future it will also support a format where one of the keys dictates the format style
+  # if conversation_key is set to null, it will use the root object as the conversation object
+  # ---
+  # conversation_input_key_prefix_map: {'input': "\n\nUser: ", 'output': "\n\nAssistant: "}
+  # conversation_input_key_mask: {'input': false, 'output': true}
+  # conversation_sender_suffix: {'input': "", 'output': ""}
+
+  # Sender specific config
+  # This means that every object in the conversation object is a single message (with sender and message keys - or similar)
+  # The output is dictated by the input key map, the rest of the "sender_" config is keyed by the value of the sender key
+  # conversation_input_key_map: {'message': "\n\n{sender}: ", 'context': ''}
+  # conversation_sender_key: 'sender'
+  # conversation_sender_value_map: {'user': 'User', 'assistant': 'Assistant', 'system': 'System'}
+  # conversation_sender_mask: {'user': false, 'assistant': true, 'system': false}
+  # conversation_sender_suffix: {'user': "", 'assistant': "", 'system': ""}
+
+  # If processing prompt/completion jsonl pairs, the prompt is masked by default
+  # use this flag to disable this default behaviour
+  # ---
+  # disable_prompt_completion_mask: false
+
+  # ----------------------------
+  # Rechunking support
+  # ----------------------------
+
+  # Rechunking of text dataset, this is done only when source is set as 'text'
+  # and will merge the various sentencees, into larger chunks up to the target size
+  #
+  # Defaults to 2048
+  #
+  # This is ignored, if source is not set as text (unless text_rechunk_force)
+  # This is ignored, if set to zero / -1
+  # ---
+  text_rechunk_size: 2048
+
+  # Apply text rechunk to the dataset, even if its not a 'text' source
+  # This is done only after dataset filtering, and if source is not 'text'
+  # ---
+  text_rechunk_force: False
+
+  # Used to disable the automated text rechunkin for text files, if set as false
+  # ---
+  text_rechunk_auto: True
+
+  # ----------------------------
+  # Dataset packing support
+  # Recommended to be used with mixed documents sized finetuning
+  # For foundation model "from scratch", rechunking is typically used instead
+  # ----------------------------
+
+  # Boolean flag to enable / disable dataset packing
+  packing_enable: True
+
+  # Used to ensure all training samples wihin this batch size is the same length
+  # Ideally this should align exactly with your real "batch size"
+  #
+  # Uses, `8 * (3 * 4 * 5 * 6 * 7) = 20160` for default, as it should align across
+  # a large number of batch size combinations. This helps reduce the amount of
+  # misaligned batches, and thus reduce the amount of wasted training time.
+  packing_batchsize: 20160
+
+  # Chunking size to align within each batch, this ideally should be equal to
+  # the training context length used.
+  packing_chunksize: 4096
+
+  # Minimum size to pack up to, this should be a multiple of packing_chunksize
+  # defautls to -1, which equals to packing_chunksize
+  packing_min_ctx_len: -1
+
+  # Pack the data sequentially if possible, in accordance to the dataset sequence
+  # this can be used together with sort_by_length, otherwise a shuffle will be done
+  packing_in_sequence: False
+
+  # ----------------------------
+  # Specal use caes flags
+  # ----------------------------
+
+  # Reverse the training dataset order before saving, this is useful for,
+  # optimizing dataset packing process, when using packing_in_sequence
+  # and sort_by_length desc order together
+  reverse_train_dataset_before_save: False
+
+
+# Path to the current checkpoint to continue training from
+# this should be the directory path, and ends with `.ckpt/`
+ckpt_path: null
