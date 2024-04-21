@@ -372,6 +372,20 @@ class RWKV(L.LightningModule):
             del model_weights
             gc.collect()
 
+        # Collapse the reused layers, iterate the blocks and remap them accordingly
+        if RWKV_TMIX_REUSE_MULTIPLIER > 1 or RWKV_CMIX_REUSE_MULTIPLIER > 1:
+            for i in range(n_layer):
+                # Remap the time mix
+                tmix_index = (i // RWKV_TMIX_REUSE_MULTIPLIER) * RWKV_TMIX_REUSE_MULTIPLIER
+                self.blocks[i].att = self.blocks[tmix_index].att
+
+                # Remap the channel mix
+                cmix_index = (i // RWKV_CMIX_REUSE_MULTIPLIER) * RWKV_CMIX_REUSE_MULTIPLIER
+                self.blocks[i].ffn = self.blocks[cmix_index].ffn
+            
+            # Clean up the unused blocks
+            gc.collect()
+
         # Training based timings to track, and initialize
         self._counting_tokens = 0.0
         self._counting_time_start = 0
