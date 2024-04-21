@@ -21,20 +21,6 @@ def deepspeed_checkpoint(*args, **kwargs):
     return deepspeed.checkpointing.checkpoint(*args, **kwargs)
 
 ### ---
-# Layer Repeat multiplier env variable, for -TCLRX experiment
-### ---
-
-global RWKV_TMIX_REUSE_MULTIPLIER, RWKV_CMIX_REUSE_MULTIPLIER
-RWKV_TMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_TMIX_REUSE_MULTIPLIER", 1))
-RWKV_CMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_CMIX_REUSE_MULTIPLIER", 1))
-
-# Print the layer reuse multiplier
-print("====================================================================")
-print(f"[RWKV] TMIX reuse multiplier : {RWKV_TMIX_REUSE_MULTIPLIER}")
-print(f"[RWKV] CMIX reuse multiplier : {RWKV_CMIX_REUSE_MULTIPLIER}")
-print("====================================================================")
-
-### ---
 # RWKV: State Blocks
 ### ---
 
@@ -136,7 +122,6 @@ class Block(nn.Module):
         
         return x, BlockState(att_state, ffn_state)
 
-
 class L2Wrap(torch.autograd.Function):
 
     @staticmethod
@@ -163,6 +148,40 @@ class L2Wrap(torch.autograd.Function):
         # We ensure the mask is reshaped accordingly, and apply it against gy
         gy = gy * currentMask.reshape(gy.shape[0],gy.shape[1],1) # currentMask[:, None][None, :]
         return (grad_output, gy, None, None)
+
+### ---
+# Layer Repeat multiplier env variable, for -TCLRX experiment
+### ---
+
+global RWKV_TMIX_REUSE_MULTIPLIER, RWKV_CMIX_REUSE_MULTIPLIER
+RWKV_TMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_TMIX_REUSE_MULTIPLIER", 1))
+RWKV_CMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_CMIX_REUSE_MULTIPLIER", 1))
+
+# Print the layer reuse multiplier
+print("====================================================================")
+print(f"[RWKV] TMIX reuse multiplier : {RWKV_TMIX_REUSE_MULTIPLIER}")
+print(f"[RWKV] CMIX reuse multiplier : {RWKV_CMIX_REUSE_MULTIPLIER}")
+print("====================================================================")
+
+### ---
+# Layer repeat operations
+### ---
+
+# LRX block executor, to handle the block execution in a loop
+def blockset_forward(block_arr, output_x, last_state_arr):
+    # Number of blocks
+    n_blocks = len(block_arr)
+
+    # Get the new_state_arr
+    new_state_arr = [None] * n_blocks
+
+    # Repeat the block
+    for i in range(n_blocks):
+        # Perform the block and state computation as per normal
+        output_x, new_state_arr[i] = block_arr[i](output_x, last_state_arr[i])
+
+    # Return output, and new state arr
+    return output_x, new_state_arr
 
 ### ---
 # Static optimized functions
@@ -674,126 +693,54 @@ class RWKV(L.LightningModule):
         ### Non forking block loop
         #######
 
-        # Avoid using the zip operation, as torch.compile throws an exception on it
-        # with `zip not reconized as a valid function`
         # ---
-        # for i, (block, last_state) in enumerate(
-        #         zip(self.blocks,
-        #             BlockStateList(last_shift_states, last_wkv_states))):
+        # When layers are reused, we need to ensure that all computation involving the same layer
+        # is performed within a single deepspeed checkpoint, as re-entrant layer optimizer is not allowed 
+        # (this is a pytorch lightning specific issue, pytorch is alright with this)
         # ---
-        for i in range(len(self.blocks)):
-            block = self.blocks[i]
-            last_state = cur_bs_list[i]
+
+        # Compute the minimum blockset size, that can fit both the
+        # RWKV_TMIX_REUSE_MULTIPLIER and RWKV_CMIX_REUSE_MULTIPLIER
+        blockset_size = 1
+        for i in range(1,self.n_layer+1):
+            blockset_size = i
+            if i % RWKV_TMIX_REUSE_MULTIPLIER == 0 and i % RWKV_CMIX_REUSE_MULTIPLIER == 0:
+                break
+
+        # Compute the number of blockset iterations
+        blockset_iterations = math.ceil(self.n_layer / blockset_size)
+
+        # Custom block set iterator, split into reuse chunk blocks
+        for i in range(blockset_iterations):
+
+            # Compute the blockset range
+            blockset_start = i * blockset_size
+            blockset_end = min((i+1) * blockset_size, self.n_layer)
+
+            # Last state and block values
+            last_state_arr = [cur_bs_list[b] for b in range(blockset_start, blockset_end)]
+            new_state_arr = None
+            block_arr = [self.blocks[b] for b in range(blockset_start, blockset_end)]
+
+            # Perform the block and state computation
             if self.grad_cp:
-                output_x, new_state = deepspeed_checkpoint(
-                    block, output_x, last_state)
+                output_x, new_state_arr = deepspeed_checkpoint(blockset_forward, block_arr, output_x, last_state_arr)
             else:
-                output_x, new_state = block(output_x, last_state)
-            new_states[i] = new_state
+                output_x, new_state_arr = blockset_forward(block_arr, output_x, last_state_arr)
+
+            # Update the new states
+            for b in range(blockset_start, blockset_end):
+                new_states[b] = new_state_arr[b - blockset_start]
 
         ########
-        ### Forking block loop (its slower sadly)
+        ### Final layer norm/head
         #######
-
-        # # Configuring the chunk sizes
-        # first_round_chunk_size = 256
-        
-        # # Next round chunk sizes forumlation
-        # def nextRoundChunkSize(t):
-        #     return first_round_chunk_size
-
-        # # First round, first block
-        # def firstRound_firstBlock_subProcess(
-        #         block:Block, last_state:BlockState, 
-        #         in_x:torch.tensor, grad_cp):
-        #     if grad_cp:
-        #         out_x, new_state = deepspeed_checkpoint(
-        #             block, in_x, last_state)
-        #     else:
-        #         out_x, new_state = block(in_x, last_state)
-        #     return out_x, new_state
-            
-        # # First round, next block
-        # def firstRound_nextBlock_subProcess(
-        #         block:Block, last_state:BlockState, 
-        #         in_x_promise: torch.jit.Future[torch.Tensor], 
-        #         grad_cp):
-        #     in_x, prv_layer_state = torch.jit.wait(in_x_promise)
-        #     return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
-        
-        # # Next round, sub process
-        # def nextRound_firstBlock_subProcess(
-        #     block:Block, last_state_promise: torch.jit.Future[BlockState],
-        #     in_x:torch.Tensor, grad_cp):
-        #     last_x, last_state = torch.jit.wait(last_state_promise)
-        #     return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
-    
-        # # Next round, next block
-        # def nextRound_nextBlock_subProcess(
-        #     block:Block, last_state_promise: torch.jit.Future[BlockState],
-        #     in_x_promise: torch.jit.Future[torch.Tensor], 
-        #     grad_cp):
-        #     last_x, last_state = torch.jit.wait(last_state_promise)
-        #     in_x, prv_layer_state = torch.jit.wait(in_x_promise)
-        #     return firstRound_firstBlock_subProcess(block, last_state, in_x, grad_cp)
-
-        # # Final x value futures
-        # output_x_futures = []
-        
-        # # Highly experimental first round token pass with JIT fork
-        # first_round_futures = []
-        # for i in range(len(self.blocks)):
-        #     if i == 0:
-        #         future = torch.jit.fork(
-        #             firstRound_firstBlock_subProcess, self.blocks[i], 
-        #             cur_bs_list[i], x[:,:first_round_chunk_size], self.grad_cp
-        #         )
-        #     else:
-        #         future = torch.jit.fork(
-        #             firstRound_nextBlock_subProcess, self.blocks[i], 
-        #             cur_bs_list[i], first_round_futures[i-1], self.grad_cp
-        #         )
-        #     first_round_futures.append(future)
-        # output_x_futures.append(first_round_futures[-1])
-
-        # # Lets start doing the next round iterations
-        # next_round_futures = first_round_futures
-
-        # # Lets start the next round iterations
-        # idx = first_round_chunk_size
-        # while idx < T:
-        #     increment = nextRoundChunkSize(idx)
-        #     for i in range(len(self.blocks)):
-        #         if i == 0:
-        #             future = torch.jit.fork(
-        #                 nextRound_firstBlock_subProcess, self.blocks[i], 
-        #                 next_round_futures[i], x[:,idx:idx+increment], self.grad_cp
-        #             )
-        #         else:
-        #             future = torch.jit.fork(
-        #                 nextRound_nextBlock_subProcess, self.blocks[i], 
-        #                 next_round_futures[i], next_round_futures[i-1], self.grad_cp
-        #             )
-        #         next_round_futures[i] = future
-        #     output_x_futures.append(next_round_futures[-1])
-        #     idx += increment
-
-        # # Lets get the new states from the final round futures
-        # for i in range(len(self.blocks)):
-        #     tmp_x, new_state = torch.jit.wait(next_round_futures[i])
-        #     new_states[i] = new_state
-        
-        # # Lets process the final output_x_futures
-        # output_x, tmp_state = torch.jit.wait(output_x_futures[0])
-        # for i in range(1, len(output_x_futures)):
-        #     tmp_x, tmp_state = torch.jit.wait(output_x_futures[i])
-        #     output_x = torch.cat((output_x, tmp_x), dim=1)
-        # output_x = output_x[:, :T]
 
         # Final layernorm and head output
         output_x = self.ln_out(output_x)
         output_x = self.head(output_x)
 
+        # Return all the output values
         return output_x, new_states.shift_states, new_states.wkv_states
 
     #
