@@ -39,7 +39,6 @@ print("====================================================================")
 ### ---
 
 class BlockState:
-
     def __init__(self, tMix_state_list: list[tuple[torch.Tensor,torch.Tensor]],
                  cMix_state_list: list[torch.Tensor]):
         self.tMix_state_list = tMix_state_list
@@ -65,18 +64,23 @@ class BlockStateList:
     @staticmethod
     def empty(N, B, C, n_head, head_size, device, dtype):
         # @TODO: confirm if dtype can be changed from .flaot to dtype=dtype (when bf16)
-        wkv_states = torch.empty((N, B, n_head, head_size, head_size),
+        wkv_states = torch.empty((N * RWKV_TMIX_MULTIPLIER, B, n_head, head_size, head_size),
         # wkv_states = torch.empty((N, B, 1, n_head, head_size, head_size),
                                  device=device,
                                 #  dtype=dtype)
                                  dtype=torch.float)
-        shift_states = torch.empty((N, 2, B, C), device=device, dtype=dtype)
+        shift_states = torch.empty((N * RWKV_CMIX_MULTIPLIER, 2, B, C), device=device, dtype=dtype)
         return BlockStateList(shift_states, wkv_states)
 
     def __getitem__(self, layer: int):
-        return BlockState(
-            (self.shift_states[layer, 0], self.wkv_states[layer]),
-            (self.shift_states[layer, 1]))
+        # Original code
+        # ---
+        # return BlockState(
+        #     (self.shift_states[layer, 0], self.wkv_states[layer]),
+        #     (self.shift_states[layer, 1]))
+
+        # Modified code, returns the states, with the layer repeat multiplier
+        # ---
 
     def __setitem__(self, layer: int, state: BlockState):
         self.shift_states[layer, 0] = state.time_mix_state[0]
