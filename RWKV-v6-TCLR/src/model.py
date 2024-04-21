@@ -21,11 +21,24 @@ def deepspeed_checkpoint(*args, **kwargs):
     return deepspeed.checkpointing.checkpoint(*args, **kwargs)
 
 ### ---
+# Layer Repeat multiplier env variable, for -TCLRX experiment
+### ---
+
+global RWKV_TMIX_REUSE_MULTIPLIER, RWKV_CMIX_REUSE_MULTIPLIER
+RWKV_TMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_TMIX_REUSE_MULTIPLIER", 1))
+RWKV_CMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_CMIX_REUSE_MULTIPLIER", 1))
+
+# Print the layer reuse multiplier
+print("====================================================================")
+print(f"[RWKV] TMIX reuse multiplier : {RWKV_TMIX_REUSE_MULTIPLIER}")
+print(f"[RWKV] CMIX reuse multiplier : {RWKV_CMIX_REUSE_MULTIPLIER}")
+print("====================================================================")
+
+### ---
 # RWKV: State Blocks
 ### ---
 
 class BlockState:
-
     def __init__(self, time_mix_state: tuple[torch.Tensor,torch.Tensor],
                  channel_mix_state: torch.Tensor):
         self.time_mix_state = time_mix_state
