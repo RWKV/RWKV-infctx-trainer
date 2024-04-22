@@ -1836,14 +1836,20 @@ class RWKVDataModule(LightningDataModule):
         if self.dataloader_swap_train_test_split == False:
             split_name = 'train'
         else:
-            split_name = 'test'
+            if 'validation' in self._loaded_dataset:
+                split_name = 'validation'
+            else:
+                split_name = 'test'
         shuffle = self.dataloader_shuffle_training and not self.sort_by_length
         return self.dataloader(split_name, shuffle, True, CheckPointResumeSafeDataLoader)
 
     # Return the validation dataloader
     def val_dataloader(self):
         if self.dataloader_swap_train_test_split == False:
-            split_name = 'validation'
+            if 'validation' in self._loaded_dataset:
+                split_name = 'validation'
+            else:
+                split_name = 'test'
         else:
             split_name = 'train'
         shuffle = False
