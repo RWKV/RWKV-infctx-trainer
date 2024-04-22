@@ -1706,17 +1706,29 @@ class SimpleRWKV():
             model_path: str,
             ctx_len:int = 1024,
             device:str = "cuda",
-            dtype:str = "fp32"
+            dtype_str:str = "fp32"
         ):
 
         # Log the mismatch dtype
-        if dtype != "fp32":
-            print("[SimpleRWKV] Warning: dtype mismatch, only fp32 is supported (for now)")
+        dtype = torch.float32
+        if dtype_str == "16":
+            dtype = torch.float16
+        elif dtype_str == "bf16":
+            dtype = torch.bfloat16
+        elif dtype_str == "32":
+            dtype = torch.float32
+        else:
+            print("[SimpleRWKV] Warning: dtype mismatch, only fp16 bf16 fp32 is supported (for now)")
 
         # Prepare the model config with the model path, and custom torch load
         model_config = {}
         model_config["load_model"] = model_path
         model_config["ctx_len"] = ctx_len
+
+        # FIXME
+        model_config["version"] = "6.0"
+        model_config["strict_loading"] = False
+        model_config["num_experts"] = 8
 
         # This feature depends on deepspeed
         model_config["grad_cp"] = False
@@ -1727,12 +1739,22 @@ class SimpleRWKV():
         self.device = device
 
         # Lets actually load the model
+        #trainer = Trainer(precision=dtype_str, accelerator='cuda', devices=1)
+        #fabric = Lightning.Fabric(precision=dtype_str, accelerator='cuda', devices=1)
+        #with fabric.init_module():
         self.model = RWKV(**model_config)
+        print("dtype of model itself started as ", self.model.ln_out.weight.dtype)
 
         # Lets map it over to the respective device type
         # and set it to run as eval/inference mode
+        print("Desired dtype", dtype)
+        self.model.to(dtype)
         self.model.to(device)
         self.model.eval()
+        if dtype != torch.float:
+            torch.set_autocast_gpu_dtype(dtype)
+
+        print("dtype of model itself became ", self.model.ln_out.weight.dtype)
 
         # Get the model detected vocab size
         vocab_size = self.model.vocab_size
@@ -1800,7 +1822,7 @@ class SimpleRWKV():
             ).unsqueeze(0)
             
             # Compute the logits and state
-            logits_arr, shift_states, wkv_states = self.model.forward(
+            logits_arr, shift_states, wkv_states, aux_loss = self.model.forward(
                 batch_tokens, shift_states, wkv_states
             )
 
@@ -1834,7 +1856,7 @@ class SimpleRWKV():
             token_ban: list = []
             ):
         # Copy to CPU first
-        logits = logits.cpu()
+        logits = logits.float().cpu()
 
         # Max negative float
         max_neg = -torch.finfo(torch.float).max
@@ -1852,7 +1874,7 @@ class SimpleRWKV():
         if temperature > 0.0:
             probs = F.softmax(logits, dim=-1)
             sorted_probs = torch.sort(probs, descending=True)[0]
-            cumulative_probs = torch.cumsum(sorted_probs, dim=-1).cpu().numpy()
+            cumulative_probs = torch.cumsum(sorted_probs, dim=-1).float().cpu().numpy()
             cutoff = float(sorted_probs[np.argmax(cumulative_probs > top_p)])
             probs[probs < cutoff] = 0
             if temperature != 1.0:

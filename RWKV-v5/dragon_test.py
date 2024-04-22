@@ -39,22 +39,24 @@ if len(sys.argv) >= 4:
 
 # Backward support for older format, we extract only cuda/cpu if its contained in the string
 if RAW_DEVICE.find('cuda') != -1:
-    RAW_DEVICE = 'cuda'
+    DEVICE = 'cuda'
     
 # The DTYPE setting
 if RAW_DEVICE.find('fp16') != -1:
-    DTYPE = "fp16"
+    DTYPE = "16"
 elif RAW_DEVICE.find('bf16') != -1:
     DTYPE = "bf16"
 elif RAW_DEVICE.find('fp32') != -1:
-    DTYPE = "fp32"
+    DTYPE = "32"
+
+print("DTYPE str", DTYPE)
 
 # Disable torch compile for dragon test
-os.environ["RWKV_TORCH_COMPILE"] = "0"
+#os.environ["RWKV_TORCH_COMPILE"] = "0"
 
 # Setup the model
 from src.model import SimpleRWKV
-model = SimpleRWKV(MODEL_PATH, device=DEVICE, dtype=DTYPE)
+model = SimpleRWKV(MODEL_PATH, device=DEVICE, dtype_str=DTYPE)
 
 # Dummy forward, used to trigger any warning / optimizations / etc
 model.completion("\nIn a shocking finding", max_tokens=1, temperature=1.0, top_p=0.7)
