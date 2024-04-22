@@ -9,22 +9,22 @@ code_file_path = os.path.realpath(__file__)
 code_dir = os.path.dirname(code_file_path)
 
 ### ---
-# Special WKV6State CUDA kernel handling
+# Special WKV6 CUDA kernel handling
 ### ---
 
 # the cuda kernel (if its used)
-global wkv6state_cuda_kernel
-wkv6state_cuda_kernel = None
+global wkv6_cuda_kernel
+wkv6_cuda_kernel = None
 
-# WKV6STATE_CUDA autograd module
-class WKV6STATE_CUDA(torch.autograd.Function):
+# WKV6_CUDA autograd module
+class WKV6_CUDA(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, 
                 B:int, T:int, C:int, H:int, 
                 r:torch.Tensor, k:torch.Tensor, 
                 v:torch.Tensor, w:torch.Tensor, 
-                u:torch.Tensor, s:torch.Tensor):
+                u:torch.Tensor):
         with torch.no_grad():
             # Save the sizing & dtype
             ctx.B = B
@@ -34,7 +34,6 @@ class WKV6STATE_CUDA(torch.autograd.Function):
             dtype = r.dtype
             ctx.dtype = dtype
 
-            assert s.is_contiguous()
             assert w.is_contiguous()
 
             # Rest can be their respective types, but they are expected
@@ -47,22 +46,18 @@ class WKV6STATE_CUDA(torch.autograd.Function):
             assert v.is_contiguous()
             assert u.is_contiguous()
 
-            # Lets pre-compute the exp(-w)
-            ew = (-torch.exp(w.float())).contiguous()
-            ctx.save_for_backward(r, k, v, ew, u, s.clone())
-
-            s = s.to(dtype)
+            ctx.save_for_backward(r, k, v, w, u)
 
             # Output logits
             y = torch.empty((B, T, C), device=r.device, dtype=dtype, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
 
             # Call the cuda kernel
             if dtype == torch.bfloat16:
-                wkv6state_cuda_kernel.forward_bf16(B, T, C, H, r, k, v, ew, u, s, y)
+                wkv6_cuda_kernel.forward_bf16(B, T, C, H, r, k, v, w, u, y)
             elif dtype == torch.float16:
-                wkv6state_cuda_kernel.forward_fp16(B, T, C, H, r, k, v, ew, u, s, y)
+                wkv6_cuda_kernel.forward_fp16(B, T, C, H, r, k, v, w, u, y)
             elif dtype == torch.float32:
-                wkv6state_cuda_kernel.forward_fp32(B, T, C, H, r, k, v, ew, u, s, y)
+                wkv6_cuda_kernel.forward_fp32(B, T, C, H, r, k, v, w, u, y)
             else:
                 raise ValueError(f"Unsupported dtype {dtype} for WKV6_CUDA")
             
@@ -82,7 +77,7 @@ class WKV6STATE_CUDA(torch.autograd.Function):
             # GY dtype
             assert gy.dtype == dtype
             assert gy.is_contiguous()
-            r, k, v, ew, u, s = ctx.saved_tensors
+            r, k, v, w, u = ctx.saved_tensors
 
             # Initialize all the backward pass vars required
             gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
@@ -90,33 +85,32 @@ class WKV6STATE_CUDA(torch.autograd.Function):
             gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
             gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
             gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gs = torch.empty((B, H, C//H, C//H), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
 
             # Perform the backward pass
             if dtype == torch.bfloat16:
-                wkv6state_cuda_kernel.backward_bf16(B, T, C, H, r, k, v, ew, u, s, gy, gr, gk, gv, gw, gu, gs)
+                wkv6_cuda_kernel.backward_bf16(B, T, C, H, r, k, v, w, u, gy, gr, gk, gv, gw, gu)
             elif dtype == torch.float16:
-                wkv6state_cuda_kernel.backward_fp16(B, T, C, H, r, k, v, ew, u, s, gy, gr, gk, gv, gw, gu, gs)
+                wkv6_cuda_kernel.backward_fp16(B, T, C, H, r, k, v, w, u, gy, gr, gk, gv, gw, gu)
             elif dtype == torch.float32:
-                wkv6state_cuda_kernel.backward_fp32(B, T, C, H, r, k, v, ew, u, s, gy, gr, gk, gv, gw, gu, gs)
+                wkv6_cuda_kernel.backward_fp32(B, T, C, H, r, k, v, w, u, gy, gr, gk, gv, gw, gu)
             else:
-                raise ValueError(f"Unsupported dtype {dtype} for WKV5_CUDA")
+                raise ValueError(f"Unsupported dtype {dtype} for WKV6_CUDA")
 
             #gw = torch.sum(gw, 0).view(H, C//H) # FIXME - not needed, because w is a different shape now in v6?
             gu = torch.sum(gu, 0).view(H, C//H)
             return (
                 # B, T, C, H,
-                None, None, None, None, 
-                gr, gk, gv, gw, gu, gs)
+                None, None, None, None,
+                gr, gk, gv, gw, gu)
 
 @TCompileDisable 
 @torch.jit.ignore
-def RUN_WKV6STATE_CUDA(
+def RUN_WKV6_CUDA(
     B:int, T:int, C:int, H:int, 
     r:torch.Tensor, k:torch.Tensor, 
     v:torch.Tensor, w:torch.Tensor, 
     u:torch.Tensor, s:torch.Tensor):
-    return WKV6STATE_CUDA.apply(B, T, C, H, r, k, v, w, u, s)
+    return WKV6_CUDA.apply(B, T, C, H, r, k, v, w, u)
 
 # RWKV TimeMix module
 class RWKV_TimeMix6_0(JITModClass):
@@ -189,7 +183,7 @@ class RWKV_TimeMix6_0(JITModClass):
         self.precision = precision
 
     def _preload_cuda(self):
-        global wkv6state_cuda_kernel, RWKV_NO_CUDA
+        global wkv6_cuda_kernel, RWKV_NO_CUDA
 
         # Skip preload if cuda is disabled
         if RWKV_NO_CUDA is True:
@@ -197,16 +191,16 @@ class RWKV_TimeMix6_0(JITModClass):
             return
 
         # Load cuda if needed
-        if wkv6state_cuda_kernel is None:
+        if wkv6_cuda_kernel is None:
             # Log the compillation block
             print("---")
             print(f"[RWKV.TimeMix] Compiling CUDA kernel with HEAD_SIZE={self.head_size}")
 
-            wkv6state_cuda_kernel = torch.utils.cpp_extension.load(
-                name="wkv6state", 
+            wkv6_cuda_kernel = torch.utils.cpp_extension.load(
+                name="wkv6", 
                 sources=[
-                    os.path.join(code_dir, "cuda/wkv6state_op.cpp"), 
-                    os.path.join(code_dir, "cuda/wkv6state_cuda_v1.cu")
+                    os.path.join(code_dir, "cuda/wkv6_op.cpp"), 
+                    os.path.join(code_dir, "cuda/wkv6_cuda.cu")
                 ],
                 verbose=True, 
                 extra_cuda_cflags=[
@@ -286,7 +280,7 @@ class RWKV_TimeMix6_0(JITModClass):
         wkv_state = last_state[1].to(r.dtype).clone().contiguous()
 
         # Perform the cuda forward pass
-        x_logits = RUN_WKV6STATE_CUDA(
+        x_logits = RUN_WKV6_CUDA(
             B, T, C, H, 
             r, k, v, 
             w, 
