@@ -26,6 +26,8 @@ import torch.nn.functional as F
 from deepspeed.utils import groups
 from .mappings import drop_tokens, gather_tokens
 
+import math
+
 if TYPE_CHECKING:
     Base = Module[Tensor]
 else:
@@ -595,21 +597,61 @@ class MOELayer(Base):
         flat_tokens = tokens.reshape(-1)
         expert_by_flat_idx = (flat_tokens * self.hash_prime) % n_experts
 
-        # indices that reorder the inputs to be in per expert order
-        flat_idx_sorted_by_expert = torch.argsort(expert_by_flat_idx, dim=0)
-        # Reshape indices to be compatible with Tensor.gather (bc no broadcasting allowed?)
-        flat_idx_sorted_by_expert_unsqueezed = flat_idx_sorted_by_expert.view(-1, 1).expand(-1, d_model)
-        # Stage2: permute the tokens locally so that they are grouped by their expert assignment
-        flat_input = input.reshape(-1, d_model)
-        flat_input_in_expert_order = torch.gather(flat_input, 0, flat_idx_sorted_by_expert_unsqueezed)
+        use_capacity = False
 
-        if self.ep_size == 1:
-            flat_output_from_all = self.experts(flat_input_in_expert_order.unsqueeze(0)).squeeze(0)
+        if use_capacity:
+            n_tokens = flat_tokens.size(0)
+            capacity_factor = 1.0
+            capacity = int(math.ceil((n_tokens / n_experts) * capacity_factor))
+
+            # one-hot expert per flat token location
+            flat_one_hot_by_expert = torch.nn.functional.one_hot(expert_by_flat_idx, n_experts).mT
+            # indices that reorder the inputs to be in per expert order - ones represent experts and come first, then zeros represent unused locations for a given expert
+            mask_by_expert, flat_idx_by_expert = torch.sort(flat_one_hot_by_expert, descending=True)
+            # FIXME - add expert capacity location randomization
+            # cut off everything past capacity
+            flat_idx_by_flat_expert = flat_idx_by_expert[:, :capacity].contiguous().view(-1, 1)
+            # also use cut off mask of sorted one-hots so we get 1.0 for flat token locations were used by a given expert and 0.0 for others
+            mask_by_flat_expert = mask_by_expert[:, :capacity].contiguous().view(-1, 1)
+            # Reshape indices to be compatible with Tensor.gather (bc no broadcasting allowed?)
+            flat_idx_by_flat_expert = flat_idx_by_flat_expert.expand(-1, d_model)
+
+            # permute the tokens locally so that they are grouped by their expert assignment
+            flat_input = input.reshape(-1, d_model)
+            flat_input_by_flat_expert = torch.gather(flat_input, 0, flat_idx_by_flat_expert)
+
+            if self.ep_size == 1:
+                flat_output_from_all = self.experts(flat_input_by_flat_expert.unsqueeze(0)).squeeze(0)
+            else:
+                flat_input_for_my_experts_from_all = self.all_to_all(flat_input_by_flat_expert)
+                flat_output_for_my_experts = self.experts(flat_input_for_my_experts_from_all)
+                flat_output_from_all = self.all_to_all(flat_output_for_my_experts)
+
+            # force tokens which exceeded capacity to become zero as output
+            # pad on the left, then mask and add one so that slot zero is treated specially as a zero output
+            padded_flat_output_from_all = torch.nn.functional.pad(flat_output_from_all, [1, 0])
+            padded_flat_idx_by_flat_expert = torch.nn.functional.pad((1 + flat_idx_by_flat_expert) * mask_by_flat_expert, [1, 0])
+
+            # scatter and take everything after slot zero, since that one is just a holding pen for over-capacity entries
+            flat_output = torch.zeros_like(padded_flat_output_from_all).scatter(dim=0, index=padded_flat_idx_by_flat_expert, src=padded_flat_output_from_all)[1:]
+
         else:
-            flat_input_for_my_experts_from_all = self.all_to_all(flat_input_in_expert_order)
-            flat_output_for_my_experts = self.experts(flat_input_for_my_experts_from_all)
-            flat_output_from_all = self.all_to_all(flat_output_for_my_experts)
+            
+            # indices that reorder the inputs to be in per expert order
+            flat_idx_sorted_by_expert = torch.argsort(expert_by_flat_idx, dim=0)
+            # Reshape indices to be compatible with Tensor.gather (bc no broadcasting allowed?)
+            flat_idx_sorted_by_expert_unsqueezed = flat_idx_sorted_by_expert.view(-1, 1).expand(-1, d_model)
+            # Stage2: permute the tokens locally so that they are grouped by their expert assignment
+            flat_input = input.reshape(-1, d_model)
+            flat_input_in_expert_order = torch.gather(flat_input, 0, flat_idx_sorted_by_expert_unsqueezed)
 
-        combined_flat_output = torch.zeros_like(flat_input).scatter(dim=0, index=flat_idx_sorted_by_expert_unsqueezed, src=flat_output_from_all)
-        return combined_flat_output.reshape(input.shape)
-    
+            if self.ep_size == 1:
+                flat_output_from_all = self.experts(flat_input_in_expert_order.unsqueeze(0)).squeeze(0)
+            else:
+                flat_input_for_my_experts_from_all = self.all_to_all(flat_input_in_expert_order)
+                flat_output_for_my_experts = self.experts(flat_input_for_my_experts_from_all)
+                flat_output_from_all = self.all_to_all(flat_output_for_my_experts)
+
+            flat_output = torch.zeros_like(flat_input).scatter(dim=0, index=flat_idx_sorted_by_expert_unsqueezed, src=flat_output_from_all)            
+
+        return flat_output.reshape(input.shape)

@@ -121,12 +121,12 @@ class Block(nn.Module):
             self.ffn = RWKV_ChannelMix6_0(layer_id, n_layer, n_embd, dim_ffn)
 
         if num_experts > 0:# and layer_id >= n_layer // 2:
-            #if version == '6.0x_upgraded':
-            dim_moe = int((n_embd * 4) // 32 * 32)
-            self.moe = RWKV_Expert6_0x(layer_id, n_layer, n_embd, dim_moe)
-            #else:
-            #    dim_moe = dim_ffn
-            #    self.moe = RWKV_Expert(layer_id, n_layer, n_embd, dim_moe)
+            if version == '6.0x_upgraded':
+                dim_moe = int((n_embd * 4) // 32 * 32)
+                self.moe = RWKV_Expert6_0x(layer_id, n_layer, n_embd, dim_moe)
+            else:
+                dim_moe = dim_ffn
+                self.moe = RWKV_Expert(layer_id, n_layer, n_embd, dim_moe)
 
             if not additive_moe:
                 self.residual_coefficients = torch.nn.Linear(n_embd, 2, bias=False)
@@ -140,7 +140,7 @@ class Block(nn.Module):
                 ddd = torch.ones(1, 1, n_embd)
                 for i in range(n_embd):
                     ddd[0, 0, i] = i / n_embd
-                self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+                self.time_maa_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0))
                 if not additive_moe:
                     self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
                     self.ffn_receptance = nn.Linear(n_embd, n_embd, bias=False)
@@ -174,7 +174,7 @@ class Block(nn.Module):
 
         if self.moe is not None:
             # fun hackery to do both halves of the tokenshift OUTSIDE of the expert, while leaving the parameters inside the FFN
-            lnxk = lnx * self.time_mix_k + lnxx * (1 - self.time_mix_k)
+            lnxk = lnx + (lnxx - lnx) * self.time_maa_k
             
             moe_out = self.moe(lnxk, tokens)
             if isinstance(moe_out, tuple):
@@ -384,13 +384,13 @@ class RWKV(L.LightningModule):
         if vocab_size < 0:
             vocab_size = model_weights['head.weight'].shape[0]
 
-        if model_weights is not None and num_experts > 0 and 'blocks.0.moe.deepspeed_moe.gate.wg.weight' in model_weights.keys():
+        if model_weights is not None and num_experts > 0 and 'blocks.0.moe.deepspeed_moe.gate.wg.weight' not in model_weights.keys():
             #print(model_keys)
             for i in range(n_layer):
                 #'blocks.0.ffn.time_mix_k', 'blocks.0.ffn.time_mix_r', 'blocks.0.ffn.key.weight', 'blocks.0.ffn.receptance.weight', 'blocks.0.ffn.value.weight',        
                 #'blocks.0.moe.deepspeed_moe.gate.wg.weight', 'blocks.0.moe.deepspeed_moe.experts.deepspeed_experts.0.ffn_key.weight', 'blocks.0.moe.deepspeed_moe.experts.deepspeed_experts.0.ffn_receptance.weight', 'blocks.0.moe.deepspeed_moe.experts.deepspeed_experts.0.ffn_value.weight', 'blocks.0.residual_coefficients.weight', 'blocks.0.ffn_receptance.weight', 
-                model_weights[f'blocks.{i}.time_mix_k'] = model_weights[f'blocks.{i}.ffn.time_mix_k']
-                model_weights[f'blocks.{i}.time_mix_r'] = model_weights[f'blocks.{i}.ffn.time_mix_r']
+                model_weights[f'blocks.{i}.time_maa_k'] = model_weights[f'blocks.{i}.ffn.time_maa_k']
+                #model_weights[f'blocks.{i}.time_mix_r'] = model_weights[f'blocks.{i}.ffn.time_mix_r']
                 #del model_weights[f'blocks.{i}.ffn.time_mix_k']
                 #del model_weights[f'blocks.{i}.ffn.time_mix_r']
 
