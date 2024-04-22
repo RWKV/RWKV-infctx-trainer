@@ -10,9 +10,10 @@ from .module.TimeMix import RWKV_TimeMix5_2
 from .module.TimeMix6_0 import RWKV_TimeMix6_0
 from .module.TimeMix6_0Upgraded import RWKV_TimeMix6_0_Upgraded
 from .module.TimeMix6_0xUpgraded import RWKV_TimeMix6_0x_Upgraded
-from .module.TimeMix7_0 import RWKV_TimeMix7_0
 
 from . import metrics
+
+from functools import partial
 
 #from deepspeed.moe.layer import MoE
 from .moe.layer import MoE
@@ -88,7 +89,7 @@ class BlockStateList:
 
 class Block(nn.Module):
 
-    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, additive_moe, version):
+    def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, ep_size, additive_moe, version):
         super().__init__()
         self.layer_id = layer_id
 
@@ -111,8 +112,6 @@ class Block(nn.Module):
             self.att = RWKV_TimeMix6_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         elif version == '6.0x_upgraded':
             self.att = RWKV_TimeMix6_0x_Upgraded(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
-        elif version == '7.0':
-            self.att = RWKV_TimeMix7_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         else:
             self.att = None
     
@@ -132,14 +131,16 @@ class Block(nn.Module):
             if not additive_moe:
                 self.residual_coefficients = torch.nn.Linear(n_embd, 2, bias=False)
 
-            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts = num_experts, ep_size=1, k=1, min_capacity=4, capacity_factor=1, eval_capacity_factor=1, drop_tokens=True)
+            primes = [5099, 5101, 5107, 5113, 5119, 5147, 5153, 5167, 5171, 5179, 5189, 5197, 5209, 5227, 5231, 5233, 5237, 5261, 5273, 5279, 5281, 5297, 5303, 5309, 5323, 5333, 5347, 5351, 5381, 5387, 5393, 5399, 5407, 5413, 5417, 5419, 5431, 5437, 5441, 5443]
+            hash_prime = primes[layer_id]
+            self.moe = MoE(hidden_size=n_embd, expert=self.moe, num_experts = num_experts, ep_size=ep_size, k=1, min_capacity=4, capacity_factor=1, eval_capacity_factor=1, drop_tokens=True, hash_prime=hash_prime)
 
             with torch.no_grad():  # fancy init of time_mix
                 ratio_1_to_almost0 = 1.0 - (layer_id / n_layer)  # 1 to ~0
                 ddd = torch.ones(1, 1, n_embd)
                 for i in range(n_embd):
                     ddd[0, 0, i] = i / n_embd
-                self.time_mix_k = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
+                self.time_maa_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0))
                 if not additive_moe:
                     self.time_mix_r = nn.Parameter(torch.pow(ddd, ratio_1_to_almost0))
                     self.ffn_receptance = nn.Linear(n_embd, n_embd, bias=False)
@@ -156,7 +157,7 @@ class Block(nn.Module):
             self.drop1 = nn.Identity()
 
     @TCompileBaseline
-    def forward(self, x, last_state: BlockState):
+    def forward(self, x, tokens, last_state: BlockState):
         x = self.ln0(x)
 
         att_out, att_state = self.att(
@@ -173,9 +174,9 @@ class Block(nn.Module):
 
         if self.moe is not None:
             # fun hackery to do both halves of the tokenshift OUTSIDE of the expert, while leaving the parameters inside the FFN
-            lnxk = lnx * self.time_mix_k + lnxx * (1 - self.time_mix_k)
+            lnxk = lnx + (lnxx - lnx) * self.time_maa_k
             
-            moe_out = self.moe(lnxk)
+            moe_out = self.moe(lnxk, tokens)
             if isinstance(moe_out, tuple):
                 moe_out, aux_loss, exp_counts = moe_out
             else:
@@ -233,6 +234,42 @@ class L2Wrap(torch.autograd.Function):
 # def F_cross_entropy_reduction_none_optimized(logits, targets):
 #     return F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), reduction="none")
 
+class LinearLR(torch.optim.lr_scheduler.LRScheduler):
+    def __init__(self, optimizer, start_factors, end_factors, total_iters, last_epoch=-1, verbose=False):
+        if not isinstance(start_factors, list) and not isinstance(start_factors, tuple):
+            self.start_factors = [start_factors] * len(optimizer.param_groups)
+        else:
+            if len(start_factors) != len(optimizer.param_groups):
+                raise ValueError(f"Expected {len(optimizer.param_groups)} start_factors, but got {len(start_factors)}")
+            self.start_factors = list(start_factors)
+
+        if not isinstance(end_factors, list) and not isinstance(end_factors, tuple):
+            self.end_factors = [end_factors] * len(optimizer.param_groups)
+        else:
+            if len(end_factors) != len(optimizer.param_groups):
+                raise ValueError(f"Expected {len(optimizer.param_groups)} end_factors, but got {len(end_factors)}")
+            self.end_factors = list(end_factors)
+
+        self.total_iters = total_iters
+
+        super().__init__(optimizer, last_epoch, verbose)
+
+    def lr_func(self, t):
+        return t
+        
+    def get_lr(self):
+        if not self._get_lr_called_within_step:
+            warnings.warn("To get the last learning rate computed by the scheduler, "
+                          "please use `get_last_lr()`.")
+
+        return [base_lr * (start_factor + (end_factor-start_factor) * self.lr_func(min(1.0, self.last_epoch / self.total_iters)))
+                for start_factor, end_factor, base_lr in zip(self.start_factors, self.end_factors, self.base_lrs)]
+
+class CosLR(LinearLR):
+    def lr_func(self, t):
+        return math.cos(math.pi + math.pi * t)
+
+
 ### ---
 # Core RWKV module
 ### ---
@@ -256,6 +293,7 @@ class RWKV(L.LightningModule):
                  # to configure a constant learning rate
                  lr_init: float = -1.0,
                  lr_final: float = -1.0,
+                 lr_upgraded_params_init: float = -1.0,
                  lr_period: int = -1,
                  lr_period_type: str = 'epoch',
                  # Use either "cosine" or "linear"
@@ -294,7 +332,9 @@ class RWKV(L.LightningModule):
                  # this introduces a slight perf penalty if enabled
                  consolidated_logging: bool = True,
 
-                 num_experts: int = 8,
+                 num_experts: int = 0,
+                 ep_size:int = 1,
+                 strict_loading:bool = True,
                  additive_moe: bool = True,
                  version: str = '5.2',
                 ):
@@ -344,13 +384,13 @@ class RWKV(L.LightningModule):
         if vocab_size < 0:
             vocab_size = model_weights['head.weight'].shape[0]
 
-        if model_weights is not None and num_experts > 0 and 'blocks.0.moe.deepspeed_moe.gate.wg.weight' in model_weights.keys():
+        if model_weights is not None and num_experts > 0 and 'blocks.0.moe.deepspeed_moe.gate.wg.weight' not in model_weights.keys():
             #print(model_keys)
             for i in range(n_layer):
                 #'blocks.0.ffn.time_mix_k', 'blocks.0.ffn.time_mix_r', 'blocks.0.ffn.key.weight', 'blocks.0.ffn.receptance.weight', 'blocks.0.ffn.value.weight',        
                 #'blocks.0.moe.deepspeed_moe.gate.wg.weight', 'blocks.0.moe.deepspeed_moe.experts.deepspeed_experts.0.ffn_key.weight', 'blocks.0.moe.deepspeed_moe.experts.deepspeed_experts.0.ffn_receptance.weight', 'blocks.0.moe.deepspeed_moe.experts.deepspeed_experts.0.ffn_value.weight', 'blocks.0.residual_coefficients.weight', 'blocks.0.ffn_receptance.weight', 
-                model_weights[f'blocks.{i}.time_mix_k'] = model_weights[f'blocks.{i}.ffn.time_mix_k']
-                model_weights[f'blocks.{i}.time_mix_r'] = model_weights[f'blocks.{i}.ffn.time_mix_r']
+                model_weights[f'blocks.{i}.time_maa_k'] = model_weights[f'blocks.{i}.ffn.time_maa_k']
+                #model_weights[f'blocks.{i}.time_mix_r'] = model_weights[f'blocks.{i}.ffn.time_mix_r']
                 #del model_weights[f'blocks.{i}.ffn.time_mix_k']
                 #del model_weights[f'blocks.{i}.ffn.time_mix_r']
 
@@ -375,6 +415,7 @@ class RWKV(L.LightningModule):
         self.grad_cp = grad_cp
         self.lr_init = lr_init
         self.lr_final = lr_final
+        self.lr_upgraded_params_init = lr_upgraded_params_init
         self.lr_period = lr_period
         self.lr_period_type = lr_period_type
         self.lr_type = lr_type
@@ -412,7 +453,7 @@ class RWKV(L.LightningModule):
         self._prev_step_endin_timestamp = 0
 
         dim_att = dim_att or n_embd
-        dim_ffn = dim_ffn or (int((n_embd * 4) // 32 * 32) if version == '7.0' else int((n_embd * 3.5) // 32 * 32))
+        dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
         self.dim_att = dim_att
         self.dim_ffn = dim_ffn
 
@@ -450,7 +491,7 @@ class RWKV(L.LightningModule):
         #      is_python_module=False)
 
         self.blocks = nn.ModuleList([
-            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, additive_moe, version) for i in range(n_layer)
+            Block(i, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn, num_experts, ep_size, additive_moe, version) for i in range(n_layer)
         ])
 
         self.ln_out = nn.LayerNorm(n_embd)
@@ -462,7 +503,7 @@ class RWKV(L.LightningModule):
 
         # load the state, and GC the original cpu copy
         if model_weights != None:
-            self.load_state_dict(model_weights, strict=not ('_upgraded' in version))
+            self.load_state_dict(model_weights, strict=strict_loading)
             del model_weights
             gc.collect()
 
@@ -485,9 +526,13 @@ class RWKV(L.LightningModule):
         # Get the learning rate used for the optimizer
         lr_init = self.lr_init
         lr_final = self.lr_final
+        lr_upgraded_params_init = self.lr_upgraded_params_init
         # If the final learning rate is not specified, use the initial learning rate
         if lr_final < 0:
             lr_final = self.lr_init
+        assert '_upgraded' not in self.version or lr_upgraded_params_init >= 0, 'upgraded models must specify lr_upgraded_params_init'
+        if lr_upgraded_params_init < 0:
+            lr_upgraded_params_init = lr_init
 
         # Log the learning rate, and various other parameters
         if self.trainer.local_rank == 0:
@@ -504,11 +549,10 @@ class RWKV(L.LightningModule):
                 "#"
             ))
 
-            lr_init_e = "{:.3e}".format(lr_init)
-            lr_final_e = "{:.3e}".format(lr_final)
             print(f"\n[RWKV.model] Configuring optimizer with\n"+
-                  f"    - lr_init:  {lr_init_e} ({lr_init})\n"+
-                  f"    - lr_final: {lr_final_e} ({lr_final})\n")
+                  f"    - lr_init:  {lr_init:.3e} ({lr_init})\n"+
+                  f"    - lr_upgraded_params_init:  {lr_upgraded_params_init:.3e} ({lr_init})\n"+
+                  f"    - lr_final: {lr_final:.3e} ({lr_final})\n")
 
             # Get the setup args
             model_args = dict(self.setup_args)
@@ -527,7 +571,9 @@ class RWKV(L.LightningModule):
             lr_3x = set()
             lr_upgraded = set()
             for n, p in self.named_parameters():
-                if ('_upgraded' in self.version) and ((".deepspeed_moe." in n) or ("_w1" in n) or ("_w2" in n) or (".time_mix_x" in n) or (".time_mix_w" in n) or (".time_t" in n)):
+                #if ('_upgraded' in self.version) and ((".deepspeed_moe." in n) or ("_w1" in n) or ("_w2" in n) or (".time_mix_x" in n) or (".time_mix_w" in n) or (".time_t" in n)):
+                #if ('_upgraded' in self.version) and (".deepspeed_moe." in n):
+                if (lr_upgraded_params_init != lr_init) and (".deepspeed_moe." in n):
                     lr_upgraded.add(n)
                 elif ("_w1" in n) or ("_w2" in n):
                     lr_1x.add(n)
@@ -582,11 +628,13 @@ class RWKV(L.LightningModule):
                 {
                     "params": [param_dict[n] for n in lr_upgraded],
                     "weight_decay": self.weight_decay,
-                    "lr": 4e-4,
-                    'name': 'random-unique-name5'
+                    "lr": lr_upgraded_params_init,
+                    'name': 'random-unique-name5',
+                    'upgraded': True,
                 },
             ]
         else:
+            # FIXME - should we just always have five groups so LR scheduling can work consistently?
             optim_groups = [
                 {
                     "params": [p for n, p in self.named_parameters()],
@@ -598,6 +646,9 @@ class RWKV(L.LightningModule):
         if self.blocks[0].moe is not None:
             optim_groups = split_params_into_different_moe_groups_for_optimizer(optim_groups)
         #print(optim_groups)
+        # if self.global_rank == 0:
+        #     for group in optim_groups:
+        #         print("optim group", group['name'], group['lr'], len(group['params']), group.get('upgraded', False))
 
         # Setup the adam optimizers
         if self.deepspeed_offload:
@@ -622,77 +673,62 @@ class RWKV(L.LightningModule):
             raise ValueError(
                 "Use either warmup_steps or lr_period, not both.")
 
+        # The total number of steps to perform training rate decay with
+        lr_total_step = 0
+
+        # Handle lr_period -1 default behaviour of using the max_step / max_epoch
+        if self.lr_period == -1:
+            # Get trainer max_step / max_epoch
+            trainer_max_step = self.trainer.max_steps
+            trainer_max_epoch = self.trainer.max_epochs
+            if trainer_max_step > 0:
+                lr_total_step = trainer_max_step
+            elif trainer_max_epoch > 0:
+                lr_total_step = trainer_max_epoch * self.num_step_per_epoch()
+            else :
+                print("Warning: max_step/max_epoch not set, we would be performing lr_init to lr_final shift assuming 10 epoch")
+                lr_total_step = 10 * self.num_step_per_epoch()
+        else:
+            # Calculate lr_total_step based on lr_period
+            if self.lr_period_type == "step":
+                lr_total_step = self.lr_period
+            elif self.lr_period_type == "epoch":
+                lr_total_step = self.lr_period * self.num_step_per_epoch() # * self.trainer.microbatch_size
+            else:
+                raise ValueError(f"lr_period_type {self.lr_period_type} not supported.")
+
+        # Lets initialize the lr_scheduler
+        if self.lr_type == "linear":
+            # lr_scheduler = torch.optim.lr_scheduler.LinearLR(
+            #     optimizer,
+            #     start_factor=1.0,
+            #     end_factor= lr_final / lr_init,
+            #     total_iters=lr_total_step
+            # )
+            lr_scheduler = LinearLR(optimizer, 1.0, [lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init) for group in optim_groups], lr_total_step)
+        elif self.lr_type == "cosine":
+            lr_scheduler = CosLR(optimizer, 1.0, [lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init) for group in optim_groups], lr_total_step)
+        else:  
+            raise ValueError(f"lr_type {self.lr_type} not supported.")
+
         if self.warmup_steps > 0:
-            lr_scheduler = torch.optim.lr_scheduler.LinearLR(
+            warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
                 optimizer,
                 start_factor = 0.2,
                 end_factor = 1.0,
                 total_iters = self.warmup_steps
             )
 
-            return {
-                'optimizer': optimizer,
-                'lr_scheduler': {
-                    "scheduler": lr_scheduler,
-                    "interval": "step",
-                    "frequency": 1,
-                },
-            }
+            lr_scheduler = torch.optim.lr_scheduler.ChainedScheduler([warmup_scheduler, lr_scheduler])
 
-        else:
-            # Skip the lr_scheduler process if lr_init and lr_final are the same
-            if lr_init == lr_final:
-                return optimizer
-
-            # The total number of steps to perform training rate decay with
-            lr_total_step = 0
-
-            # Handle lr_period -1 default behaviour of using the max_step / max_epoch
-            if self.lr_period == -1:
-                # Get trainer max_step / max_epoch
-                trainer_max_step = self.trainer.max_steps
-                trainer_max_epoch = self.trainer.max_epochs
-                if trainer_max_step > 0:
-                    lr_total_step = trainer_max_step
-                elif trainer_max_epoch > 0:
-                    lr_total_step = trainer_max_epoch * self.num_step_per_epoch()
-                else :
-                    print("Warning: max_step/max_epoch not set, we would be performing lr_init to lr_final shift assuming 10 epoch")
-                    lr_total_step = 10 * self.num_step_per_epoch()
-            else:
-                # Calculate lr_total_step based on lr_period
-                if self.lr_period_type == "step":
-                    lr_total_step = self.lr_period
-                elif self.lr_period_type == "epoch":
-                    lr_total_step = self.lr_period * self.num_step_per_epoch() # * self.trainer.microbatch_size
-                else:
-                    raise ValueError(f"lr_period_type {self.lr_period_type} not supported.")
-
-            # Lets initialize the lr_scheduler
-            if self.lr_type == "cosine":
-                lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer,
-                    T_max=lr_total_step,
-                    eta_min=lr_final
-                )
-            elif self.lr_type == "linear":
-                lr_scheduler = torch.optim.lr_scheduler.LinearLR(
-                    optimizer,
-                    start_factor=1.0,
-                    end_factor= lr_final / lr_init,
-                    total_iters=lr_total_step
-                )
-            else:  
-                raise ValueError(f"lr_type {self.lr_type} not supported.")
-
-            return {
-                'optimizer': optimizer,
-                'lr_scheduler': {
-                    "scheduler": lr_scheduler,
-                    "interval": "step",
-                    "frequency": 1,
-                },
-            }
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                "scheduler": lr_scheduler,
+                "interval": "step",
+                "frequency": 1,
+            },
+        }
                 
     
     # We have to compute the number of steps per epoch ourselves
@@ -801,9 +837,9 @@ class RWKV(L.LightningModule):
             last_state = cur_bs_list[i]
             if self.grad_cp:
                 output_x, new_state, addl_aux_loss = deepspeed_checkpoint(
-                    block, output_x, last_state)
+                    block, output_x, idx, last_state)
             else:
-                output_x, new_state, addl_aux_loss = block(output_x, last_state)
+                output_x, new_state, addl_aux_loss = block(output_x, idx, last_state)
             aux_loss = aux_loss + addl_aux_loss
             new_states[i] = new_state
 
@@ -963,7 +999,7 @@ class RWKV(L.LightningModule):
 
         # Used for token/second performance tracking
         # Reset the token tracking accordingly
-        if self._counting_time_start is None or batch_idx <= 1:
+        if is_training_run and (self._counting_time_start is None or batch_idx <= 1):
             self._counting_tokens = 0
         if self._counting_time_start is None or self._counting_time_start == 0:
             self._counting_time_start = step_start_time
@@ -1476,6 +1512,18 @@ class RWKV(L.LightningModule):
                 'batchidx': batch_idx
             }
 
+            upgraded_lr_total = 0.0
+            upgraded_lr_count = 0
+            for group in self.trainer.optimizers[0].param_groups:
+                if 'upgraded' in group:
+                    upgraded_lr_total += group['lr']
+                    upgraded_lr_count += 1
+                #self.print("optim group", group['name'], group['lr'], len(group['params']), group.get('upgraded', False), upgraded_lr_total, upgraded_lr_count)
+            if upgraded_lr_count > 0:
+                logobj['trainer/learning_rate_upgraded'] = upgraded_lr_total / upgraded_lr_count
+            #self.print("optim group upgraded ", upgraded_lr_total, upgraded_lr_count)
+
+
             # Consolidated logging
             if self.consolidated_logging:
                 # Prepare the floating tensor values, containing the total kTokens, batch kTokens, data_loss, and learn_loss
@@ -1658,17 +1706,29 @@ class SimpleRWKV():
             model_path: str,
             ctx_len:int = 1024,
             device:str = "cuda",
-            dtype:str = "fp32"
+            dtype_str:str = "fp32"
         ):
 
         # Log the mismatch dtype
-        if dtype != "fp32":
-            print("[SimpleRWKV] Warning: dtype mismatch, only fp32 is supported (for now)")
+        dtype = torch.float32
+        if dtype_str == "16":
+            dtype = torch.float16
+        elif dtype_str == "bf16":
+            dtype = torch.bfloat16
+        elif dtype_str == "32":
+            dtype = torch.float32
+        else:
+            print("[SimpleRWKV] Warning: dtype mismatch, only fp16 bf16 fp32 is supported (for now)")
 
         # Prepare the model config with the model path, and custom torch load
         model_config = {}
         model_config["load_model"] = model_path
         model_config["ctx_len"] = ctx_len
+
+        # FIXME
+        model_config["version"] = "6.0"
+        model_config["strict_loading"] = False
+        model_config["num_experts"] = 8
 
         # This feature depends on deepspeed
         model_config["grad_cp"] = False
@@ -1679,12 +1739,22 @@ class SimpleRWKV():
         self.device = device
 
         # Lets actually load the model
+        #trainer = Trainer(precision=dtype_str, accelerator='cuda', devices=1)
+        #fabric = Lightning.Fabric(precision=dtype_str, accelerator='cuda', devices=1)
+        #with fabric.init_module():
         self.model = RWKV(**model_config)
+        print("dtype of model itself started as ", self.model.ln_out.weight.dtype)
 
         # Lets map it over to the respective device type
         # and set it to run as eval/inference mode
+        print("Desired dtype", dtype)
+        self.model.to(dtype)
         self.model.to(device)
         self.model.eval()
+        if dtype != torch.float:
+            torch.set_autocast_gpu_dtype(dtype)
+
+        print("dtype of model itself became ", self.model.ln_out.weight.dtype)
 
         # Get the model detected vocab size
         vocab_size = self.model.vocab_size
@@ -1752,7 +1822,7 @@ class SimpleRWKV():
             ).unsqueeze(0)
             
             # Compute the logits and state
-            logits_arr, shift_states, wkv_states = self.model.forward(
+            logits_arr, shift_states, wkv_states, aux_loss = self.model.forward(
                 batch_tokens, shift_states, wkv_states
             )
 
@@ -1786,7 +1856,7 @@ class SimpleRWKV():
             token_ban: list = []
             ):
         # Copy to CPU first
-        logits = logits.cpu()
+        logits = logits.float().cpu()
 
         # Max negative float
         max_neg = -torch.finfo(torch.float).max
@@ -1804,7 +1874,7 @@ class SimpleRWKV():
         if temperature > 0.0:
             probs = F.softmax(logits, dim=-1)
             sorted_probs = torch.sort(probs, descending=True)[0]
-            cumulative_probs = torch.cumsum(sorted_probs, dim=-1).cpu().numpy()
+            cumulative_probs = torch.cumsum(sorted_probs, dim=-1).float().cpu().numpy()
             cutoff = float(sorted_probs[np.argmax(cumulative_probs > top_p)])
             probs[probs < cutoff] = 0
             if temperature != 1.0:

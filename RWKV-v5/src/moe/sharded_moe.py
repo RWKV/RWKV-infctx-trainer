@@ -26,6 +26,8 @@ import torch.nn.functional as F
 from deepspeed.utils import groups
 from .mappings import drop_tokens, gather_tokens
 
+import math
+
 if TYPE_CHECKING:
     Base = Module[Tensor]
 else:
@@ -99,17 +101,22 @@ class _AllToAll(torch.autograd.Function):
             ctx: Any,
             # TODO: replace with DS process group
             group: torch.distributed.ProcessGroup,
-            input: Tensor) -> Tensor:  # type: ignore
+            input: Tensor,
+            output_split_sizes: list|None,
+            input_split_sizes: list|None,
+            ) -> Tensor:  # type: ignore
         ctx.group = group
+        ctx.input_size = input.size()
+        ctx.output_split_sizes = input_split_sizes
+        ctx.input_split_sizes = output_split_sizes
         input = input.contiguous()
         output = torch.empty_like(input)
-        dist.all_to_all_single(output, input, group=group)
+        dist.all_to_all_single(output, input, output_split_sizes, input_split_sizes, group=group)
         return output
 
     @staticmethod
-    def backward(ctx: Any, *grad_output: Tensor) -> Tuple[None, Tensor]:
-        return (None, _AllToAll.apply(ctx.group, *grad_output))
-
+    def backward(ctx, grad_output):
+        return (None, _AllToAll.apply(ctx.group, grad_output.contiguous(), ctx.input_split_sizes, ctx.output_split_sizes), None, None)
 
 # einsum rewrites are on par or more performant
 # switch can be bubbled up in future
@@ -543,6 +550,7 @@ class MOELayer(Base):
                  ep_group_name,
                  ep_size,
                  num_local_experts: int,
+                 hash_prime: int,
                  use_tutel: bool = False) -> None:
         super().__init__()
         self.gate = gate
@@ -551,6 +559,7 @@ class MOELayer(Base):
         self.ep_size = ep_size
         self.ep_group_name = ep_group_name
         self.num_local_experts = num_local_experts
+        self.hash_prime = hash_prime
         self.time_falltoall = 0.0
         self.time_salltoall = 0.0
         self.time_moe = 0.0
@@ -573,24 +582,26 @@ class MOELayer(Base):
 
     @torch._dynamo.disable
     @torch.jit.ignore
-    def all_to_all(self, x:Tensor) -> Tensor:
-        return _AllToAll.apply(self.ep_group, x)
+    def all_to_all(self, x:Tensor, output_split_sizes:list|None=None, input_split_sizes:list|None=None) -> Tensor:
+        return _AllToAll.apply(self.ep_group, x, output_split_sizes, input_split_sizes)
 
-    def forward(self, *input: Tensor, **kwargs: Any) -> Tensor:
+    @torch._dynamo.disable
+    @torch.jit.ignore
+    def forward(self, input: Tensor, tokens: Tensor, used_token) -> Tensor:
 
         if self.wall_clock_breakdown:
             self.timers(MOE_TIMER).start()
 
         # Implement Algorithm 2 from GShard paper.
-        d_model = input[0].shape[-1]
+        d_model = input.shape[-1]
 
         # Initial implementation -> Reshape into S tokens by dropping sequence dimension.
         # Reshape into G groups so that each group can distribute tokens equally
         # group_size = kwargs['group_size'] if 'group_size' in kwargs.keys() else 1
-        reshaped_input = input[0].reshape(-1, d_model)
+        reshaped_input = input.reshape(-1, d_model)
 
         if self.use_tutel:
-            self.l_aux, C, E, indices_, locations_, gates_, self.exp_counts = self.gate(reshaped_input, input[1], True)
+            self.l_aux, C, E, indices_, locations_, gates_, self.exp_counts = self.gate(reshaped_input, used_token, True)
             S, M = reshaped_input.size(0), reshaped_input.size(1)
 
             if not hasattr(self, '_tutel_dispatcher'):
@@ -598,8 +609,8 @@ class MOELayer(Base):
             self._tutel_dispatcher.update(indices_, locations_, gates_, capacity=C)
             dispatched_input = self._tutel_dispatcher.encode(reshaped_input)
         else:
-            self.l_aux, combine_weights, dispatch_mask, self.exp_counts = self.gate(reshaped_input, input[1])
-            dispatched_input = einsum("sec,sm->ecm", dispatch_mask.type_as(input[0]), reshaped_input)
+            self.l_aux, combine_weights, dispatch_mask, self.exp_counts = self.gate(reshaped_input, used_token)
+            dispatched_input = einsum("sec,sm->ecm", dispatch_mask.type_as(input), reshaped_input)
 
         if self.wall_clock_breakdown:
             self.timers(FIRST_ALLTOALL_TIMER).start()
@@ -645,9 +656,9 @@ class MOELayer(Base):
         if self.use_tutel:
             combined_output = self._tutel_dispatcher.decode(expert_output.view(E * C, M))
         else:
-            combined_output = einsum("sec,ecm->sm", combine_weights.type_as(input[0]), expert_output)
+            combined_output = einsum("sec,ecm->sm", combine_weights.type_as(input), expert_output)
 
-        a = combined_output.reshape(input[0].shape)
+        a = combined_output.reshape(input.shape)
 
         if self.wall_clock_breakdown:
             self.timers(MOE_TIMER).stop()
