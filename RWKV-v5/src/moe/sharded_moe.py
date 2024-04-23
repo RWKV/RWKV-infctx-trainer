@@ -650,4 +650,4 @@ class MOELayer(Base):
 
             flat_output = torch.zeros_like(flat_input).scatter(dim=0, index=flat_idx_sorted_by_expert_unsqueezed, src=flat_output_from_all)            
 
-        return flat_output.reshape(input.shape)
+        return flat_output.view(input.shape)
