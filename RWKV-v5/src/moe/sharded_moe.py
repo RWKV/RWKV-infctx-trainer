@@ -628,12 +628,8 @@ class MOELayer(Base):
                 flat_output_from_all = self.all_to_all(flat_output_for_my_experts)
 
             # force tokens which exceeded capacity to become zero as output
-            # pad on the left, then mask and add one so that slot zero is treated specially as a zero output
-            padded_flat_output_from_all = torch.nn.functional.pad(flat_output_from_all, [0, 0, 1, 0])
-            padded_flat_idx_by_flat_expert = torch.nn.functional.pad((1 + flat_idx_by_flat_expert) * mask_by_flat_expert, [0, 0, 1, 0])
-
-            # scatter and take everything after slot zero, since that one is just a holding pen for over-capacity entries
-            flat_output = torch.zeros_like(padded_flat_output_from_all).scatter(dim=0, index=padded_flat_idx_by_flat_expert, src=padded_flat_output_from_all)[1:]
+            # scatter additively, first multiplying by mask so over-capacity entries end up being zero and others are whatever their index held, since they're uniquely identified
+            flat_output = torch.zeros_like(flat_output_from_all).scatter_add(dim=0, index=flat_idx_by_flat_expert, src=flat_output_from_all * mask_by_flat_expert)
 
         else:
             
