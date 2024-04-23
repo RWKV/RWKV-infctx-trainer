@@ -79,11 +79,11 @@ class WKV6_CUDA(torch.autograd.Function):
             r, k, v, w, u = ctx.saved_tensors
 
             # Initialize all the backward pass vars required
-            gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
-            gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=torch.bfloat16, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            gr = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            gk = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            gv = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            gw = torch.empty((B, T, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
+            gu = torch.empty((B, C), device=gy.device, requires_grad=False, dtype=dtype, memory_format=torch.contiguous_format)#.uniform_(-100, 100)
 
             # Perform the backward pass
             if dtype == torch.bfloat16:
