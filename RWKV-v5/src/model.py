@@ -294,6 +294,7 @@ class RWKV(L.LightningModule):
                  lr_init: float = -1.0,
                  lr_final: float = -1.0,
                  lr_upgraded_params_init: float = -1.0,
+                 lr_upgraded_params_final: float = -1.0,
                  lr_period: int = -1,
                  lr_period_type: str = 'epoch',
                  # Use either "cosine" or "linear"
@@ -416,6 +417,7 @@ class RWKV(L.LightningModule):
         self.lr_init = lr_init
         self.lr_final = lr_final
         self.lr_upgraded_params_init = lr_upgraded_params_init
+        self.lr_upgraded_params_final = lr_upgraded_params_final
         self.lr_period = lr_period
         self.lr_period_type = lr_period_type
         self.lr_type = lr_type
@@ -527,12 +529,15 @@ class RWKV(L.LightningModule):
         lr_init = self.lr_init
         lr_final = self.lr_final
         lr_upgraded_params_init = self.lr_upgraded_params_init
+        lr_upgraded_params_final = self.lr_upgraded_params_final
         # If the final learning rate is not specified, use the initial learning rate
         if lr_final < 0:
             lr_final = self.lr_init
         assert '_upgraded' not in self.version or lr_upgraded_params_init >= 0, 'upgraded models must specify lr_upgraded_params_init'
         if lr_upgraded_params_init < 0:
             lr_upgraded_params_init = lr_init
+        if lr_upgraded_params_final < 0:
+            lr_upgraded_params_final = lr_final
 
         # Log the learning rate, and various other parameters
         if self.trainer.local_rank == 0:
@@ -551,13 +556,16 @@ class RWKV(L.LightningModule):
 
             print(f"\n[RWKV.model] Configuring optimizer with\n"+
                   f"    - lr_init:  {lr_init:.3e} ({lr_init})\n"+
-                  f"    - lr_upgraded_params_init:  {lr_upgraded_params_init:.3e} ({lr_init})\n"+
-                  f"    - lr_final: {lr_final:.3e} ({lr_final})\n")
+                  f"    - lr_final: {lr_final:.3e} ({lr_final})\n"+
+                  f"    - lr_upgraded_params_init:  {lr_upgraded_params_init:.3e} ({lr_upgraded_params_init})\n"+
+                  f"    - lr_upgraded_params_final:  {lr_upgraded_params_final:.3e} ({lr_upgraded_params_final})\n")
 
             # Get the setup args
             model_args = dict(self.setup_args)
             model_args["__lr_init"] = lr_init
             model_args["__lr_final"] = lr_final
+            model_args["__lr_upgraded_params_init"] = lr_upgraded_params_init
+            model_args["__lr_upgraded_params_final"] = lr_upgraded_params_final
 
             # Update WANDB
             if wandb.run is not None:
@@ -698,6 +706,7 @@ class RWKV(L.LightningModule):
                 raise ValueError(f"lr_period_type {self.lr_period_type} not supported.")
 
         # Lets initialize the lr_scheduler
+        group_final_ratios = [(lr_final if 'upgraded' not in group else lr_upgraded_params_final) / (lr_init if 'upgraded' not in group else lr_upgraded_params_init) for group in optim_groups]
         if self.lr_type == "linear":
             # lr_scheduler = torch.optim.lr_scheduler.LinearLR(
             #     optimizer,
@@ -705,9 +714,9 @@ class RWKV(L.LightningModule):
             #     end_factor= lr_final / lr_init,
             #     total_iters=lr_total_step
             # )
-            lr_scheduler = LinearLR(optimizer, 1.0, [lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init) for group in optim_groups], lr_total_step)
+            lr_scheduler = LinearLR(optimizer, 1.0, group_final_ratios, lr_total_step)
         elif self.lr_type == "cosine":
-            lr_scheduler = CosLR(optimizer, 1.0, [lr_final / (lr_init if 'upgraded' not in group else lr_upgraded_params_init) for group in optim_groups], lr_total_step)
+            lr_scheduler = CosLR(optimizer, 1.0, group_final_ratios, lr_total_step)
         else:  
             raise ValueError(f"lr_type {self.lr_type} not supported.")
 
@@ -1512,16 +1521,14 @@ class RWKV(L.LightningModule):
                 'batchidx': batch_idx
             }
 
-            upgraded_lr_total = 0.0
-            upgraded_lr_count = 0
+            upgraded_lr_max = 0.0
             for group in self.trainer.optimizers[0].param_groups:
                 if 'upgraded' in group:
-                    upgraded_lr_total += group['lr']
-                    upgraded_lr_count += 1
+                    upgraded_lr_max = max(upgraded_lr_max, group['lr'])
                 #self.print("optim group", group['name'], group['lr'], len(group['params']), group.get('upgraded', False), upgraded_lr_total, upgraded_lr_count)
-            if upgraded_lr_count > 0:
-                logobj['trainer/learning_rate_upgraded'] = upgraded_lr_total / upgraded_lr_count
-            #self.print("optim group upgraded ", upgraded_lr_total, upgraded_lr_count)
+            if upgraded_lr_max > 0:
+                logobj['trainer/learning_rate_upgraded'] = upgraded_lr_max
+            #self.print("optim group upgraded ", upgraded_lr_max)
 
 
             # Consolidated logging
