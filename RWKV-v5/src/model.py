@@ -1181,7 +1181,7 @@ class RWKV(L.LightningModule):
                 
                 # We use a dummy masked token 0, to do additional dummy checkpoint/forward/backprop when needed
                 # for each additional call after the current "segment_count" max
-                if i <= segment_count - 1:
+                if i * segment_size < len(idx) - 1:
                     cur_idx = idx[:, i * segment_size:(i + 1) * segment_size]
                     cur_tar = targets[:, i * segment_size:(i + 1) * segment_size]
                     cur_msk = seq_mask[:, i * segment_size:(i + 1) * segment_size]
