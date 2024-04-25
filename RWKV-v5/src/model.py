@@ -267,7 +267,7 @@ class LinearLR(torch.optim.lr_scheduler.LRScheduler):
 
 class CosLR(LinearLR):
     def lr_func(self, t):
-        return math.cos(math.pi + math.pi * t)
+        return 0.5 - 0.5 * math.cos(math.pi * t)
 
 
 ### ---
