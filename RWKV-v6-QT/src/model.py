@@ -151,16 +151,27 @@ class L2Wrap(torch.autograd.Function):
 
 ### ---
 # Layer Repeat multiplier env variable, for -TCLRX experiment
+# And experimental quantized training support
 ### ---
+
+# Quantized training support
+import bitsandbytes as bnb
+from .module.Quantizer import *
 
 global RWKV_TMIX_REUSE_MULTIPLIER, RWKV_CMIX_REUSE_MULTIPLIER
 RWKV_TMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_TMIX_REUSE_MULTIPLIER", 1))
 RWKV_CMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_CMIX_REUSE_MULTIPLIER", 1))
 
+global RWKV_TIMX_QTYPE, RWKV_CMIX_QTYPE
+RWKV_TIMX_QTYPE = os.environ.get("RWKV_TIMX_QTYPE", None)
+RWKV_CMIX_QTYPE = os.environ.get("RWKV_CMIX_QTYPE", None)
+
 # Print the layer reuse multiplier
 print("====================================================================")
 print(f"[RWKV] TMIX reuse multiplier : {RWKV_TMIX_REUSE_MULTIPLIER}")
 print(f"[RWKV] CMIX reuse multiplier : {RWKV_CMIX_REUSE_MULTIPLIER}")
+print(f"[RWKV] TMIX Quantize type    : {RWKV_TIMX_QTYPE}")
+print(f"[RWKV] CMIX Quantize type    : {RWKV_CMIX_QTYPE}")
 print("====================================================================")
 
 ### ---
@@ -391,6 +402,10 @@ class RWKV(L.LightningModule):
             del model_weights
             gc.collect()
 
+        ### ---
+        # Time mix / channel mix, layer reuse support
+        ### ---
+
         # Collapse the reused layers, iterate the blocks and remap them accordingly
         if RWKV_TMIX_REUSE_MULTIPLIER > 1 or RWKV_CMIX_REUSE_MULTIPLIER > 1:
             for i in range(n_layer):
@@ -405,7 +420,45 @@ class RWKV(L.LightningModule):
             # Clean up the unused blocks
             gc.collect()
 
+        ### ---
+        # Quantized training support
+        ### ---
+
+        if RWKV_CMIX_QTYPE is not None:
+            # Quantize the channel mix
+            for i in range(n_layer):
+                cmixblock = self.blocks[i].ffn
+
+                # Quantize the various components, if they are not already quantized
+                # Skip if quantized is required, due to layer sharing
+                if not isinstance(cmixblock.key, QuantizedModule):
+                    cmixblock.key = QuantizedModule(cmixblock.key, RWKV_CMIX_QTYPE)
+                if not isinstance(cmixblock.receptance, QuantizedModule):
+                    cmixblock.receptance = QuantizedModule(cmixblock.receptance, RWKV_CMIX_QTYPE)
+                if not isinstance(cmixblock.value, QuantizedModule):
+                    cmixblock.value = QuantizedModule(cmixblock.value, RWKV_CMIX_QTYPE)
+
+        if RWKV_TIMX_QTYPE is not None:
+            # Quantize the time mix
+            for i in range(n_layer):
+                tmixblock = self.blocks[i].att
+
+                # Quantize the various components, if they are not already quantized
+                # Skip if quantized is required, due to layer sharing
+                if not isinstance(tmixblock.receptance, QuantizedModule):
+                    tmixblock.receptance = QuantizedModule(tmixblock.receptance, RWKV_TIMX_QTYPE)
+                if not isinstance(tmixblock.key, QuantizedModule):
+                    tmixblock.key = QuantizedModule(tmixblock.key, RWKV_TIMX_QTYPE)
+                if not isinstance(tmixblock.value, QuantizedModule):
+                    tmixblock.value = QuantizedModule(tmixblock.value, RWKV_TIMX_QTYPE)
+                if not isinstance(tmixblock.output, QuantizedModule):
+                    tmixblock.output = QuantizedModule(tmixblock.output, RWKV_TIMX_QTYPE)
+                if not isinstance(tmixblock.gate, QuantizedModule):
+                    tmixblock.gate = QuantizedModule(tmixblock.gate, RWKV_TIMX_QTYPE)
+
+        ### ---
         # Training based timings to track, and initialize
+        ### ---
         self._counting_tokens = 0.0
         self._counting_time_start = 0
 
