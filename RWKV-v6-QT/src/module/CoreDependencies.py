@@ -157,3 +157,28 @@ else:
     TCompileDisable    = lambda x: x
 
 print(f"[RWKV.model] Running RWKV infctx using '{RWKV_TORCH_RUN_MODE}' with torch '{torch.__version__}'")
+
+### ---
+# Layer Repeat multiplier env variable, for -TCLRX experiment
+# And experimental quantized training support
+### ---
+
+# Quantized training support
+import bitsandbytes as bnb
+from .Quantizer import *
+
+global RWKV_TMIX_REUSE_MULTIPLIER, RWKV_CMIX_REUSE_MULTIPLIER
+RWKV_TMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_TMIX_REUSE_MULTIPLIER", 1))
+RWKV_CMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_CMIX_REUSE_MULTIPLIER", 1))
+
+global RWKV_TIMX_QTYPE, RWKV_CMIX_QTYPE
+RWKV_TIMX_QTYPE = os.environ.get("RWKV_TIMX_QTYPE", None)
+RWKV_CMIX_QTYPE = os.environ.get("RWKV_CMIX_QTYPE", None)
+
+# Print the layer reuse multiplier
+print("====================================================================")
+print(f"[RWKV] TMIX reuse multiplier : {RWKV_TMIX_REUSE_MULTIPLIER}")
+print(f"[RWKV] CMIX reuse multiplier : {RWKV_CMIX_REUSE_MULTIPLIER}")
+print(f"[RWKV] TMIX Quantize type    : {RWKV_TIMX_QTYPE}")
+print(f"[RWKV] CMIX Quantize type    : {RWKV_CMIX_QTYPE}")
+print("====================================================================")

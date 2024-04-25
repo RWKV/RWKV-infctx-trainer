@@ -17,6 +17,11 @@ class RWKV_ChannelMix6_0(JITModClass):
         self.receptance = nn.Linear(n_embd, n_embd, bias=False)
         self.value = nn.Linear(dim_ffn, n_embd, bias=False)
 
+        # if RWKV_CMIX_QTYPE is not None and RWKV_CMIX_QTYPE != "":
+        #     self.key = QuantizedModule(self.key, RWKV_CMIX_QTYPE)
+        #     self.receptance = QuantizedModule(self.receptance, RWKV_CMIX_QTYPE)
+        #     self.value = QuantizedModule(self.value, RWKV_CMIX_QTYPE)
+
     # forwarding channel mix given the model weights and the input tokens and states.
     #
     # Given:
