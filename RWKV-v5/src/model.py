@@ -1029,11 +1029,8 @@ class RWKV(L.LightningModule):
                 train_token_count = submask_count
                 train_mask = submask
 
-            if train_loss <= 0.0:
-                segment_train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
-            else:
-                # L2Wrap for the backprop process
-                segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
+            # L2Wrap for the backprop process
+            segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
 
             # Return the checkpoint values
             return sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
