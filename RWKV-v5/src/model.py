@@ -203,6 +203,7 @@ class RWKV(L.LightningModule):
                  # Backprop settings
                  grad_cp: bool = True,
                  bptt_learning: bool = True,
+                 bptt_full_segmented_loss: bool = False
                  bptt_learning_range: int = -1,
                  bptt_truncated_learning: bool = True,
                  layerwise_lr: bool = True,
@@ -283,6 +284,7 @@ class RWKV(L.LightningModule):
         self.weight_decay = weight_decay
         self.adam_eps = adam_eps
         self.bptt_learning = bptt_learning
+        self.bptt_full_segmented_loss = bptt_full_segmented_loss
         self.bptt_learning_range = bptt_learning_range
         self.bptt_truncated_learning = bptt_truncated_learning
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
@@ -1001,7 +1003,7 @@ class RWKV(L.LightningModule):
 
                 # Sample loss, without backprop 
                 with torch.no_grad():
-                    sample_loss = (torch.sum(token_loss * submask) / submask_count).clone().detach().requires_grad_(False)
+                    sample_loss = (torch.sum(token_loss * submask) / (submask_count if self.bptt_full_segmented_loss else total_mask_sum)).clone().detach().requires_grad_(False)
 
                 # Building the training mask
                 train_mask = submask
@@ -1017,14 +1019,14 @@ class RWKV(L.LightningModule):
                     train_mask = train_mask * dropout_mask
                 
                 # The training loss to use
-                train_loss = torch.sum(token_loss * train_mask) / submask_count  
+                train_loss = torch.sum(token_loss * train_mask) / (submask_count if self.bptt_full_segmented_loss else total_mask_sum)  
                 train_token_count = torch.sum(train_mask)
 
                 # Adjust the factor accordingly
                 # L2Wrap_factor = L2Wrap_factor * (submask_count / train_token_count)
 
             else:
-                train_loss = torch.sum(token_loss * submask) / submask_count
+                train_loss = torch.sum(token_loss * submask) / (submask_count if self.bptt_full_segmented_loss else total_mask_sum)
                 sample_loss = train_loss.clone().detach().requires_grad_(False)
                 train_token_count = submask_count
                 train_mask = submask
@@ -1234,8 +1236,10 @@ class RWKV(L.LightningModule):
                 # GC collect unused memory
                 # gc.collect()
                 # torch.cuda.empty_cache()
-            training_loss = training_loss / segment_count
-            sampling_loss = sampling_loss / segment_count
+
+            if self.bptt_full_segmented_loss:
+                training_loss = training_loss / segment_count
+                sampling_loss = sampling_loss / segment_count
         else:
 
             #
