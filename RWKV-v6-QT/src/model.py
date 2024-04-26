@@ -418,6 +418,8 @@ class RWKV(L.LightningModule):
 
         n_layer = self.n_layer
         device = self.device
+        if RWKV_QTYPE_OFFLOAD:
+            device = "cpu"
 
         if RWKV_CMIX_QTYPE is not None and RWKV_CMIX_QTYPE != "":
             # Quantize the channel mix
@@ -426,11 +428,11 @@ class RWKV(L.LightningModule):
 
                 # Quantize the various components, if they are not already quantized
                 # Skip if quantized is required, due to layer sharing
-                if not isinstance(cmixblock.key, QuantizedLinearModule):
-                    cmixblock.key = QuantizedLinearModule(cmixblock.key.to(device), RWKV_CMIX_QTYPE)
-                if not isinstance(cmixblock.receptance, QuantizedLinearModule):
+                if not isinstance(cmixblock.receptance, QuantizedLinearModule) and RWKV_CMIX_QVARS.find("R") >= 0:
                     cmixblock.receptance = QuantizedLinearModule(cmixblock.receptance.to(device), RWKV_CMIX_QTYPE)
-                if not isinstance(cmixblock.value, QuantizedLinearModule):
+                if not isinstance(cmixblock.key, QuantizedLinearModule) and RWKV_CMIX_QVARS.find("K") >= 0:
+                    cmixblock.key = QuantizedLinearModule(cmixblock.key.to(device), RWKV_CMIX_QTYPE)
+                if not isinstance(cmixblock.value, QuantizedLinearModule) and RWKV_CMIX_QVARS.find("V") >= 0:
                     cmixblock.value = QuantizedLinearModule(cmixblock.value.to(device), RWKV_CMIX_QTYPE)
 
         if RWKV_TIMX_QTYPE is not None and RWKV_TIMX_QTYPE != "":
@@ -440,15 +442,15 @@ class RWKV(L.LightningModule):
 
                 # Quantize the various components, if they are not already quantized
                 # Skip if quantized is required, due to layer sharing
-                if not isinstance(tmixblock.receptance, QuantizedLinearModule):
+                if not isinstance(tmixblock.receptance, QuantizedLinearModule) and RWKV_TIMX_QVARS.find("R") >= 0:
                     tmixblock.receptance = QuantizedLinearModule(tmixblock.receptance.to(device), RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.key, QuantizedLinearModule):
+                if not isinstance(tmixblock.key, QuantizedLinearModule) and RWKV_TIMX_QVARS.find("K") >= 0:
                     tmixblock.key = QuantizedLinearModule(tmixblock.key.to(device), RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.value, QuantizedLinearModule):
+                if not isinstance(tmixblock.value, QuantizedLinearModule) and RWKV_TIMX_QVARS.find("V") >= 0:
                     tmixblock.value = QuantizedLinearModule(tmixblock.value.to(device), RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.output, QuantizedLinearModule):
+                if not isinstance(tmixblock.output, QuantizedLinearModule) and RWKV_TIMX_QVARS.find("O") >= 0:
                     tmixblock.output = QuantizedLinearModule(tmixblock.output.to(device), RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.gate, QuantizedLinearModule):
+                if not isinstance(tmixblock.gate, QuantizedLinearModule) and RWKV_TIMX_QVARS.find("G") >= 0:
                     tmixblock.gate = QuantizedLinearModule(tmixblock.gate.to(device), RWKV_TIMX_QTYPE)
 
         # Clean up the unused blocks

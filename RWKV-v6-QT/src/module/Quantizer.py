@@ -8,6 +8,7 @@ from torch.nn import functional as F
 
 # Quantize the given module, for training purpose
 # return both the quentized data, and state
+@torch.jit.ignore
 def quantize_training_module(mod_weight, type="4bit"):
     # Get the device of the module
     device = mod_weight.device
@@ -25,6 +26,7 @@ def quantize_training_module(mod_weight, type="4bit"):
         raise ValueError(f"Unknown quantization type {type}")
 
 # Dequantize the given module, for training purpose
+@torch.jit.ignore
 def dequantize_training_module(mod_weight, mod_optimizer, type="4bit"):
     if type == "4bit":
         return bnb.functional.dequantize_4bit(mod_weight,quant_state=mod_optimizer)
@@ -55,6 +57,9 @@ class QuantizedLinearModule(JITModClass):
         # assert self.optState is not None, "Quantized optimizer state is not initialized (pre move)"
 
         # self.qData = self.qData.to(self.device)
+
+        #### DO NOT MOVE THIS - the optimizer state can be viewed as a pointer of sorts? that when moved breaks the quantized optimizer, etc
+        #### I have no idea why this happens, its probably just a deisng artifact of the quantized training module
         # self.optState = self.optState.to(self.device)
 
         # assert self.qData is not None, f"Quantized data is not initialized - {self.device}"
