@@ -262,6 +262,11 @@ model:
   # For mixed dataset sizes, -1 is a resonable trade-off
   bptt_learning_range: -1
 
+  # Full segmented loss means that the loss for each bptt segment is calculated and
+  # back propagated as its full value (instead of making it a fraction of the total document size)
+  # this effectively increases the effective learning rate to be in line with ctx_len (instead of the variable document size)
+  bptt_full_segmented_loss: 0
+
   # Limits the bptt learning only to the "current" chunk
   # being learned within the learning range. While this reduces the effectiveness
   # of bptt, it also further reduces vram requirements. 
