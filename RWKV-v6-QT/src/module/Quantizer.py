@@ -50,30 +50,41 @@ class QuantizedLinearModule(JITModClass):
 
         # Quantize the initialized module
         self.qData, self.optState = quantize_training_module(module.weight, quantize_type)
-        self.qData = self.qData.to(self.device)
-        self.optState = self.optState.to(self.device)
 
-        assert self.qData is not None, "Quantized data is not initialized"
-        assert self.optState is not None, "Quantized optimizer state is not initialized"
+        # assert self.qData is not None, "Quantized data is not initialized (pre move)"
+        # assert self.optState is not None, "Quantized optimizer state is not initialized (pre move)"
+
+        # self.qData = self.qData.to(self.device)
+        # self.optState = self.optState.to(self.device)
+
+        # assert self.qData is not None, f"Quantized data is not initialized - {self.device}"
+        # assert self.optState is not None, f"Quantized optimizer state is not initialized = {self.device}"
 
 
     # Get the dequentized module, for training purpose
-    def dequantize_weights(self):
+    def dequantize_weights(self, device):
         
         assert self.qData is not None, "Quantized data is not initialized"
         assert self.optState is not None, "Quantized optimizer state is not initialized"
 
-        # Rebuild the tensor
-        return dequantize_training_module(self.qData, self.optState, self.qType).to(self.device).to(torch.bfloat16)
+        # # Ensure tensor weight is moved to the device
+        # self.qData = self.qData.to(device)
+        # self.optState = self.optState.to(device)
 
-    # Handle the module operations, with dequantized computation
-    def __call__(self, *args, **kwargs):
-        return F.linear(*args, self.dequantize_weights(), self.bias)
+        # assert self.qData is not None, f"Quantized data is not initialized - {device}"
+        # assert self.optState is not None, f"Quantized optimizer state is not initialized = {device}"
+
+        # Rebuild the tensor
+        return dequantize_training_module(self.qData, self.optState, self.qType).to(device).to(torch.bfloat16)
+
+    # # Handle the module operations, with dequantized computation
+    # def __call__(self, *args, **kwargs):
+    #     return F.linear(*args, self.dequantize_weights(), self.bias)
 
     # # Forward operation, with dequantized computation
     # def forward(self, *args, **kwargs):
     #     return self.dequantize().forward(*args, **kwargs)
 
     # Forward operations, for linear modules
-    def forward(self, x):
-        return F.linear(x, self.dequantize_weights(), self.bias)
+    def forward(self, x: torch.Tensor):
+        return F.linear(x, self.dequantize_weights(x.device), self.bias)

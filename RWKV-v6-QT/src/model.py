@@ -396,42 +396,6 @@ class RWKV(L.LightningModule):
             gc.collect()
 
         ### ---
-        # Quantized training support
-        ### ---
-
-        if RWKV_CMIX_QTYPE is not None and RWKV_CMIX_QTYPE != "":
-            # Quantize the channel mix
-            for i in range(n_layer):
-                cmixblock = self.blocks[i].ffn
-
-                # Quantize the various components, if they are not already quantized
-                # Skip if quantized is required, due to layer sharing
-                if not isinstance(cmixblock.key, QuantizedLinearModule):
-                    cmixblock.key = QuantizedLinearModule(cmixblock.key, RWKV_CMIX_QTYPE)
-                if not isinstance(cmixblock.receptance, QuantizedLinearModule):
-                    cmixblock.receptance = QuantizedLinearModule(cmixblock.receptance, RWKV_CMIX_QTYPE)
-                if not isinstance(cmixblock.value, QuantizedLinearModule):
-                    cmixblock.value = QuantizedLinearModule(cmixblock.value, RWKV_CMIX_QTYPE)
-
-        if RWKV_TIMX_QTYPE is not None and RWKV_TIMX_QTYPE != "":
-            # Quantize the time mix
-            for i in range(n_layer):
-                tmixblock = self.blocks[i].att
-
-                # Quantize the various components, if they are not already quantized
-                # Skip if quantized is required, due to layer sharing
-                if not isinstance(tmixblock.receptance, QuantizedLinearModule):
-                    tmixblock.receptance = QuantizedLinearModule(tmixblock.receptance, RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.key, QuantizedLinearModule):
-                    tmixblock.key = QuantizedLinearModule(tmixblock.key, RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.value, QuantizedLinearModule):
-                    tmixblock.value = QuantizedLinearModule(tmixblock.value, RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.output, QuantizedLinearModule):
-                    tmixblock.output = QuantizedLinearModule(tmixblock.output, RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.gate, QuantizedLinearModule):
-                    tmixblock.gate = QuantizedLinearModule(tmixblock.gate, RWKV_TIMX_QTYPE)
-
-        ### ---
         # Training based timings to track, and initialize
         ### ---
         self._counting_tokens = 0.0
@@ -446,6 +410,54 @@ class RWKV(L.LightningModule):
                 if self.bptt_learning_range <= 0:
                     print("[WARNING]: unlimited bptt_learning_range across multiple GPU's has a performance penalty with datasets of mixed sizes due to its constant need to keep all GPU's in sync (consider using bptt_learning_range=1 instead)")
         
+        ### ---
+        # Quantized training support
+        # This must be done at optimizer step (not init step), as the init step is done on CPU, before GPU assignment
+        # And the quantization setup must be done on the target GPU
+        ### ---
+
+        n_layer = self.n_layer
+        device = self.device
+
+        if RWKV_CMIX_QTYPE is not None and RWKV_CMIX_QTYPE != "":
+            # Quantize the channel mix
+            for i in range(n_layer):
+                cmixblock = self.blocks[i].ffn
+
+                # Quantize the various components, if they are not already quantized
+                # Skip if quantized is required, due to layer sharing
+                if not isinstance(cmixblock.key, QuantizedLinearModule):
+                    cmixblock.key = QuantizedLinearModule(cmixblock.key.to(device), RWKV_CMIX_QTYPE)
+                if not isinstance(cmixblock.receptance, QuantizedLinearModule):
+                    cmixblock.receptance = QuantizedLinearModule(cmixblock.receptance.to(device), RWKV_CMIX_QTYPE)
+                if not isinstance(cmixblock.value, QuantizedLinearModule):
+                    cmixblock.value = QuantizedLinearModule(cmixblock.value.to(device), RWKV_CMIX_QTYPE)
+
+        if RWKV_TIMX_QTYPE is not None and RWKV_TIMX_QTYPE != "":
+            # Quantize the time mix
+            for i in range(n_layer):
+                tmixblock = self.blocks[i].att
+
+                # Quantize the various components, if they are not already quantized
+                # Skip if quantized is required, due to layer sharing
+                if not isinstance(tmixblock.receptance, QuantizedLinearModule):
+                    tmixblock.receptance = QuantizedLinearModule(tmixblock.receptance.to(device), RWKV_TIMX_QTYPE)
+                if not isinstance(tmixblock.key, QuantizedLinearModule):
+                    tmixblock.key = QuantizedLinearModule(tmixblock.key.to(device), RWKV_TIMX_QTYPE)
+                if not isinstance(tmixblock.value, QuantizedLinearModule):
+                    tmixblock.value = QuantizedLinearModule(tmixblock.value.to(device), RWKV_TIMX_QTYPE)
+                if not isinstance(tmixblock.output, QuantizedLinearModule):
+                    tmixblock.output = QuantizedLinearModule(tmixblock.output.to(device), RWKV_TIMX_QTYPE)
+                if not isinstance(tmixblock.gate, QuantizedLinearModule):
+                    tmixblock.gate = QuantizedLinearModule(tmixblock.gate.to(device), RWKV_TIMX_QTYPE)
+
+        # Clean up the unused blocks
+        gc.collect()
+
+        ### ---
+        # Optimizer / learning rate scheduler
+        ### ---
+
         # Get the learning rate used for the optimizer
         lr_init = self.lr_init
         lr_final = self.lr_final
