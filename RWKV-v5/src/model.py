@@ -1001,7 +1001,7 @@ class RWKV(L.LightningModule):
 
                 # Sample loss, without backprop 
                 with torch.no_grad():
-                    sample_loss = (torch.sum(token_loss * submask) / total_mask_sum).clone().detach().requires_grad_(False)
+                    sample_loss = (torch.sum(token_loss * submask) / submask_count).clone().detach().requires_grad_(False)
 
                 # Building the training mask
                 train_mask = submask
@@ -1017,14 +1017,14 @@ class RWKV(L.LightningModule):
                     train_mask = train_mask * dropout_mask
                 
                 # The training loss to use
-                train_loss = torch.sum(token_loss * train_mask) / total_mask_sum  
+                train_loss = torch.sum(token_loss * train_mask) / submask_count  
                 train_token_count = torch.sum(train_mask)
 
                 # Adjust the factor accordingly
                 # L2Wrap_factor = L2Wrap_factor * (submask_count / train_token_count)
 
             else:
-                train_loss = torch.sum(token_loss * submask) / total_mask_sum
+                train_loss = torch.sum(token_loss * submask) / submask_count
                 sample_loss = train_loss.clone().detach().requires_grad_(False)
                 train_token_count = submask_count
                 train_mask = submask
@@ -1234,6 +1234,8 @@ class RWKV(L.LightningModule):
                 # GC collect unused memory
                 # gc.collect()
                 # torch.cuda.empty_cache()
+            training_loss = training_loss / segment_count
+            sampling_loss = sampling_loss / segment_count
         else:
 
             #
