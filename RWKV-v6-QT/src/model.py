@@ -442,15 +442,15 @@ class RWKV(L.LightningModule):
 
                 # Quantize the various components, if they are not already quantized
                 # Skip if quantized is required, due to layer sharing
-                if not isinstance(tmixblock.receptance, QuantizedLinearModule) and RWKV_TIMX_QVARS.find("R") >= 0:
+                if not isinstance(tmixblock.receptance, QuantizedLinearModule) and RWKV_TMIX_QVARS.find("R") >= 0:
                     tmixblock.receptance = QuantizedLinearModule(tmixblock.receptance.to(device), RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.key, QuantizedLinearModule) and RWKV_TIMX_QVARS.find("K") >= 0:
+                if not isinstance(tmixblock.key, QuantizedLinearModule) and RWKV_TMIX_QVARS.find("K") >= 0:
                     tmixblock.key = QuantizedLinearModule(tmixblock.key.to(device), RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.value, QuantizedLinearModule) and RWKV_TIMX_QVARS.find("V") >= 0:
+                if not isinstance(tmixblock.value, QuantizedLinearModule) and RWKV_TMIX_QVARS.find("V") >= 0:
                     tmixblock.value = QuantizedLinearModule(tmixblock.value.to(device), RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.output, QuantizedLinearModule) and RWKV_TIMX_QVARS.find("O") >= 0:
+                if not isinstance(tmixblock.output, QuantizedLinearModule) and RWKV_TMIX_QVARS.find("O") >= 0:
                     tmixblock.output = QuantizedLinearModule(tmixblock.output.to(device), RWKV_TIMX_QTYPE)
-                if not isinstance(tmixblock.gate, QuantizedLinearModule) and RWKV_TIMX_QVARS.find("G") >= 0:
+                if not isinstance(tmixblock.gate, QuantizedLinearModule) and RWKV_TMIX_QVARS.find("G") >= 0:
                     tmixblock.gate = QuantizedLinearModule(tmixblock.gate.to(device), RWKV_TIMX_QTYPE)
 
         # Clean up the unused blocks
