@@ -65,30 +65,30 @@ class QuantizedLinearModule(JITModClass):
         # assert self.qData is not None, f"Quantized data is not initialized - {self.device}"
         # assert self.optState is not None, f"Quantized optimizer state is not initialized = {self.device}"
 
+        # # Holding variable, for the full dequantized weights
+        # self._fullDataCache = None
+
 
     # Get the dequentized module, for training purpose
     def dequantize_weights(self, device):
+
+        # # Return the dequantized weights if present
+        # if self._fullDataCache is not None:
+        #     return self._fullDataCache.to(device).to(torch.bfloat16)
         
         assert self.qData is not None, "Quantized data is not initialized"
         assert self.optState is not None, "Quantized optimizer state is not initialized"
 
-        # # Ensure tensor weight is moved to the device
-        # self.qData = self.qData.to(device)
-        # self.optState = self.optState.to(device)
+        # # Rebuild the tensor, and cache it?
+        # self._fullDataCache = dequantize_training_module(self.qData, self.optState, self.qType).to(device).to(torch.bfloat16)
+        # return self._fullDataCache
 
-        # assert self.qData is not None, f"Quantized data is not initialized - {device}"
-        # assert self.optState is not None, f"Quantized optimizer state is not initialized = {device}"
-
-        # Rebuild the tensor
+        # Return and use it directly
         return dequantize_training_module(self.qData, self.optState, self.qType).to(device).to(torch.bfloat16)
 
-    # # Handle the module operations, with dequantized computation
-    # def __call__(self, *args, **kwargs):
-    #     return F.linear(*args, self.dequantize_weights(), self.bias)
-
-    # # Forward operation, with dequantized computation
-    # def forward(self, *args, **kwargs):
-    #     return self.dequantize().forward(*args, **kwargs)
+    # # Clear the cache, if set
+    # def cache_clear(self):
+    #     self._fullDataCache = None
 
     # Forward operations, for linear modules
     def forward(self, x: torch.Tensor):

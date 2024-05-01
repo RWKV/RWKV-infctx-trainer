@@ -166,6 +166,29 @@ def blockset_forward(block_arr, output_x, last_state_arr):
         # Perform the block and state computation as per normal
         output_x, new_state_arr[i] = block_arr[i](output_x, last_state_arr[i])
 
+    # # Clear the caches, if set
+    # for i in range(n_blocks):
+    #     cmixblock = block_arr[i].ffn
+    #     tmixblock = block_arr[i].att
+
+    #     if isinstance(cmixblock.receptance, QuantizedLinearModule):
+    #         cmixblock.receptance.cache_clear()
+    #     if isinstance(cmixblock.key, QuantizedLinearModule):
+    #         cmixblock.key.cache_clear()
+    #     if isinstance(cmixblock.value, QuantizedLinearModule):
+    #         cmixblock.value.cache_clear()
+
+    #     if isinstance(tmixblock.receptance, QuantizedLinearModule):
+    #         tmixblock.receptance.cache_clear()
+    #     if isinstance(tmixblock.key, QuantizedLinearModule):
+    #         tmixblock.key.cache_clear()
+    #     if isinstance(tmixblock.value, QuantizedLinearModule):
+    #         tmixblock.value.cache_clear()
+    #     if isinstance(tmixblock.output, QuantizedLinearModule):
+    #         tmixblock.output.cache_clear()
+    #     if isinstance(tmixblock.gate, QuantizedLinearModule):
+    #         tmixblock.gate.cache_clear()
+        
     # Return output, and new state arr
     return output_x, new_state_arr
 
