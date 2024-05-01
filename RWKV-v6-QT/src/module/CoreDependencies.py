@@ -170,6 +170,8 @@ from .Quantizer import *
 global RWKV_TMIX_REUSE_MULTIPLIER, RWKV_CMIX_REUSE_MULTIPLIER
 RWKV_TMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_TMIX_REUSE_MULTIPLIER", 1))
 RWKV_CMIX_REUSE_MULTIPLIER = int(os.environ.get("RWKV_CMIX_REUSE_MULTIPLIER", 1))
+RWKV_TMIX_REUSE_VARS = os.environ.get("RWKV_TMIX_REUSE_VARS", "RKV").upper()
+RWKV_CMIX_REUSE_VARS = os.environ.get("RWKV_CMIX_REUSE_VARS", "RKV").upper()
 
 global RWKV_TIMX_QTYPE, RWKV_CMIX_QTYPE, RWKV_QTYPE_OFFLOAD
 RWKV_TIMX_QTYPE = os.environ.get("RWKV_TIMX_QTYPE", None)
@@ -182,8 +184,8 @@ RWKV_TMIX_QVARS = os.environ.get("RWKV_TMIX_QVARS", "RKV").upper()
 
 # Print the layer reuse multiplier
 print("====================================================================")
-print(f"[RWKV] TMIX reuse multiplier : {RWKV_TMIX_REUSE_MULTIPLIER}")
-print(f"[RWKV] CMIX reuse multiplier : {RWKV_CMIX_REUSE_MULTIPLIER}")
+print(f"[RWKV] TMIX reuse multiplier : {RWKV_TMIX_REUSE_MULTIPLIER} ({RWKV_TMIX_REUSE_VARS})")
+print(f"[RWKV] CMIX reuse multiplier : {RWKV_CMIX_REUSE_MULTIPLIER} ({RWKV_CMIX_REUSE_VARS})")
 print(f"[RWKV] TMIX Quantize type    : {RWKV_TIMX_QTYPE} ({RWKV_TMIX_QVARS})")
 print(f"[RWKV] CMIX Quantize type    : {RWKV_CMIX_QTYPE} ({RWKV_CMIX_QVARS})")
 print("====================================================================")

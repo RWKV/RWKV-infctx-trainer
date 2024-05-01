@@ -382,16 +382,40 @@ class RWKV(L.LightningModule):
         ### ---
 
         # Collapse the reused layers, iterate the blocks and remap them accordingly
-        if RWKV_TMIX_REUSE_MULTIPLIER > 1 or RWKV_CMIX_REUSE_MULTIPLIER > 1:
+        if RWKV_CMIX_REUSE_MULTIPLIER > 1:
+            for i in range(n_layer):
+                # Remap the channel mix
+                cmix_index = (i // RWKV_CMIX_REUSE_MULTIPLIER) * RWKV_CMIX_REUSE_MULTIPLIER
+
+                # If mapping the whole block
+                # self.blocks[i].ffn = self.blocks[cmix_index].ffn
+
+                if RWKV_CMIX_REUSE_VARS.find("R") >= 0:
+                    self.blocks[i].ffn.receptance = self.blocks[cmix_index].ffn.receptance
+                if RWKV_CMIX_REUSE_VARS.find("K") >= 0:
+                    self.blocks[i].ffn.key = self.blocks[cmix_index].ffn.key
+                if RWKV_CMIX_REUSE_VARS.find("V") >= 0:
+                    self.blocks[i].ffn.value = self.blocks[cmix_index].ffn.value
+        
+        if RWKV_TMIX_REUSE_MULTIPLIER > 1:
             for i in range(n_layer):
                 # Remap the time mix
                 tmix_index = (i // RWKV_TMIX_REUSE_MULTIPLIER) * RWKV_TMIX_REUSE_MULTIPLIER
-                self.blocks[i].att = self.blocks[tmix_index].att
 
-                # Remap the channel mix
-                cmix_index = (i // RWKV_CMIX_REUSE_MULTIPLIER) * RWKV_CMIX_REUSE_MULTIPLIER
-                self.blocks[i].ffn = self.blocks[cmix_index].ffn
-            
+                # If mapping the whole block
+                # self.blocks[i].att = self.blocks[tmix_index].att
+
+                if RWKV_TMIX_REUSE_VARS.find("R") >= 0:
+                    self.blocks[i].att.receptance = self.blocks[tmix_index].att.receptance
+                if RWKV_TMIX_REUSE_VARS.find("K") >= 0:
+                    self.blocks[i].att.key = self.blocks[tmix_index].att.key
+                if RWKV_TMIX_REUSE_VARS.find("V") >= 0:
+                    self.blocks[i].att.value = self.blocks[tmix_index].att.value
+                if RWKV_TMIX_REUSE_VARS.find("O") >= 0:
+                    self.blocks[i].att.output = self.blocks[tmix_index].att.output
+                if RWKV_TMIX_REUSE_VARS.find("G") >= 0:
+                    self.blocks[i].att.gate = self.blocks[tmix_index].att.gate
+
             # Clean up the unused blocks
             gc.collect()
 
