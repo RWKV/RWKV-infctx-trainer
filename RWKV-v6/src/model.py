@@ -8,6 +8,7 @@ from .module.CoreDependencies import *
 from .module.ChannelMix import RWKV_ChannelMix6_0
 from .module.TimeMix import RWKV_TimeMix6_0
 
+from . import metrics
 # ---
 # Isolating out known operations that **does not work** with torch.compile
 # and wrapping them within a torch._dynamo.disable, this is required to get
@@ -73,7 +74,7 @@ class BlockStateList:
 # The RWKV Model blocks
 ### ---
 
-class Block(nn.Module):
+class Block(JITModClass):
 
     def __init__(self, layer_id, n_layer, n_embd, n_head, head_size, dropout, dim_att, dim_ffn):
         super().__init__()
@@ -84,6 +85,8 @@ class Block(nn.Module):
 
         if self.layer_id == 0:
             self.ln0 = nn.LayerNorm(n_embd)
+        else:
+            self.ln0 = nn.Identity()
 
         self.att = RWKV_TimeMix6_0(layer_id, n_layer, n_embd, n_head, head_size, dim_att)
         self.ffn = RWKV_ChannelMix6_0(layer_id, n_layer, n_embd, dim_ffn)
@@ -93,33 +96,26 @@ class Block(nn.Module):
         if dropout > 0:            
             self.drop0 = nn.Dropout(p = dropout)
             self.drop1 = nn.Dropout(p = dropout)
+        else:
+            self.drop0 = nn.Identity()
+            self.drop1 = nn.Identity()
 
+    @JITModMethod
     @TCompileBaseline
     def forward(self, x, last_state: BlockState):
-        if self.layer_id == 0:
-            x = self.ln0(x)
+        x = self.ln0(x)
 
         att_out, att_state = self.att(
             self.ln1(x),
             last_state.time_mix_state,
         )
-
-        if self.dropout > 0.0:
-            # Handle with dropout
-            x = self.drop0(x + att_out)
-            ffn_out, ffn_state = self.ffn(
-                self.ln2(x),
-                last_state.channel_mix_state,
-            )
-            x = self.drop1(x + ffn_out)
-        else:
-            # Handle without dropout
-            x = x + att_out
-            ffn_out, ffn_state = self.ffn(
-                self.ln2(x),
-                last_state.channel_mix_state,
-            )
-            x = x + ffn_out
+        x = self.drop0(x + att_out)
+        
+        ffn_out, ffn_state = self.ffn(
+            self.ln2(x),
+            last_state.channel_mix_state,
+        )
+        x = self.drop1(x + ffn_out)
         
         return x, BlockState(att_state, ffn_state)
 
@@ -193,7 +189,7 @@ class RWKV(L.LightningModule):
                  beta1: float = 0.9,
                  beta2: float = 0.99,
                  adam_eps: float = 1.0e-08,
-                 weight_decay: float = 0.01,
+                 weight_decay: float = 0.001,
                  warmup_steps: int = -1,
 
                  # loss bias start
@@ -214,7 +210,11 @@ class RWKV(L.LightningModule):
                  dim_ffn: Optional[int] = None,
                  substep_cuda_cache_clear: bool = False,
                  substep_logging: bool = False,
-                 torch_set_float32_matmul_precision:str = 'high'
+                 torch_set_float32_matmul_precision:str = 'high',
+
+                 # Consolidated loss, and total token count tracking
+                 # this introduces a slight perf penalty if enabled
+                 consolidated_logging: bool = True
                  ):
 
         # Lets save everything in one shot
@@ -287,22 +287,26 @@ class RWKV(L.LightningModule):
         self.bptt_truncated_learning = bptt_truncated_learning
         self.substep_cuda_cache_clear = substep_cuda_cache_clear
         self.substep_logging = substep_logging
+        self.consolidated_logging = consolidated_logging
 
-        # Add warning that bptt_truncated_learning is forced to be true
-        # due to incomplete implementation of CUDA kernel for bptt_learning
-        #
-        # @TODO : remove this warning once the CUDA kernel, with state gradient, is implemented
-        if self.bptt_truncated_learning == False:
-            print("====================================================================")
-            print("[WARNING]: bptt_truncated_learning is set as true (was configured as false), due to incomplete implementation of CUDA kernel for bptt_learning")
-            print("====================================================================")
-            self.bptt_truncated_learning = True
+        # # Add warning that bptt_truncated_learning is forced to be true
+        # # due to incomplete implementation of CUDA kernel for bptt_learning
+        # #
+        # # @TODO : remove this warning once the CUDA kernel, with state gradient, is implemented
+        # if self.bptt_truncated_learning == False:
+        #     print("====================================================================")
+        #     print("[WARNING]: bptt_truncated_learning is set as true (was configured as false), due to incomplete implementation of CUDA kernel for bptt_learning")
+        #     print("====================================================================")
+        #     self.bptt_truncated_learning = True
 
         # Save the position loss params, and selective loss settings
         self.position_loss_bias = position_loss_bias
         self.position_loss_bias_in_validation = position_loss_bias_in_validation
         self.token_loss_threshold = token_loss_threshold
         self.token_dropout_rate = token_dropout_rate
+
+        # Previous step timestamp, for tracking step by step tok/s perf
+        self._prev_step_endin_timestamp = 0
 
         dim_att = dim_att or n_embd
         dim_ffn = dim_ffn or int((n_embd * 3.5) // 32 * 32)
@@ -363,6 +367,9 @@ class RWKV(L.LightningModule):
         self._counting_tokens = 0.0
         self._counting_time_start = 0
 
+        self.metrics = dict(loss=metrics.Loss())
+
+
     def configure_optimizers(self):
         if self.bptt_learning == False:
             if self.deepspeed_stage >= 2 or self.deepspeed_offload:
@@ -411,21 +418,27 @@ class RWKV(L.LightningModule):
 
         # Setup layerwise learning rate
         if self.layerwise_lr:
+            lr_decay = set()
             lr_1x = set()
             lr_2x = set()
             lr_3x = set()
             for n, p in self.named_parameters():
-                if "time_mix" in n:
+                if ("_w1" in n) or ("_w2" in n):
                     lr_1x.add(n)
-                elif "time_decay" in n:
+                elif ("time_mix" in n) or ("time_maa" in n):
+                    lr_1x.add(n)
+                elif ("time_decay" in n) or ("time_daaaa" in n):
                     lr_2x.add(n)
                 # V5-R2 changes
                 elif "time_faaaa" in n:
-                    lr_2x.add(n)
-                # elif "time_first" in n:
-                #     lr_3x.add(n)
+                    lr_1x.add(n)
+                elif "time_first" in n:
+                    lr_3x.add(n)
+                elif (len(p.squeeze().shape) >= 2) and (self.weight_decay > 0):
+                    lr_decay.add(n)
                 else:
                     lr_1x.add(n)
+            lr_decay = sorted(list(lr_decay))
             lr_1x = sorted(list(lr_1x))
             lr_2x = sorted(list(lr_2x))
             lr_3x = sorted(list(lr_3x))
@@ -449,12 +462,17 @@ class RWKV(L.LightningModule):
                     "weight_decay": 0.0,
                     "lr": 3.0 * lr_init
                 },
+                {
+                    "params": [param_dict[n] for n in lr_decay],
+                    "weight_decay": self.weight_decay,
+                    "lr": 1.0 * lr_init
+                },
             ]
         else:
             optim_groups = [
                 {
                     "params": [p for n, p in self.named_parameters()],
-                    "weight_decay": 0.0
+                    "weight_decay": self.weight_decay
                 },
             ]
 
@@ -465,8 +483,7 @@ class RWKV(L.LightningModule):
                                          betas=(self.beta1, self.beta2),
                                          eps=self.adam_eps,
                                          bias_correction=True,
-                                         adamw_mode=False,
-                                         weight_decay=self.weight_decay,
+                                         adamw_mode= (self.weight_decay > 0),
                                          amsgrad=False)
         else:
             optimizer = FusedAdam(optim_groups,
@@ -474,8 +491,7 @@ class RWKV(L.LightningModule):
                                   betas=(self.beta1, self.beta2),
                                   eps=self.adam_eps,
                                   bias_correction=True,
-                                  adam_w_mode=False,
-                                  weight_decay=self.weight_decay,
+                                  adam_w_mode= (self.weight_decay > 0),
                                   amsgrad=False)
             
         # Throw if wramup_steps and lr_period are both set (not supported)
@@ -484,16 +500,20 @@ class RWKV(L.LightningModule):
                 "Use either warmup_steps or lr_period, not both.")
 
         if self.warmup_steps > 0:
-            lr_scheduler = deepspeed.runtime.lr_schedules.WarmupLR(
+            lr_scheduler = torch.optim.lr_scheduler.LinearLR(
                 optimizer,
-                warmup_min_lr=0.2 * self.lr_init,
-                warmup_max_lr=self.lr_init,
-                warmup_num_steps=self.warmup_steps,
-                warmup_type='linear')
+                start_factor = 0.2,
+                end_factor = 1.0,
+                total_iters = self.warmup_steps
+            )
 
             return {
                 'optimizer': optimizer,
-                'lr_scheduler': lr_scheduler,
+                'lr_scheduler': {
+                    "scheduler": lr_scheduler,
+                    "interval": "step",
+                    "frequency": 1,
+                },
             }
 
         else:
@@ -593,9 +613,7 @@ class RWKV(L.LightningModule):
 
         num_devices = max(1, self.trainer.num_devices)
         num_nodes = max(1, self.trainer.num_nodes)
-        num_steps = dataset_size // (self.trainer.accumulate_grad_batches * num_devices * num_nodes)
-
-        # Total number of steps
+        num_steps = dataset_size // (self.trainer.microbatch_size * num_devices * num_nodes)
         return num_steps
     
     @property
@@ -815,11 +833,14 @@ class RWKV(L.LightningModule):
     # @TCompileBaseline
     def compute_loss(self, batch, batch_idx, is_training_run: bool = False, is_validation_run: bool = False):
 
+        # Start time for the step
+        step_start_time = time.time()
+
         # Used for token/second performance tracking
         if self._counting_tokens is None:
             self._counting_tokens = 0
         if self._counting_time_start is None or self._counting_time_start == 0:
-            self._counting_time_start = time.time()
+            self._counting_time_start = step_start_time
         
         # Get the input sequence, and attention mask
         seq = batch['input_ids']
@@ -1062,14 +1083,17 @@ class RWKV(L.LightningModule):
             optimizer = self.optimizers()
             cur_device = self.device
             
-            # We use the average segment size, instead of ctx length size.
-            # this helps ensure that the segment cutoffs do not make the last segment too small.
-            # (eg, the last chunk having only 1 token)
-            #
-            # it also helps ensure the segment cutoff points are more varied, across mixed dataset sizes
-            # and avoid potentially undesired training behaviour at fixed cutoff points
-            # (this only applies for segmented learning)
-            segment_size = min(math.ceil(T / segment_count)+2, self.ctx_len)
+            # # We use the average segment size, instead of ctx length size.
+            # # this helps ensure that the segment cutoffs do not make the last segment too small.
+            # # (eg, the last chunk having only 1 token)
+            # #
+            # # it also helps ensure the segment cutoff points are more varied, across mixed dataset sizes
+            # # and avoid potentially undesired training behaviour at fixed cutoff points
+            # # (this only applies for segmented learning)
+            # segment_size = min(math.ceil(T / segment_count)+2, self.ctx_len)
+
+            # We now enforce segment_size, to be self.ctx_len, to improve overall torch.compile training performance
+            segment_size = self.ctx_len
 
             # Dummy 2D tensor of shape [B,0], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
             dummy_empty_zero = torch.zeros(B,0, dtype=torch.long, device=cur_device)
@@ -1248,10 +1272,11 @@ class RWKV(L.LightningModule):
                 gc.collect()
                 # torch.cuda.empty_cache()
 
+        global_rank = self.global_rank
+        global_device_count = self.trainer.num_devices * self.trainer.num_nodes
+
         # Wandb logging only, if an active run exists (only applies for training)
-        if wandb.run is not None and is_training_run:
-            global_rank = self.global_rank
-            global_device_count = self.trainer.num_devices * self.trainer.num_nodes
+        if is_training_run:
             microbatch_size = self.trainer.microbatch_size
 
             # Get the total dataset context length
@@ -1262,21 +1287,38 @@ class RWKV(L.LightningModule):
                 batch_ctx_len = T * microbatch_size
 
             # Increment the counting tokens, and log it accordingly
-            self._counting_tokens += batch_ctx_len / 1000.0
+            batch_ktokens = batch_ctx_len / 1000.0
+            self._counting_tokens += batch_ktokens
 
             # Calculate various log values
             ctx_len = batch_ctx_len / microbatch_size
-            tokens = training_tokens / microbatch_size
+            training_tokens_avg = training_tokens / microbatch_size
 
-            # Log the line values
-            wandb.log({
+            avg_ctx_len = ctx_len
+            avg_data_loss = sampling_loss
+            avg_learn_tokens = training_tokens_avg
+            avg_learn_loss = training_loss
+
+            # Ending time for the step
+            step_endin_time = time.time()
+
+            # Get the previous step endin time
+            step_prev_endin_time = self._prev_step_endin_timestamp
+            if step_prev_endin_time == 0:
+                step_prev_endin_time = self._counting_time_start
+            self._prev_step_endin_timestamp = step_endin_time
+
+            # Compute the kT values, per GPU
+            kT_per_sec = self._counting_tokens / max(step_endin_time - self._counting_time_start, 1e-8)
+            kT_per_sec_step = (batch_ktokens) / max(step_endin_time - step_prev_endin_time, 1e-8)
+            
+            # The log object to use
+            logobj = {
                 # The original loss and ctx_len (averaged by batch size)
                 'train/data_ctxlen': ctx_len, 
                 'train/data_loss': sampling_loss,
-                # "train/dataset_index": dataset_index,
-
                 # The selective training tokens, and loss
-                'train/learn_tokens': tokens,
+                'train/learn_tokens': training_tokens_avg,
                 'train/learn_loss': training_loss,
 
                 # # Dataset based tracking (not working)
@@ -1287,8 +1329,14 @@ class RWKV(L.LightningModule):
                 # f'dataset/train/{dataset_index}.name': dataset_name,
 
                 # Perf tracking
-                f'perf/kTokens_per_sec.gpu.{global_rank}': self._counting_tokens / max(time.time() - self._counting_time_start, 1),
+                f'perf/kTokens_per_sec.gpu.{global_rank}': kT_per_sec,
+                f'perf/kTokens_per_sec_step.gpu.{global_rank}': kT_per_sec_step,
                 f'perf/kTokens_total.gpu.{global_rank}': self._counting_tokens,
+
+                # Perf tracking
+                f'perf/cluster/kTokens_per_sec': kT_per_sec * global_device_count,
+                f'perf/cluster/kTokens_per_sec_step': kT_per_sec_step * global_device_count,
+                f'perf/cluster/kTokens_total': self._counting_tokens * global_device_count,
 
                 # Step and trainer tracking
                 'global_rank': global_rank, 
@@ -1296,20 +1344,79 @@ class RWKV(L.LightningModule):
                 'trainer/global_step':self.global_step,
                 'trainer/learning_rate': self.trainer.optimizers[0].param_groups[0]['lr'],
                 'batchidx': batch_idx
-            })
-        if wandb.run is not None and is_validation_run:
-            global_rank = self.global_rank
+            }
 
+            # Consolidated logging
+            if self.consolidated_logging:
+                # Prepare the floating tensor values, containing the total kTokens, batch kTokens, data_loss, and learn_loss
+                sync_tensor = torch.tensor([
+                    self._counting_tokens, 
+                    batch_ktokens, 
+                    sampling_loss, ctx_len,
+                    training_loss, training_tokens_avg
+                ], device=self.device, dtype=torch.float32)
+
+                # Get the sum across all devices, for each values
+                sync_tensor = self.trainer.strategy.reduce(sync_tensor, reduce_op="sum")
+
+                # Get the sum values
+                sum_total_kTokens = sync_tensor[0].item()
+                sum_batch_kTokens = sync_tensor[1].item()
+                avg_data_loss = sync_tensor[2].item() / global_device_count
+                avg_ctx_len = sync_tensor[3].item() / global_device_count
+                avg_learn_loss = sync_tensor[4].item() / global_device_count
+                avg_learn_tokens = sync_tensor[5].item() / global_device_count
+
+                # Update the log object, merge with the previous log object
+                logobj = {
+                    **logobj,
+                        
+                    # Perf tracking
+                    f'perf/cluster/kTokens_per_sec': sum_total_kTokens / max(step_endin_time - self._counting_time_start, 1e-8),
+                    f'perf/cluster/kTokens_per_sec_step': (sum_batch_kTokens) / max(step_endin_time - step_prev_endin_time, 1e-8),
+                    f'perf/cluster/kTokens_total': sum_total_kTokens,
+
+                    # Update the consolidate loss and lengths
+                    'train/data_ctxlen': avg_ctx_len, 
+                    'train/data_loss': avg_data_loss,
+                    'train/learn_tokens': avg_learn_tokens,
+                    'train/learn_loss': avg_learn_loss,
+
+                    # # The original loss and ctx_len (averaged by batch size)
+                    # f'train/data_ctxlen.gpu.{global_rank}': ctx_len, 
+                    # f'train/data_loss.gpu.{global_rank}': sampling_loss,
+                    # # The selective training tokens, and loss
+                    # f'train/learn_tokens.gpu.{global_rank}': training_tokens_avg,
+                    # f'train/learn_loss.gpu.{global_rank}': training_loss,
+                }
+
+            # Actual logging into wandb
+            if wandb.run is not None:
+                wandb.log(logobj)
+            
+            margs = metrics.MetricArgs(idx, None, None, targets, avg_learn_loss)
+            for metric in self.metrics.values():
+                metric.update(margs)
+            if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
+                B, T = idx.shape
+                self.log('train/tok', int(batch_idx * global_device_count * B * T), on_step=True, prog_bar=True, rank_zero_only=True)
+                self.log('global_step', self.global_step, rank_zero_only=True)
+                for name, metric in self.metrics.items():
+                    metric_value = metric.compute()
+                    metric.clear()
+                    self.log('train/'+name, metric_value, on_step=True, prog_bar=True, rank_zero_only=True)
+
+        if is_validation_run:
             # Log the line values
-            wandb.log({
+            logobj = {
                 # The original loss and ctx_len (averaged by batch size)
                 'validation/data_ctxlen': T, 
                 'validation/data_loss': sampling_loss,
                 # "validation/dataset_index": dataset_index,
 
-                # The selective training tokens, and loss
-                'validation/learn_tokens': training_tokens,
-                'validation/learn_loss': training_loss,
+                # # The selective training tokens, and loss
+                # 'validation/learn_tokens': training_tokens,
+                # 'validation/learn_loss': training_loss,
 
                 # # Dataset based tracking (not working)
                 # f'dataset/validation/{dataset_index}.loss': training_loss,
@@ -1321,7 +1428,39 @@ class RWKV(L.LightningModule):
                 'global_rank': global_rank, 
                 'trainer/global_step':self.global_step,
                 'batchidx': batch_idx
-            })
+            }
+
+            # Consolidated logging
+            if self.consolidated_logging:
+                # Prepare the floating tensor values, containing the validation values
+                sync_tensor = torch.tensor([
+                    sampling_loss, T, 
+                    training_loss, training_tokens
+                ], device=self.device, dtype=torch.float32)
+
+                # Get the sum across all devices, for each values
+                sync_tensor = self.trainer.strategy.reduce(sync_tensor, reduce_op="sum")
+
+                # Get the sum values
+                avg_data_loss = sync_tensor[0].item() / global_device_count
+                avg_ctx_len = sync_tensor[1].item() / global_device_count
+                avg_learn_loss = sync_tensor[2].item() / global_device_count
+                avg_learn_tokens = sync_tensor[3].item() / global_device_count
+
+                # Update the log object, merge with the previous log object
+                logobj = {
+                    **logobj,
+                        
+                    # Update the consolidate loss and lengths
+                    'validation/data_ctxlen': avg_ctx_len, 
+                    'validation/data_loss': avg_data_loss,
+                    # 'validation/learn_tokens': avg_learn_tokens,
+                    # 'validation/learn_loss': avg_learn_loss,
+                }
+
+            # Actual logging into wandb
+            if wandb.run is not None:
+                wandb.log(logobj)
 
         # Throw if total loss is NaN
         assert not torch.isnan(training_loss), "training_loss is NaN"
@@ -1340,7 +1479,8 @@ class RWKV(L.LightningModule):
 
         sampling_loss, training_loss = self.compute_loss(batch, batch_idx, True, False)
 
-        self.log('train/loss', training_loss, prog_bar=True)
+        #self.log('train/loss', training_loss, prog_bar=True)
+                
         # If set - forces the above train/loss log line to always be on a new line
         if self.substep_logging:
             print("")

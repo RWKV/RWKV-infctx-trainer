@@ -7,11 +7,11 @@ from abc import abstractmethod
 class MetricArgs():
     def __init__(self, inputs, logits:Tensor, predictions:Tensor, labels:Tensor, loss:Tensor):
         with torch.no_grad():
-            self.inputs = inputs.detach() if isinstance(inputs, Tensor) else inputs
-            self.logits = logits.detach() if isinstance(logits, Tensor) else logits
-            self.predictions = predictions.detach() if isinstance(predictions, Tensor) else predictions
-            self.labels = labels.detach() if isinstance(labels, Tensor) else labels
-            self.loss = loss.detach() if isinstance(loss, Tensor) else loss
+            self.inputs = inputs
+            self.logits = logits
+            self.predictions = predictions
+            self.labels = labels
+            self.loss = loss
 
 class IMetric():
     @abstractmethod
