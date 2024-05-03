@@ -27,11 +27,10 @@ def deepspeed_checkpoint(*args, **kwargs):
 
 class BlockState:
 
-    def __init__(self, time_mix_state: tuple[torch.Tensor,torch.Tensor],
-                 channel_mix_state: torch.Tensor):
-        self.time_mix_state = time_mix_state
-        self.channel_mix_state = channel_mix_state
-
+    def __init__(self, tmix_state: tuple[torch.Tensor,torch.Tensor],
+                 cmix_state: torch.Tensor):
+        self.tmix_state = tmix_state
+        self.cmix_state = cmix_state
 
 class BlockStateList:
 
@@ -66,9 +65,9 @@ class BlockStateList:
             (self.shift_states[layer, 1]))
 
     def __setitem__(self, layer: int, state: BlockState):
-        self.shift_states[layer, 0] = state.time_mix_state[0]
-        self.wkv_states[layer] = state.time_mix_state[1]
-        self.shift_states[layer, 1] = state.channel_mix_state
+        self.shift_states[layer, 0] = state.tmix_state[0]
+        self.wkv_states[layer] = state.tmix_state[1]
+        self.shift_states[layer, 1] = state.cmix_state
 
 ### ---
 # The RWKV Model blocks
@@ -107,13 +106,13 @@ class Block(JITModClass):
 
         att_out, att_state = self.att(
             self.ln1(x),
-            last_state.time_mix_state,
+            last_state.tmix_state,
         )
         x = self.drop0(x + att_out)
         
         ffn_out, ffn_state = self.ffn(
             self.ln2(x),
-            last_state.channel_mix_state,
+            last_state.cmix_state,
         )
         x = self.drop1(x + ffn_out)
         
