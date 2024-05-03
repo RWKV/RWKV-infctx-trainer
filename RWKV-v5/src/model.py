@@ -203,7 +203,7 @@ class RWKV(L.LightningModule):
                  # Backprop settings
                  grad_cp: bool = True,
                  bptt_learning: bool = True,
-                 bptt_full_segmented_loss: bool = False
+                 bptt_full_segmented_loss: bool = False,
                  bptt_learning_range: int = -1,
                  bptt_truncated_learning: bool = True,
                  layerwise_lr: bool = True,
@@ -964,10 +964,10 @@ class RWKV(L.LightningModule):
             # if idx.shape[1] == 0:
             #     # Prepare dummy loss
             #     train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
-            #     sample_loss = train_loss.clone().detach().requires_grad_(False)
+            #     segment_sample_loss = train_loss.clone().detach().requires_grad_(False)
 
             #     # Return the checkpoint values
-            #     return sample_loss, train_loss, last_shift_states, last_wkv_states, 0
+            #     return segment_sample_loss, train_loss, last_shift_states, last_wkv_states, 0
 
             # Get the logits, and the new states
             logits, new_shift_states, new_wkv_states = self(
@@ -995,47 +995,44 @@ class RWKV(L.LightningModule):
             # Selective token loss logic
             if submask_count <= 0.0:
                 train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
-                sample_loss = train_loss.clone().detach().requires_grad_(False)
+                segment_sample_loss = train_loss.clone().detach().requires_grad_(False)
                 train_token_count = 0
                 train_mask = submask
-
-            elif self.token_loss_threshold > 0.0 or self.token_dropout_rate > 0.0:
-
-                # Sample loss, without backprop 
+            else:
+                # Sample loss, without backprop, without token loss manipulation
                 with torch.no_grad():
-                    sample_loss = (torch.sum(token_loss * submask) / (submask_count if self.bptt_full_segmented_loss else total_mask_sum)).clone().detach().requires_grad_(False)
+                    segment_sample_loss = (torch.sum(token_loss * submask) / total_mask_sum).clone().detach().requires_grad_(False)
 
                 # Building the training mask
                 train_mask = submask
-
-                # Selective loss gating
-                if self.token_loss_threshold > 0.0:
-                    above_threshold = token_loss > self.token_loss_threshold
-                    train_mask = train_mask * above_threshold
-
-                # Dropout logic
-                if self.token_dropout_rate > 0.0:
-                    dropout_mask = torch.rand(train_mask.shape, device=train_mask.device) > self.token_dropout_rate
-                    train_mask = train_mask * dropout_mask
-                
-                # The training loss to use
-                train_loss = torch.sum(token_loss * train_mask) / (submask_count if self.bptt_full_segmented_loss else total_mask_sum)  
-                train_token_count = torch.sum(train_mask)
-
-                # Adjust the factor accordingly
-                # L2Wrap_factor = L2Wrap_factor * (submask_count / train_token_count)
-
-            else:
-                train_loss = torch.sum(token_loss * submask) / (submask_count if self.bptt_full_segmented_loss else total_mask_sum)
-                sample_loss = train_loss.clone().detach().requires_grad_(False)
                 train_token_count = submask_count
-                train_mask = submask
+
+                # Apply selective loss / dropout on the train_mask
+                if self.token_loss_threshold > 0.0 or self.token_dropout_rate > 0.0:
+                    # Selective loss gating
+                    if self.token_loss_threshold > 0.0:
+                        above_threshold = token_loss > self.token_loss_threshold
+                        train_mask = train_mask * above_threshold
+
+                    # Dropout logic
+                    if self.token_dropout_rate > 0.0:
+                        dropout_mask = torch.rand(train_mask.shape, device=train_mask.device) > self.token_dropout_rate
+                        train_mask = train_mask * dropout_mask
+                    
+                    # Update the train token count
+                    train_token_count = torch.sum(train_mask)
+
+                # The training loss to use
+                if self.bptt_full_segmented_loss:
+                    train_loss = torch.sum(token_loss * train_mask) / (total_mask_sum * segment_count)
+                else:
+                    train_loss = torch.sum(token_loss * train_mask) / total_mask_sum
 
             # L2Wrap for the backprop process
             segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
 
             # Return the checkpoint values
-            return sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
+            return segment_sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
 
         # Initialize the states, and compute the segment count
         states = BlockStateList.create(self.n_layer, B, C, 
