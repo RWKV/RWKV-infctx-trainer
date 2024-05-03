@@ -262,6 +262,15 @@ model:
   # For mixed dataset sizes, -1 is a resonable trade-off
   bptt_learning_range: -1
 
+  # If enabled,
+  # The learning rate effect, is distributed across the entire document (eg. 32k tokens), instead of the context length chunk (eg. 4k tokens)
+  # This lowers the loss/learning impact per chunk. And require the learning rate to be tuned to the "whole document length"
+  #
+  # If disabled,
+  # The learning rate is applied on a context length chunks. This is equivalent of applying the approximate same learning rate in each 4k chunks
+  # regardless of the full document length itself
+  bptt_full_segmented_loss: false
+
   # Limits the bptt learning only to the "current" chunk
   # being learned within the learning range. While this reduces the effectiveness
   # of bptt, it also further reduces vram requirements. 
