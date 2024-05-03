@@ -358,9 +358,25 @@ class RWKV(L.LightningModule):
         if dropout > 0:
             self.drop0 = nn.Dropout(p = dropout)
 
+        # # @TODO: confirm if dtype can be changed from .flaot to dtype=dtype (when bf16)
+        # wkv_states = torch.empty((N, B, n_head, head_size, head_size),
+        #                          device=device,
+        #                         #  dtype=dtype)
+        #                          dtype=torch.float)
+        # shift_states = torch.empty((N, 2, B, C), device=device, dtype=dtype)
+
+        # Initial state tuning support
+        self.init_state = nn.ParameterList([
+            nn.ParameterDict({
+                "tmix_wkv": nn.Parameter(torch.zeros(n_head, head_size, head_size)),
+                "tmix_shift": nn.Parameter(torch.zeros(n_embd, n_embd)),
+                "cmix_shift": nn.Parameter(torch.zeros(n_embd, n_embd))
+            }) for i in range(n_layer)
+        ])
+
         # load the state, and GC the original cpu copy
         if model_weights != None:
-            self.load_state_dict(model_weights)
+            self.load_state_dict(model_weights, strict=False)
             del model_weights
             gc.collect()
 
@@ -945,7 +961,6 @@ class RWKV(L.LightningModule):
         do_bptt_learning = self.bptt_learning and is_training_run
         idx, targets = seq[:, :-1], seq[:, 1:]
         B, T = idx.shape
-        C = self.n_embd
 
         # If total_mask_sum, we skip, as there is no tokens of value to learn from anyway
         total_mask_sum = torch.sum(seq_mask)
@@ -1034,7 +1049,7 @@ class RWKV(L.LightningModule):
             return segment_sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
 
         # Initialize the states, and compute the segment count
-        states = BlockStateList.create(self.n_layer, B, C, 
+        states = BlockStateList.create(self.n_layer, B, self.n_embd, 
                                        self.n_head, self.head_size,
                                        seq.device, self.emb.weight.dtype)
         segment_count = math.ceil(T / self.ctx_len)
