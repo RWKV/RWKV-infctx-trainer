@@ -370,7 +370,7 @@ class RWKV(L.LightningModule):
         ##
 
         # Current wkv state tuning
-        self.init_wkv = nn.Parameter(torch.zeros(n_layer, n_head, head_size, head_size))
+        self.init_wkv = nn.Parameter(torch.zeros(n_layer, n_head, head_size, head_size, dtype=torch.float32))
         
         # # Future consideration, for more complex state tuning
         # self.init_state = nn.ParameterList([
@@ -1467,6 +1467,14 @@ class RWKV(L.LightningModule):
                     metric_value = metric.compute()
                     metric.clear()
                     self.log('train/'+name, metric_value, on_step=True, prog_bar=True, rank_zero_only=True)
+
+        # NaN safety
+        if torch.isnan(training_loss):
+            print(f'[WARNING] training_loss is NaN, fallbacking to 0 (device: {self.device})')
+            training_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
+        if torch.isnan(sampling_loss):
+            print(f'[WARNING] sampling_loss is NaN, fallbacking to 0 (device: {self.device})')
+            sampling_loss = torch.tensor(0, dtype=self.emb.weight.dtype)
 
         if is_validation_run:
             # Log the line values
