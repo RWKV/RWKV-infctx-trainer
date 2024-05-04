@@ -162,6 +162,12 @@ class RWKV(L.LightningModule):
     def __init__(self,
                  # Model file path to load from
                  load_model: str,
+                 
+                 # Perform state tuning (experimental)
+                 # These freezes all the model weights, 
+                 # and able the backprop on the wkv init state
+                 state_tuning: bool = False,
+
                  # Model size settings, which we either
                  # "auto detect", or use the user specified settings
                  n_embd: int = -1,
@@ -263,6 +269,7 @@ class RWKV(L.LightningModule):
             vocab_size = model_weights['head.weight'].shape[0]
 
         # Save the various other params for later
+        self.state_tuning = state_tuning
         self.ctx_len = ctx_len
         self.ctx_len_cutoffs = ctx_len_cutoffs
         self.ctx_len_warmup_steps = ctx_len_warmup_steps
@@ -358,21 +365,28 @@ class RWKV(L.LightningModule):
         if dropout > 0:
             self.drop0 = nn.Dropout(p = dropout)
 
-        # # @TODO: confirm if dtype can be changed from .flaot to dtype=dtype (when bf16)
-        # wkv_states = torch.empty((N, B, n_head, head_size, head_size),
-        #                          device=device,
-        #                         #  dtype=dtype)
-        #                          dtype=torch.float)
-        # shift_states = torch.empty((N, 2, B, C), device=device, dtype=dtype)
-
+        ##
         # Initial state tuning support
-        self.init_state = nn.ParameterList([
-            nn.ParameterDict({
-                "tmix_wkv": nn.Parameter(torch.zeros(n_head, head_size, head_size)),
-                "tmix_shift": nn.Parameter(torch.zeros(n_embd, n_embd)),
-                "cmix_shift": nn.Parameter(torch.zeros(n_embd, n_embd))
-            }) for i in range(n_layer)
-        ])
+        ##
+
+        # Current wkv state tuning
+        self.init_wkv = nn.Parameter(torch.zeros(n_layer, n_head, head_size, head_size))
+        
+        # # Future consideration, for more complex state tuning
+        # self.init_state = nn.ParameterList([
+        #     nn.ParameterDict({
+        #         "tmix_wkv": nn.Parameter(torch.zeros(n_head, head_size, head_size)),
+        #         ##
+        #         # Because only the tmix_wkv is needed, we skip the other states for now
+        #         ##
+        #         # "tmix_shift": nn.Parameter(torch.zeros(n_embd, n_embd)),
+        #         # "cmix_shift": nn.Parameter(torch.zeros(n_embd, n_embd))
+        #     }) for i in range(n_layer)
+        # ])
+
+        ####
+        ## Load model weights
+        ####
 
         # load the state, and GC the original cpu copy
         if model_weights != None:
@@ -380,11 +394,33 @@ class RWKV(L.LightningModule):
             del model_weights
             gc.collect()
 
+        ####
+        ## State tuning / layer freezing support
+        ####
+
+        # # Configure state tuning support
+        if state_tuning:
+            # Disable all other modules
+            self.emb.requires_grad = False
+            self.blocks.requires_grad = False
+            self.ln_out.requires_grad = False
+            self.head.requires_grad = False
+            # Enable init_wkv backprop
+            self.init_wkv.requires_grad = True
+        else:
+            self.init_wkv.requires_grad = False
+
+        ####
+        ## Metrics counting
+        ####
+
         # Training based timings to track, and initialize
         self._counting_tokens = 0.0
         self._counting_time_start = 0
 
         self.metrics = dict(loss=metrics.Loss())
+
+        # Tuning modes to support
 
 
     def configure_optimizers(self):
@@ -649,6 +685,24 @@ class RWKV(L.LightningModule):
             return "stage" in cfg
         return -1
 
+    # Get the initial BlockStateList, backed by the wkv state
+    def init_blockStateList(self, batch_size, device, dtype):
+        ret = BlockStateList.create(
+            self.n_layer, batch_size, self.n_embd, 
+            self.n_head, self.head_size,
+            device, dtype
+        )
+
+        # Copy the wkv_state to the respective batch size
+        # Its currently `self.init_wkv = nn.Parameter(torch.zeros(n_layer, n_head, head_size, head_size))`
+        # And will need to be expanded to n_layer, B, n_head, head_size, head_size
+        for n in range(self.n_layer):
+            for i in range(batch_size):
+                ret.wkv_states[n, i] = self.init_wkv[n]
+                # ret.wkv_states[n, i] = self.init_state[n]["tmix_wkv"]
+        
+        return ret
+
     # @TCompileBaseline
     def forward(self, idx: torch.Tensor, last_shift_states: torch.Tensor = None,
                 last_wkv_states: torch.Tensor = None):
@@ -666,12 +720,8 @@ class RWKV(L.LightningModule):
                                           x.device, x.dtype)
         
         # last_shift_states can be None, when we are performing direct inference
-        if last_shift_states is None:
-            cur_bs_list = BlockStateList.create(
-                self.n_layer, B, self.n_embd, 
-                self.n_head, self.head_size,
-                x.device, x.dtype
-            )
+        if last_shift_states is None or last_wkv_states is None:
+            cur_bs_list = self.init_blockStateList(B, x.device, x.dtype)
         else:
             cur_bs_list = BlockStateList(last_shift_states, last_wkv_states)
 
@@ -1049,9 +1099,7 @@ class RWKV(L.LightningModule):
             return segment_sample_loss, segment_train_loss, new_shift_states, new_wkv_states, train_token_count
 
         # Initialize the states, and compute the segment count
-        states = BlockStateList.create(self.n_layer, B, self.n_embd, 
-                                       self.n_head, self.head_size,
-                                       seq.device, self.emb.weight.dtype)
+        states = self.init_blockStateList(B, seq.device, self.emb.weight.dtype)
         segment_count = math.ceil(T / self.ctx_len)
 
         # Initialize the training loss, and the token count
