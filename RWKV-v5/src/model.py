@@ -1030,7 +1030,7 @@ class RWKV(L.LightningModule):
                 train_mask = submask
 
             if train_loss <= 0.0:
-                segment_train_loss = torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_()
+                segment_train_loss = L2Wrap.apply(torch.tensor(0, dtype=self.emb.weight.dtype).requires_grad_(), logits, L2Wrap_factor, train_mask)
             else:
                 # L2Wrap for the backprop process
                 segment_train_loss = L2Wrap.apply(train_loss, logits, L2Wrap_factor, train_mask)
