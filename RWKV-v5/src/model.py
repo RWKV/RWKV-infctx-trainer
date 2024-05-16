@@ -1095,7 +1095,7 @@ class RWKV(L.LightningModule):
             segment_size = self.ctx_len
 
             # Dummy 2D tensor of shape [B,0], are used to do "dummy checkpoint/forward/backprop" to keep everything in sync
-            dummy_empty_zero = torch.zeros(B, segment_size, dtype=torch.long, device=cur_device)
+            dummy_empty_zero = torch.zeros(B, 1, dtype=torch.long, device=cur_device)
 
             # Get the max segment count across all GPUs, in the current substep, which is used to keep all devices are in sync
             # Once a thread has completed all its segments, it will do dummy checkpoint/forward/backprop with one token,
@@ -1124,16 +1124,10 @@ class RWKV(L.LightningModule):
                     # we map it to be a tensor, instead of the int directly, as this is more reliable across certain versions of torch/lightning
                     # https://discord.com/channels/992359628979568762/1148755392638234697/1148821863749931008
                     
-                    if self.device.type == "cuda":
-                        forward_segment_count = self.trainer.strategy.reduce(
-                            torch.cuda.IntTensor([segment_count], device=self.device), 
-                            reduce_op="max"
-                        )
-                    else:
-                        forward_segment_count = self.trainer.strategy.reduce(
-                            torch.Tensor([segment_count], dtype=torch.int),
-                            reduce_op="max"
-                        )
+                    forward_segment_count = self.trainer.strategy.reduce(
+                        torch.Tensor([segment_count], dtype=torch.int, device=self.device),
+                        reduce_op="max"
+                    )
 
                     # Convert to int, if its a torch tensor
                     if isinstance(forward_segment_count, torch.Tensor):
