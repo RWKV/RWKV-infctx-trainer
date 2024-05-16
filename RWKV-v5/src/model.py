@@ -203,7 +203,7 @@ class RWKV(L.LightningModule):
                  # Backprop settings
                  grad_cp: bool = True,
                  bptt_learning: bool = True,
-                 bptt_full_segmented_loss: bool = False
+                 bptt_full_segmented_loss: bool = False,
                  bptt_learning_range: int = -1,
                  bptt_truncated_learning: bool = True,
                  layerwise_lr: bool = True,
