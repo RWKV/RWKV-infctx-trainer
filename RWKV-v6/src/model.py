@@ -1394,7 +1394,7 @@ class RWKV(L.LightningModule):
             if wandb.run is not None:
                 wandb.log(logobj)
             
-            margs = metrics.MetricArgs(idx, None, None, targets, avg_learn_loss)
+            margs = metrics.MetricArgs(idx, None, None, targets, torch.tensor(avg_learn_loss,device=sync_tensor.device))
             for metric in self.metrics.values():
                 metric.update(margs)
             if (batch_idx + 1) % self.trainer.accumulate_grad_batches == 0 and (self.trainer.global_step + 1) % self.trainer.log_every_n_steps == 0:
